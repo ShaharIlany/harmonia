@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="ws">
+        <span class="ws-name">Team</span>
+        <span class="ws-badge" id="stub-badge" hidden>stub</span>
+      </div>
+      <div class="usage" id="usage" aria-label="Claude plan usage"></div>
+      <nav class="section">
+        <div class="section-h">
+          <span>Channels</span>
+          <button class="icon-btn" id="add-channel" title="New channel" aria-label="New channel">+</button>
+        </div>
+        <ul id="channels"></ul>
+      </nav>
+      <nav class="section">
+        <div class="section-h"><span>Teammates</span></div>
+        <ul id="people"></ul>
+      </nav>
+      <div class="cli">
+        <label class="notify-pick" title="When Team Chat notifies you">
+          <span aria-hidden="true">🔔</span>
+          <select id="notify-level" aria-label="Notifications">
+            <option value="all">Notify: replies, questions, jobs</option>
+            <option value="mentions">Notify: only when I'm @mentioned</option>
+            <option value="off">Notifications off</option>
+          </select>
+        </label>
+        <div id="laya" class="laya-status" hidden></div>
+        <div id="cli"></div>
+      </div>
+    </aside>
+
+    <!-- Channel view -->
+    <main class="main" id="channel-view">
+      <header class="ch-header">
+        <button class="icon-btn menu-btn" id="menu" aria-label="Channels">☰</button>
+        <div class="ch-title">
+          <div class="ch-name-row">
+            <div class="ch-name" id="ch-name"></div>
+            <span id="ch-task"></span>
+          </div>
+          <div class="ch-folder" id="ch-folder"></div>
+        </div>
+        <div class="usage-mini" id="usage-mini"></div>
+        <label class="status-pick" title="Tag this channel">
+          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+          <select id="ch-status" aria-label="Channel status">
+            <option value="">No status</option>
+            <option value="inProgress">In progress</option>
+            <option value="waiting">Waiting for response</option>
+            <option value="later">For later</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+        <button class="hdr-btn" id="toggle-sessions" aria-pressed="true" title="Show or hide the teammates' sessions">
+          <span aria-hidden="true">▤</span> Sessions <span class="hdr-count" id="sessions-count"></span>
+        </button>
+      </header>
+      <div class="ch-body">
+        <div class="conversation">
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <div class="typing" id="typing"></div>
+          <div class="archived-bar" id="archived-bar" hidden>
+            <span>This channel is archived. You can read it, but nobody can post or be woken here.</span>
+            <button class="btn primary" id="unarchive-btn">Unarchive</button>
+          </div>
+          <div class="reply-bar" id="reply-bar" hidden></div>
+          <form class="composer" id="composer" autocomplete="off">
+            <div class="mention-pop" id="mention-pop" hidden></div>
+            <textarea id="input" rows="1" dir="auto" placeholder="Message"></textarea>
+            <button type="submit" class="send" id="send" aria-label="Send">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z"/></svg>
+            </button>
+          </form>
+        </div>
+        <aside class="sessions" id="sessions" aria-label="The teammates' sessions"></aside>
+      </div>
+    </main>
+
+    <!-- Teammate settings view -->
+    <main class="main agent-view" id="agent-view" hidden></main>
+  </div>
+
+  <dialog id="task-dialog">
+    <form method="dialog" id="task-form" autocomplete="off">
+      <h2>ClickUp task</h2>
+      <label>Task id or link<input name="task" id="task-input" placeholder="ABC-123" spellcheck="false"></label>
+      <p class="hint">Shown next to the channel's name, opens in Chrome from the header, and tells the teammates what this channel is about.</p>
+      <p class="error" id="task-error"></p>
+      <div class="dialog-btns">
+        <!-- Save comes first so Enter saves; CSS puts it last. -->
+        <button value="ok" class="btn primary" style="order: 4">Save</button>
+        <button value="remove" formnovalidate class="btn danger" id="task-remove" style="order: 1">Remove</button>
+        <span class="spacer" style="order: 2"></span>
+        <button value="cancel" formnovalidate class="btn" style="order: 3">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="new-channel">
+    <form method="dialog" id="new-channel-form">
+      <h2>New channel</h2>
+      <label>Name<input name="name" required placeholder="abc-124" autofocus></label>
+      <label>Working folder<input name="cwd" id="new-channel-cwd"></label>
+      <p class="hint">The teammates work in this folder when they answer in this channel.</p>
+      <p class="error" id="new-channel-error"></p>
+      <div class="dialog-btns">
+        <button value="cancel" formnovalidate class="btn">Cancel</button>
+        <button value="ok" class="btn primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="/markdown.js"></script>
+  <script src="/app.js"></script>
+  <script src="/agent-page.js"></script>
+</body>
+</html>

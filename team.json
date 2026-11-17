@@ -1,0 +1,62 @@
+[
+  {
+    "id": "dali",
+    "name": "Dali",
+    "avatar": "🧙🏻‍♂️",
+    "role": "Customer success",
+    "color": "#eab308",
+    "chatModel": "claude-opus-5-5",
+    "chatEffort": "low",
+    "routing": "customers, customer emails, updates, presentations"
+  },
+  {
+    "id": "leo",
+    "name": "Leo",
+    "avatar": "👨🏻‍🎨",
+    "role": "Architecture",
+    "color": "#3b82f6",
+    "chatModel": "claude-opus-5-5",
+    "chatEffort": "low",
+    "routing": "design, plans, options and trade-offs"
+  },
+  {
+    "id": "elliot",
+    "name": "Elliot",
+    "avatar": "🧑🏻‍💻",
+    "role": "Code",
+    "color": "#22c55e",
+    "chatModel": "claude-opus-5-5",
+    "chatEffort": "low",
+    "routing": "write, change or fix code"
+  },
+  {
+    "id": "sherlock",
+    "name": "Sherlock",
+    "avatar": "🕵🏻‍♂️",
+    "role": "Code review",
+    "color": "#a855f7",
+    "chatModel": "claude-opus-5-5",
+    "chatEffort": "low",
+    "routing": "review a diff, branch or PR"
+  },
+  {
+    "id": "murphy",
+    "name": "Murphy",
+    "avatar": "👨🏻‍🔬",
+    "role": "QA",
+    "color": "#ef4444",
+    "chatModel": "claude-opus-5-5",
+    "chatEffort": "low",
+    "routing": "test, try to break, reproduce bugs"
+  },
+  {
+    "id": "emily",
+    "name": "Emily",
+    "avatar": "👩🏻‍💼",
+    "role": "Secretary",
+    "color": "#06b6d4",
+    "chatModel": "claude-sonnet-5-5",
+    "chatEffort": "medium",
+    "routing": "calendar, meetings, email drafts, ClickUp tasks, summaries, greetings"
+  }
+]
