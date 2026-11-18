@@ -1,12 +1,12 @@
 // Over-the-air updates from git. The installed app knows the commit it was built from (build.json, written by
 // macapp/build.sh). Every 30 minutes it fetches its branch into a clone of its own (the data folder's `source/`),
 // and when the branch has moved on, it builds the new commit there with the same build.sh, in the background.
-// The new build is swapped in by macapp/update.sh at a quiet moment: nothing working, and you haven't sent anything
-// for a while. Or right away (still waiting for teammates to finish) with "Restart to update".
+// The new build is swapped in at a quiet moment (nothing working, and you haven't sent anything for a while), and the
+// app reopens itself on it. Or right away (still waiting for teammates to finish) with "Restart to update".
 //
 // settings.json: "updateRepo" and "updateBranch" (default: the repo and branch the app was built from),
 // "autoUpdate" (default true: build and install on their own; false: only show that an update is there).
-import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { COMPILED, DATA, SETTINGS } from "./paths";
 
@@ -163,16 +163,38 @@ function maybeInstall() {
   install();
 }
 
-/** Hands over to macapp/update.sh, which outlives this server: it quits the app, swaps the build and reopens it. */
-function install() {
+/** Exit code that tells the app shell (macapp/main.swift) to quit and open itself again: the new build. */
+export const RELAUNCH_EXIT = 75;
+
+/**
+ * Swaps the build while this one still runs (macOS keeps a running app going when its bundle is moved), then exits
+ * with RELAUNCH_EXIT. The app shell quits and reopens itself through LaunchServices. Nothing can outlive the app to do
+ * it instead: macOS ends every process an app started, even launchd jobs, when the app quits.
+ * The old build is kept in the data folder's `previous/`, to go back by hand.
+ */
+async function install() {
   set({ state: "installing", detail: "restarting" });
-  log(`installing ${status.latest} into ${APP}`);
-  const script = join(RESOURCES, "update.sh");
-  const args = [script, join(SOURCE, "build", "Team Chat.app"), APP, String(process.pid)].map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ");
-  // nohup + & + a shell that exits right away: the script is re-parented and keeps running after the app quits.
-  Bun.spawn(["/bin/bash", "-c", `nohup /bin/bash ${args} >> '${LOG.replace(/'/g, "'\\''")}' 2>&1 &`], { stdio: ["ignore", "ignore", "ignore"] });
-  // Still here two minutes later: the app didn't quit (say, its "still working" alert was cancelled).
-  setTimeout(() => {
-    if (status.state === "installing") set({ state: "ready", detail: "The app didn't restart. Try again." }), (installWhenIdle = false);
-  }, 120_000);
+  const fresh = join(SOURCE, "build", "Team Chat.app");
+  const prevDir = join(DATA, "previous");
+  const prev = join(prevDir, "Team Chat.app");
+  try {
+    if (!existsSync(join(fresh, "Contents", "MacOS", "Team Chat"))) throw new Error("the new build isn't there");
+    rmSync(prevDir, { recursive: true, force: true });
+    mkdirSync(prevDir, { recursive: true });
+    renameSync(APP, prev);
+    try {
+      // A clone on APFS: instant, and no extra space for Laya's ~800 MB.
+      await sh(["cp", "-cR", fresh, APP]).catch(() => sh(["ditto", fresh, APP]));
+    } catch (e) {
+      rmSync(APP, { recursive: true, force: true });
+      renameSync(prev, APP);
+      throw e;
+    }
+  } catch (e) {
+    installWhenIdle = false;
+    log(`install failed: ${(e as Error).message}`);
+    return set({ state: "failed", detail: `Couldn't install the update: ${(e as Error).message}` });
+  }
+  log(`installed ${status.latest} into ${APP}; relaunching`);
+  setTimeout(() => process.exit(RELAUNCH_EXIT), 300);
 }

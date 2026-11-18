@@ -79,9 +79,10 @@ tools (`team-chat-server --job-tools`).
   it fetches the branch into its own clone (`source/` in the data folder). When
   there are new commits, it builds them there with the same `build.sh`, in the
   background, and swaps the new build in when no teammate or job is working
-  and you haven't sent anything for 10 minutes (`macapp/update.sh`: quit, old
-  build to the Trash, new one in place, reopen; the old one comes back if the new
-  one doesn't start). The sidebar footer shows an update while it's pending,
+  and you haven't sent anything for 10 minutes: the server moves the running
+  build to `previous/` in the data folder, puts the new one in its place and
+  exits, and the app reopens itself on the new build. (A helper that outlives
+  the app can't do it: macOS ends everything an app started when it quits.) The sidebar footer shows an update while it's pending,
   with **Restart to update** to install it as soon as nobody's working.
   Team Chat → Check for Updates… checks now. `settings.json`: `updateRepo`,
   `updateBranch`, and `autoUpdate: false` to only show updates. Building needs
@@ -234,7 +235,7 @@ Jobs and memories stay.
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
 | `router.ts` | Picks who answers a message that names nobody (conversation rules, then Laya) |
 | `laya.ts`, `laya-router.py` | Laya, the local decision model, as a child process of the server |
-| `updates.ts`, `macapp/update.sh` | Over-the-air updates: check, build in the background, swap in when idle |
+| `updates.ts` | Over-the-air updates: check, build in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
 | `runner.ts` | Runs `claude -p --agent …`, plus the stub used by `bun run stub` |

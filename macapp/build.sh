@@ -18,7 +18,6 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
 else
   rm -f "$APP/Contents/Resources/build.json"
 fi
-cp macapp/update.sh "$APP/Contents/Resources/update.sh"
 
 echo "› server"
 bun build --compile main.ts --outfile "$APP/Contents/Resources/team-chat-server" >/dev/null

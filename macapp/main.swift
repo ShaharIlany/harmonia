@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   var server: Process?
   var titleObservation: NSKeyValueObservation?
   var quitting = false
+  var relaunch = false // quit for an update: open the new build on the way out
 
   // MARK: Launch
 
@@ -79,6 +80,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     p.standardOutput = log
     p.standardError = log
     p.terminationHandler = { [weak self] proc in
+      // 75: an update was installed over this app (updates.ts). Quit, and open the new build on the way out.
+      if proc.terminationReason == .exit && proc.terminationStatus == 75 {
+        DispatchQueue.main.async {
+          self?.relaunch = true
+          NSApp.terminate(nil)
+        }
+        return
+      }
       guard proc.terminationReason != .exit || proc.terminationStatus != 0 else { return }
       DispatchQueue.main.async { self?.serverStopped() }
     }
@@ -201,6 +210,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   }
 
   func applicationWillTerminate(_ note: Notification) {
+    if relaunch {
+      // LaunchServices starts the new build as an app of its own, so it outlives this one.
+      let open = Process()
+      open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+      open.arguments = ["-n", Bundle.main.bundlePath]
+      try? open.run()
+      open.waitUntilExit()
+    }
     guard let s = server, s.isRunning else { return }
     s.terminate()
     let deadline = Date().addingTimeInterval(3)
