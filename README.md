@@ -24,10 +24,27 @@ their permissions and new tools from cards in the chat.
 The screenshots use made-up demo data: `docs/screenshots/demo-data.py` builds it,
 and `docs/screenshots/capture.mjs` takes them.
 
-## Team Chat.app
+## Install
 
 ```bash
-team-chat/macapp/build.sh --install   # builds build/Team Chat.app and copies it to ~/Applications
+curl -fsSL https://raw.githubusercontent.com/ShaharIlany/team-chat/main/install.sh | bash
+```
+
+You need a Mac with Xcode's command line tools (`xcode-select --install`),
+[Bun](https://bun.sh), [uv](https://docs.astral.sh/uv/) and the
+[Claude Code CLI](https://claude.com/claude-code), signed in. The script checks
+for them, clones the repo into the app's folder, builds the app, installs it in
+`~/Applications` and opens it. It also adds the six starter teammates from
+`agents/` to `~/.claude/agents` (see [agents/README.md](agents/README.md)),
+leaving any file you already have alone. From then on the app updates itself
+from `main`. Run the script again any time to reinstall.
+
+## Team Chat.app
+
+From a checkout:
+
+```bash
+macapp/build.sh --install   # builds build/Team Chat.app and copies it to ~/Applications
 ```
 
 The app is a native window (`macapp/main.swift`, WKWebView) around the server,
