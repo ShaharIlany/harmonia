@@ -215,6 +215,8 @@
     }
 
     if (m.meta && m.meta.replyTo) body = quoteHtml(m.meta.replyTo) + body;
+    if (m.meta && m.meta.reactions && m.meta.reactions.length) body += reactionsHtml(m.meta.reactions);
+    if (isUser) body += `<span class="ticks" data-ticks="${m.id}"></span>`;
     const tip = m.meta && [m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`, m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% from the prompt cache`].filter(Boolean).join(" · ");
     const nameEl = t ? `<button class="name" data-person="${m.author}">${esc(name)}</button>` : `<span class="name">${esc(name)}</span>`;
     const archived = currentChannel()?.status === "archived";
@@ -280,6 +282,27 @@
       toast(err.message);
     }
   };
+
+  // ---------- Reactions and read ticks ----------
+  function reactionsHtml(list) {
+    const by = new Map();
+    for (const r of list) by.set(r.emoji, [...(by.get(r.emoji) || []), authorName(r.by)]);
+    return `<div class="reactions">${[...by].map(([emoji, who]) => `<span class="reaction" title="${esc(who.join(", "))}">${esc(emoji)}${who.length > 1 ? `<b>${who.length}</b>` : ""}</span>`).join("")}</div>`;
+  }
+  /** ✓ sent, blue ✓✓ once a teammate has read it (its lastSeen in the channel is past the message). */
+  function renderTicks() {
+    const ch = currentChannel();
+    const list = S.msgs[S.current] || [];
+    if (!ch) return;
+    const seen = Object.entries(ch.lastSeen || {});
+    document.querySelectorAll("#messages [data-ticks]").forEach((el) => {
+      const i = list.findIndex((m) => m.id === el.dataset.ticks);
+      const readers = seen.filter(([, n]) => n > i).map(([id]) => authorName(id));
+      el.className = `ticks ${readers.length ? "read" : ""}`;
+      el.textContent = readers.length ? "✓✓" : "✓";
+      el.title = readers.length ? `Read by ${readers.join(", ")}` : "Sent";
+    });
+  }
 
   // ---------- Replies ----------
   const authorName = (id) => (id === "user" ? S.user : byId(id)?.name || id);
@@ -399,6 +422,7 @@
     }
     el.innerHTML = list.map((m, i) => dayDivider(m, list[i - 1]) + msgHtml(m, list[i - 1])).join("");
     clampLong(el);
+    renderTicks();
     toBottom();
   }
 
@@ -409,6 +433,7 @@
     if (list.length === 1) return renderMessages();
     $("messages").insertAdjacentHTML("beforeend", dayDivider(m, prev) + msgHtml(m, prev));
     clampLong($("messages"));
+    renderTicks();
     if (stick) toBottom();
   }
 
@@ -447,9 +472,10 @@
           return `<div class="typing-row"><span class="t-av">🧭</span><span class="dots"><i></i><i></i><i></i></span><span class="t-txt">Choosing who answers…</span></div>`;
         const t = byId(id);
         if (!t) return "";
-        const what = status && status !== "thinking" ? ` · ${esc(status)}` : "";
-        return `<div class="typing-row"><span class="t-av">${t.avatar}</span><span class="dots"><i></i><i></i><i></i></span>
-          <span class="t-txt"><b>${esc(t.name)}</b> is working${what}</span>
+        // Just "typing…", like WhatsApp; what it's actually doing is in the tooltip and the sessions panel.
+        const busyElsewhere = status && /^busy in /.test(status);
+        return `<div class="typing-row" title="${esc(status || "")}"><span class="t-av">${t.avatar}</span><span class="dots"><i></i><i></i><i></i></span>
+          <span class="t-txt"><b>${esc(t.name)}</b> ${busyElsewhere ? `is ${esc(status)}` : "is typing…"}</span>
           <button class="stop" data-stop="${id}" title="Stop ${esc(t.name)}">stop</button></div>`;
       })
       .join("");
@@ -899,7 +925,7 @@
 
   function notify(channelId, m) {
     const t = byId(m.author);
-    if (!t || m.kind === "status" || m.kind === "job" || lookingAt(channelId)) return;
+    if (!t || m.kind === "status" || m.kind === "job" || m.meta?.interim || lookingAt(channelId)) return;
     const forMe = m.kind === "permission" || m.kind === "tools" || new RegExp(`@${S.user}\\b`, "i").test(m.text);
     if (notifyLevel === "mentions" && !forMe) return;
     const c = S.channels.find((x) => x.id === channelId);
@@ -958,7 +984,7 @@
       if (i >= 0) S.channels[i] = e.channel;
       else S.channels.push(e.channel);
       renderSidebar();
-      if (e.channel.id === S.current) (renderStatus(), renderTask());
+      if (e.channel.id === S.current) (renderStatus(), renderTask(), renderTicks());
     } else if (e.type === "job") {
       const ch = S.channels.find((c) => c.id === e.channelId);
       if (ch) {
@@ -974,7 +1000,7 @@
       if (S.view !== "channel") window.AgentPage.refreshSession?.();
     } else if (e.type === "laya") {
       renderLaya(e.laya);
-    } else if (e.type === "update") {
+    } else if (e.type === "appUpdate") {
       renderUpdate(e.update);
     } else if (e.type === "usage") {
       S.usage = e.usage;

@@ -246,6 +246,8 @@ function stubRun(o: RunOptions): Run {
   let stopped = false;
   const lastLine = o.prompt.trim().split("\n").filter((l) => l.startsWith("[")).pop() ?? "";
   const done = (async (): Promise<RunResult> => {
+    // "stub-slow": a hold-on line, then a tool call, then 4 s of work, so the line shows.
+    if (/stub-slow/.test(lastLine)) (o.onText?.("checking"), o.onTool?.("Bash", { command: "git log" }), await Bun.sleep(4000));
     o.onActivity("Read: README.md");
     await Bun.sleep(900);
     o.onActivity("Bash: git status");
@@ -254,6 +256,8 @@ function stubRun(o: RunOptions): Run {
     if (stopped) return { ...base, text: "(stopped)", denials: [] };
     if (o.chat && lastLine.includes("(event)") && /finished|failed/.test(lastLine))
       return { ...base, text: "(stub) The job is done. Report's in the card above.", denials: [] };
+    if (/stub-react/.test(lastLine)) return { ...base, text: "👍", denials: [] };
+    if (/stub-bubbles/.test(lastLine)) return { ...base, text: "found it\n---\n`paths.ts:36` defaults to the home folder\n---\nwant me to change it?", denials: [] };
     if (o.chat && /\bjob\b/i.test(lastLine)) return { ...base, text: "(stub) On it, I started a job.", denials: [] };
     if (/stub-permission/.test(lastLine) && !o.allowedTools.length)
       return { ...base, text: "I need to run the tests for this, can I?", denials: [{ tool: "Bash", rule: "Bash(bun test)", summary: "Bash: bun test" }] };

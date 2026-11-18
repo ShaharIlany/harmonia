@@ -10,6 +10,8 @@ export type Message = {
   kind?: "text" | "permission" | "error" | "job" | "status" | "tools";
   meta?: {
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
+    interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
+    reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
     toolRequest?: {
       agentId: string;
       tools: { name: string; grants: string[] }[]; // grants: the names that go in the agent's allowlist

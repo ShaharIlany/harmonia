@@ -29,7 +29,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
 
 const sockets = new Set<ServerWebSocket<unknown>>();
-const broadcast = (e: Event | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "laya"; laya: LayaStatus } | { type: "update"; update: UpdateStatus }) => {
+const broadcast = (e: Event | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "laya"; laya: LayaStatus } | { type: "appUpdate"; update: UpdateStatus }) => {
   const data = JSON.stringify(e);
   for (const s of sockets) s.send(data);
 };
@@ -45,7 +45,7 @@ process.on("exit", stopLaya);
 
 // Over-the-air updates from git (updates.ts). An install waits until no teammate or job is working.
 const working = () => team.sessions().filter((s) => s.busyIn).length + allChannels().reduce((n, c) => n + c.jobs.filter((j) => j.status === "running").length, 0);
-startUpdates({ notify: (update) => broadcast({ type: "update", update }), busy: working });
+startUpdates({ notify: (update) => broadcast({ type: "appUpdate", update }), busy: working });
 
 // Plan usage (5-hour and weekly windows): every run reports it, and a tiny probe fills it in when nothing ran lately.
 let usage: Usage | undefined;

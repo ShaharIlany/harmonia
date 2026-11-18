@@ -81,6 +81,30 @@ export const jobTitle = (ch: Channel, agentId: string, title: string) => `[${nam
 const time = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
 /** What a teammate answers when a turn needs nothing from it (chat-rules.md, "Is it your turn?"). */
 const NO_REPLY = /^`?\(?no reply\)?`?\.?$/i;
+/** A hold-on line ("checking") shows only if the turn is still going this long after it was written. */
+const HOLD_ON_AFTER = 3000;
+
+/** A reply that's only an emoji or three ("👍", "✅🙏"): shown as a reaction, not as a message. */
+const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*\s*){1,3}$/u;
+
+/** A reply split into WhatsApp-style bubbles at lines with only `---` (never inside a code block). */
+export function bubbles(text: string): string[] {
+  const out: string[] = [];
+  let cur: string[] = [];
+  let fence = false;
+  for (const l of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (!fence && /^\s*---\s*$/.test(l)) {
+      out.push(cur.join("\n"));
+      cur = [];
+      continue;
+    }
+    cur.push(l);
+  }
+  out.push(cur.join("\n"));
+  return out.map((b) => b.trim()).filter(Boolean);
+}
+
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "\n…(cut)" : s);
 
 function line(m: Message): string {
@@ -385,6 +409,9 @@ export class Team {
     this.turnsLeft.set(ch.id, left - 1);
     ch.lastSeen[agentId] = all.length;
     saveChannels();
+    this.emit({ type: "channel", channel: ch }); // read ticks on the user's messages
+    // What an emoji-only reply reacts to: the latest message it read from someone else.
+    const target = fresh.findLast((m) => m.author !== agentId && m.author !== "system" && m.kind !== "job" && m.kind !== "status")?.id;
 
     const where = `#${ch.name} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
@@ -403,6 +430,8 @@ export class Team {
     const t = teammate(agentId)!;
 
     let stopped = false;
+    let said: string | undefined; // the turn's latest words, not yet followed by a tool call
+    let holding: ReturnType<typeof setTimeout> | undefined; // the turn's one hold-on line, waiting to go out
     const busy: { channelId: string; stop: () => void; activity?: string } = { channelId: ch.id, stop: () => {}, activity: "thinking" };
     this.busy.set(agentId, busy);
     this.setActivity(ch, agentId, "typing");
@@ -438,12 +467,24 @@ export class Team {
         this.setActivity(ch, agentId, status);
         this.emitSessions();
       },
+      // Words right before a tool call ("checking", "hold on") are a hold-on line. Only the first one in a turn, and only
+      // if the answer is still not there 3 seconds later: a quick answer comes alone.
+      onText: (text) => void (said = text),
+      onTool: () => {
+        const text = said?.trim().split("\n")[0];
+        said = undefined;
+        if (holding || !text || NO_REPLY.test(text) || EMOJI_ONLY.test(text)) return;
+        holding = setTimeout(() => {
+          if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true } });
+        }, HOLD_ON_AFTER);
+      },
     });
     busy.stop = () => ((stopped = true), run.stop());
 
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: session.sessionId, isError: true, denials: [] }))
       .then((r) => {
+        clearTimeout(holding);
         this.turns.delete(token);
         this.busy.delete(agentId);
         this.setActivity(ch, agentId, null);
@@ -470,7 +511,7 @@ export class Team {
           // Its session file is gone (deleted, or another machine): start over in a new one.
           this.turnsLeft.set(ch.id, (this.turnsLeft.get(ch.id) ?? 0) + 1);
           this.again.add(key);
-        } else if (!stopped) this.afterReply(ch, agentId, r);
+        } else if (!stopped) this.afterReply(ch, agentId, r, target);
         // Other channels that waited go first, then this one again if more came in meanwhile.
         if (this.again.delete(key) || this.events.has(key)) {
           const q = this.queue.get(agentId) ?? [];
@@ -482,12 +523,14 @@ export class Team {
     return true;
   }
 
-  private afterReply(ch: Channel, agentId: string, r: RunResult) {
+  private afterReply(ch: Channel, agentId: string, r: RunResult, target?: string) {
     // "(no reply)": the teammate read the channel and decided it isn't its turn. Nothing is posted or woken.
     if (!r.isError && NO_REPLY.test(r.text.trim())) return;
+    // Only an emoji: a reaction on the message it answers, like WhatsApp. Nobody is woken.
+    if (!r.isError && EMOJI_ONLY.test(r.text.trim())) return target ? this.react(ch, target, agentId, r.text.trim()) : undefined;
     const cached = r.inputTotal ? r.cacheRead! / r.inputTotal : undefined;
     if (r.isError) this.post(ch, { author: agentId, kind: "error", text: r.text || "The run failed." });
-    else if (r.text) this.post(ch, { author: agentId, text: r.text, meta: { cost: r.cost, tokens: r.tokens, cached } });
+    else if (r.text) this.postBubbles(ch, agentId, bubbles(r.text), { cost: r.cost, tokens: r.tokens, cached });
 
     if (!r.isError) {
       // A question to the user makes the user's next plain message go to this teammate.
@@ -497,6 +540,31 @@ export class Team {
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
+  }
+
+  /** The first bubble goes out now; each next one after a short "typing" pause, timed to its length. */
+  private postBubbles(ch: Channel, agentId: string, parts: string[], meta: Message["meta"]) {
+    if (!parts.length) return;
+    this.post(ch, { author: agentId, text: parts[0], meta });
+    let at = 0;
+    for (const part of parts.slice(1)) {
+      setTimeout(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing"), at + 100);
+      at += Math.min(1500, Math.max(600, part.length * 15));
+      setTimeout(() => {
+        if (!this.busy.has(agentId)) this.setActivity(ch, agentId, null);
+        this.post(ch, { author: agentId, text: part });
+      }, at);
+    }
+  }
+
+  /** A teammate's emoji on a message. One reaction per teammate per message; a new one replaces it. */
+  private react(ch: Channel, messageId: string, agentId: string, emoji: string) {
+    const msg = (messages.get(ch.id) ?? []).find((m) => m.id === messageId);
+    if (!msg) return;
+    msg.meta ??= {};
+    msg.meta.reactions = [...(msg.meta.reactions ?? []).filter((x) => x.by !== agentId), { by: agentId, emoji }];
+    saveMessages(ch.id);
+    this.emit({ type: "update", channelId: ch.id, message: msg });
   }
 
   /** A job tool call from a chat session, by its turn token. */
