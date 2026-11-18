@@ -57,8 +57,23 @@ tools (`team-chat-server --job-tools`).
   opens its channel. The 🔔 setting at the bottom of the sidebar switches
   between all of these, only @mentions of you, or off (saved per browser). In
   a browser they're web notifications.
-- **After a code change:** run `build.sh --install` again and reopen the app. The
-  old build goes to the Trash.
+- **Updates over the air:** the app follows the git repo and branch it was
+  built from (`build.json` in the app, written by `build.sh`). Every 30 minutes
+  it fetches the branch into its own clone (`source/` in the data folder). When
+  there are new commits, it builds them there with the same `build.sh`, in the
+  background, and swaps the new build in when no teammate or job is working
+  and you haven't sent anything for 10 minutes (`macapp/update.sh`: quit, old
+  build to the Trash, new one in place, reopen; the old one comes back if the new
+  one doesn't start). The sidebar footer shows an update while it's pending,
+  with **Restart to update** to install it as soon as nobody's working.
+  Team Chat → Check for Updates… checks now. `settings.json`: `updateRepo`,
+  `updateBranch`, and `autoUpdate: false` to only show updates. Building needs
+  git, bun and Xcode's command line tools; Laya's Python is cloned from the
+  installed app when its version hasn't changed. Log: `update.log` in the data
+  folder. A build from a commit that isn't on the branch (not pushed yet)
+  doesn't update.
+- **After a code change:** run `build.sh --install` again and reopen the app, or
+  push it and let the app update itself. The old build goes to the Trash.
 
 To run from source instead: `TEAM_CHAT_DATA="$HOME/Library/Application Support/Team Chat" bun team-chat/server.ts`
 or `bun run stub` to try the UI.
@@ -202,6 +217,7 @@ Jobs and memories stay.
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
 | `router.ts` | Picks who answers a message that names nobody (conversation rules, then Laya) |
 | `laya.ts`, `laya-router.py` | Laya, the local decision model, as a child process of the server |
+| `updates.ts`, `macapp/update.sh` | Over-the-air updates: check, build in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
 | `runner.ts` | Runs `claude -p --agent …`, plus the stub used by `bun run stub` |

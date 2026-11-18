@@ -20,7 +20,8 @@ export const DATA = process.env.TEAM_CHAT_DATA ?? (COMPILED ? join(homedir(), "L
 mkdirSync(DATA, { recursive: true });
 
 /** Optional `settings.json` in the data folder: teamAgentsDir, defaultCwd, clickupWorkspace, clickupTaskPrefix. */
-const settings = readJson(join(DATA, "settings.json"));
+export const SETTINGS: Record<string, any> = readJson(join(DATA, "settings.json"));
+const settings = SETTINGS;
 
 /** The Claude Code project that holds the six chat sessions. */
 export const TEAM_AGENTS: string =

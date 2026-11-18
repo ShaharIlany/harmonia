@@ -495,6 +495,10 @@ a.task-link:hover { color: #9d8cff; }
 .perm-reason { margin-bottom: 10px; }
 
 /* Router status (Laya) in the sidebar footer */
+.update-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--side-strong); padding: 2px 0; }
+.update-status[hidden] { display: none; }
+.update-status .up-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-status.failed .up-text { color: #ff6b8b; }
 .laya-status { font-size: 12px; color: var(--side-text); opacity: 0.85; padding: 2px 0 4px; }
 .laya-status[hidden] { display: none; }
 .laya-status.failed { color: #ff6b8b; }

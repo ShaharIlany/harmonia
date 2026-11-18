@@ -238,6 +238,49 @@
     el.title = s.state === "ready" ? `Laya runs locally (${s.detail}). Messages that name nobody go to the teammate you're talking with, or Laya picks.` : s.detail || "";
   }
 
+  // ---------- Updates (over the air, from git; updates.ts) ----------
+  const short = (sha) => (sha || "").slice(0, 7);
+  function renderUpdate(u) {
+    S.update = u;
+    const el = $("update");
+    const show = u && ["available", "building", "ready", "waiting", "installing", "failed"].includes(u.state);
+    el.hidden = !show;
+    if (!show) return;
+    const n = (u.commits || []).length;
+    const what = n ? `${n} new commit${n === 1 ? "" : "s"}` : `version ${short(u.latest)}`;
+    const [text, button] = {
+      available: [`Update: ${what}`, u.auto ? "" : "Update"],
+      building: [`Building the update… (${what})`, ""],
+      ready: [`Update ready: ${what}`, "Restart to update"],
+      waiting: [`Restarts when nobody's working (${u.detail || "busy"})`, ""],
+      installing: ["Restarting with the update…", ""],
+      failed: ["Update failed", "Try again"],
+    }[u.state];
+    el.className = `update-status ${u.state}`;
+    el.title = [u.state === "failed" ? u.detail : "", ...(u.commits || []), `Running ${short(u.current)}`].filter(Boolean).join("\n");
+    el.innerHTML = `<span class="up-text">⬆ ${esc(text)}</span>${button ? `<button class="cli-btn ghost" data-update-apply>${esc(button)}</button>` : ""}`;
+  }
+  document.addEventListener("click", async (e) => {
+    if (!e.target.closest("[data-update-apply]")) return;
+    try {
+      renderUpdate(await api("/api/update/apply", {}));
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  // The app's "Check for Updates…" menu item calls this.
+  window.teamChatCheckUpdates = async () => {
+    try {
+      const u = await api("/api/update/check", {});
+      renderUpdate(u);
+      if (u.state === "off") toast(u.detail || "Updates are off.");
+      else if (u.state === "idle") toast(`Team Chat is up to date (${short(u.current)}).`);
+      else if (u.state === "failed") toast(`Couldn't check for updates: ${u.detail}`);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+
   // ---------- Replies ----------
   const authorName = (id) => (id === "user" ? S.user : byId(id)?.name || id);
   const snippet = (text) => {
@@ -931,6 +974,8 @@
       if (S.view !== "channel") window.AgentPage.refreshSession?.();
     } else if (e.type === "laya") {
       renderLaya(e.laya);
+    } else if (e.type === "update") {
+      renderUpdate(e.update);
     } else if (e.type === "usage") {
       S.usage = e.usage;
       renderUsage();
@@ -985,6 +1030,7 @@
     $("task-input").placeholder = `${window.TEAM_TASK_PREFIX || "ABC"}-123`;
     S.usage = st.usage || null;
     renderLaya(st.laya);
+    renderUpdate(st.update);
     renderUsage();
     S.chatModels = st.chatModels;
     S.chatEfforts = st.chatEfforts;

@@ -7,6 +7,19 @@ APP="build/Team Chat.app"
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# What this build is, for over-the-air updates (updates.ts): the commit, and the repo and branch to follow.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  COMMIT="$(git rev-parse HEAD)"
+  BRANCH="${TEAM_CHAT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+  REPO="${TEAM_CHAT_REPO:-$(git remote get-url origin 2>/dev/null || true)}"
+  DIRTY=$([ -n "$(git status --porcelain)" ] && echo true || echo false)
+  printf '{"commit":"%s","branch":"%s","repo":"%s","dirty":%s,"builtAt":"%s"}\n' \
+    "$COMMIT" "$BRANCH" "$REPO" "$DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$APP/Contents/Resources/build.json"
+else
+  rm -f "$APP/Contents/Resources/build.json"
+fi
+cp macapp/update.sh "$APP/Contents/Resources/update.sh"
+
 echo "› server"
 bun build --compile main.ts --outfile "$APP/Contents/Resources/team-chat-server" >/dev/null
 
@@ -31,6 +44,14 @@ cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # laya's packages. Built once into build/laya (the dev server uses the same copy) and rebuilt when LAYA_VERSION changes.
 LAYA_VERSION=0.4.35
 LAYA_PY=3.14
+# An update builds in a fresh clone: it borrows the installed app's copy when the version matches.
+LAYA_SEED="${TEAM_CHAT_LAYA_SEED:-$HOME/Applications/Team Chat.app/Contents/Resources/laya}"
+if [ "$(cat build/laya/version 2>/dev/null)" != "$LAYA_VERSION/$LAYA_PY" ] && [ "$(cat "$LAYA_SEED/version" 2>/dev/null)" = "$LAYA_VERSION/$LAYA_PY" ]; then
+  echo "› laya from $LAYA_SEED"
+  rm -rf build/laya
+  cp -cR "$LAYA_SEED" build/laya 2>/dev/null || ditto "$LAYA_SEED" build/laya
+  rm -f build/laya/laya-router.py
+fi
 if [ "$(cat build/laya/version 2>/dev/null)" != "$LAYA_VERSION/$LAYA_PY" ]; then
   echo "› laya $LAYA_VERSION (python $LAYA_PY)"
   [ -d build/laya ] && mv build/laya "$HOME/.Trash/team-chat-laya-$(date +%Y%m%d-%H%M%S)"
@@ -41,8 +62,8 @@ if [ "$(cat build/laya/version 2>/dev/null)" != "$LAYA_VERSION/$LAYA_PY" ]; then
   uv pip install --quiet --python build/laya/python/bin/python3 --target build/laya/site-packages "laya==$LAYA_VERSION"
   echo "$LAYA_VERSION/$LAYA_PY" > build/laya/version
 fi
-mkdir -p "$APP/Contents/Resources/laya"
-ditto build/laya "$APP/Contents/Resources/laya"
+rm -rf "$APP/Contents/Resources/laya"
+cp -cR build/laya "$APP/Contents/Resources/laya" 2>/dev/null || ditto build/laya "$APP/Contents/Resources/laya"
 cp laya-router.py "$APP/Contents/Resources/laya/laya-router.py"
 
 echo "› sign (ad hoc)"
@@ -70,5 +91,5 @@ if [ -d "$DEST" ]; then
   # Keep the old build in the Trash rather than deleting it.
   mv "$DEST" "$HOME/.Trash/Team Chat $(date +%Y%m%d-%H%M%S).app"
 fi
-ditto "$APP" "$DEST"
+cp -cR "$APP" "$DEST" 2>/dev/null || ditto "$APP" "$DEST"
 echo "Installed $DEST"

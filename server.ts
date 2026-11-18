@@ -11,6 +11,7 @@ import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
 import { CHANNEL_STATUSES, channels, createChannel, messages } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { layaStatus, startLaya, stopLaya, type LayaStatus } from "./laya";
+import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 
 const PORT = Number(process.env.PORT ?? 4747);
@@ -28,7 +29,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
 
 const sockets = new Set<ServerWebSocket<unknown>>();
-const broadcast = (e: Event | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "laya"; laya: LayaStatus }) => {
+const broadcast = (e: Event | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "laya"; laya: LayaStatus } | { type: "update"; update: UpdateStatus }) => {
   const data = JSON.stringify(e);
   for (const s of sockets) s.send(data);
 };
@@ -41,6 +42,10 @@ if (!channels.size) createChannel("general", DEFAULT_CWD);
 startLaya((laya) => broadcast({ type: "laya", laya }));
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (stopLaya(), process.exit(0)));
 process.on("exit", stopLaya);
+
+// Over-the-air updates from git (updates.ts). An install waits until no teammate or job is working.
+const working = () => team.sessions().filter((s) => s.busyIn).length + allChannels().reduce((n, c) => n + c.jobs.filter((j) => j.status === "running").length, 0);
+startUpdates({ notify: (update) => broadcast({ type: "update", update }), busy: working });
 
 // Plan usage (5-hour and weekly windows): every run reports it, and a tiny probe fills it in when nothing ran lately.
 let usage: Usage | undefined;
@@ -67,6 +72,7 @@ const state = () => ({
   clickupWorkspace: CLICKUP_WORKSPACE,
   clickupTaskPrefix: CLICKUP_TASK_PREFIX,
   laya: layaStatus(),
+  update: updateStatus(),
   usage,
   sessions: team.sessions(),
   defaultCwd: DEFAULT_CWD,
@@ -154,6 +160,17 @@ Bun.serve({
       const post = req.method === "POST";
 
       if (p === "/api/state") return json(state());
+
+      if (p === "/api/update/check" && post) {
+        await checkForUpdates();
+        return json(updateStatus());
+      }
+      if (p === "/api/update/apply" && post) {
+        const err = await applyUpdate();
+        return err ? json({ error: err }, 409) : json(updateStatus());
+      }
+      // Anything else you do on the page holds back an automatic install for a while.
+      if (post && p !== "/api/usage") noteActivity();
 
       // The page asks when it's shown again; a probe runs only if no run reported usage in the last 5 minutes.
       if (p === "/api/usage" && post) {

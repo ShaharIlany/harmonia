@@ -316,6 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   @objc func openInBrowser() { NSWorkspace.shared.open(URL(string: "http://localhost:\(port)")!) }
   @objc func openLog() { NSWorkspace.shared.open(logDir.appendingPathComponent("server.log")) }
   @objc func closeWindow() { window.orderOut(nil) }
+  /// The page checks (updates.ts) and says what it found.
+  @objc func checkForUpdates() {
+    window.makeKeyAndOrderFront(nil)
+    web.evaluateJavaScript("window.teamChatCheckUpdates && window.teamChatCheckUpdates()")
+  }
 
   func buildMenu() {
     let main = NSMenu()
@@ -333,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     }
     add("Team Chat", [
       item("About Team Chat", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+      item("Check for Updates…", #selector(checkForUpdates)),
       .separator(),
       item("Hide Team Chat", #selector(NSApplication.hide(_:)), "h"),
       item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
