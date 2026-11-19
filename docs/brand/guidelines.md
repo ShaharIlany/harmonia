@@ -28,8 +28,8 @@ The app icon itself is drawn by `macapp/make-icon.swift` from the same numbers. 
 | Coral | `#E0583A` | 224 88 58 | The bubble. Brand colour. |
 | Coral, text | `#C4462B` | 196 70 43 | Accent and active channel in light mode (4.9:1 with white). |
 | Coral, dark | `#EB6B4D` | 235 107 77 | Accent in dark mode (5.4:1 on the dark background). |
-| Warm ink | `#2A211E` | 42 33 30 | Sidebar (light mode), icon tile, wordmark on light. |
-| Ink, dark | `#1C1715` | 28 23 21 | Sidebar in dark mode. |
+| Warm ink | `#2A211E` | 42 33 30 | The band at the top of the chat list, icon tile, wordmark on light. |
+| Ink, dark | `#1C1715` | 28 23 21 | That band in dark mode. |
 
 The six dots, clockwise from the top: `#EAB308`, `#22C55E`, `#06B6D4`, `#3B82F6`, `#A855F7`, `#EF4444` (the
 starter teammates' colours from `team.json`). Red sits at the upper left, away from the coral bubble's tail. The

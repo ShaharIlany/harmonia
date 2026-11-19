@@ -13,7 +13,7 @@ async function page(scheme) {
   await p.goto(URL);
   await p.waitForSelector(".msg");
   // The demo runs the stub server: hide its badge and show the router as it is in the app.
-  await p.addStyleTag({ content: "#stub-badge{display:none!important} .msg-actions{transition:none!important}" });
+  await p.addStyleTag({ content: "#stub-badge{display:none!important} .m-side{transition:none!important}" });
   await p.evaluate(() => {
     const el = document.getElementById("laya");
     el.hidden = false;
@@ -45,10 +45,16 @@ await shot(light, "channel.png");
 await light.setViewportSize({ width: 1440, height: 900 });
 
 await open(light, "csv-export");
-await light.hover(".msg:last-child");
-await light.click(".msg:last-child [data-reply]");
+await light.hover("#messages .msg:last-child .bubble");
+await light.click("#messages .msg:last-child [data-reply]");
 await light.keyboard.type("Yes, 500 on production too");
 await shot(light, "reply-and-router.png");
+await light.keyboard.press("Escape");
+
+await open(light, "csv-export");
+await light.locator("#messages .msg.in .bubble").last().click({ button: "right", position: { x: 220, y: 40 } });
+await light.waitForTimeout(250);
+await light.screenshot({ path: `${OUT}/menus.png` });
 await light.keyboard.press("Escape");
 
 await open(light, "dark-mode");

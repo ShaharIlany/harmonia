@@ -1,6 +1,6 @@
 # Team chat
 
-A local Slack-style group chat with the six teammates in `~/.claude/agents`
+A local group chat, laid out like WhatsApp, with the six teammates in `~/.claude/agents`
 (Dali, Leo, Elliot, Sherlock, Murphy, Emily).
 
 ![A channel: Leo lays out options, Elliot's job card, Sherlock's review and Murphy asking for a new tool](docs/screenshots/channel.png)
@@ -9,10 +9,10 @@ Each teammate is a Claude Code agent. They talk in channels, hand work to each
 other with @mentions, and start Claude Code jobs for real work. You approve
 their permissions and new tools from cards in the chat.
 
-| Replies and the local router | A teammate's settings |
-| --- | --- |
-| ![Replying to Murphy; the earlier message was routed to Murphy by Laya](docs/screenshots/reply-and-router.png) | ![Leo's profile: name, role, routing keywords, avatar, chat model and effort](docs/screenshots/teammate-settings.png) |
-| A reply wakes only the teammate you reply to. A message that names nobody goes to whoever you're talking with, or Laya (a local model, inside the app) picks. | Name, role, routing keywords, avatar, colour, and the chat session's model and effort. |
+| Replies and the local router | Right-click menus | A teammate's settings |
+| --- | --- | --- |
+| ![Replying to Murphy; the earlier message was routed to Murphy by Laya](docs/screenshots/reply-and-router.png) | ![A message's menu: reactions, reply, copy, message the teammate, their settings](docs/screenshots/menus.png) | ![Leo's profile: name, role, routing keywords, avatar, chat model and effort](docs/screenshots/teammate-settings.png) |
+| A reply wakes only the teammate you reply to. A message that names nobody goes to whoever you're talking with, or Laya (a local model, inside the app) picks. | Right-click a message, a channel or a teammate. | Name, role, routing keywords, avatar, colour, and the chat session's model and effort. |
 
 <details>
 <summary>Dark mode</summary>
@@ -64,7 +64,9 @@ tools (`team-chat-server --job-tools`).
   `~/Library/Logs/Team Chat/server.log` (View → Show Server Log).
 - **Window:** closing it keeps the team running; click the Dock icon to bring it
   back. Quit (⌘Q) stops the server, and asks first if a teammate or job is still
-  working. Unread messages show as a Dock badge. Links open in your browser;
+  working. The Dock badge counts teammates' messages that came while you weren't
+  looking (another channel, or the app in the background); muted channels
+  don't count. Links open in your browser;
   View → Open in Browser shows the same chat in Chrome.
 - **Notifications:** whenever you're not looking at a channel (another channel,
   the window hidden, or the app in the background), a teammate's reply, a
@@ -153,7 +155,8 @@ Jobs and memories stay.
   spoke in the last 4 messages (a short "yes" belongs to them); else **Laya**
   (`laya.ts`, `laya-router.py`), a local decision model, picks by each
   teammate's role and *routing keywords* (teammate page → Profile). Its pick
-  shows under your message ("→ Elliot · Laya, 84% sure"). While Laya loads
+  shows under your message: "🧭 Laya picked Elliot · 84% sure" when Laya
+  decided, "→ Elliot · continuing with Elliot" when a rule did. While Laya loads
   (~10 s after start) or if it's down, Emily gets the message. The sidebar
   footer shows Laya's state; its log is `laya.log` in the data folder.
 - **Laya inside the app:** `macapp/build.sh` builds `build/laya` once: a
@@ -177,7 +180,15 @@ Jobs and memories stay.
   steps: its narration, tool calls and results. The chat session isn't
   involved, and teammates don't read these updates as chat lines. If the call
   fails, the update falls back to the job's latest words and current step.
-- **Reply to a message:** hover a message → ↩ Reply. The composer shows what
+- **Menus:** right-click (or Shift+F10 on) a message, a channel or a
+  teammate. A message: react, reply, copy, try again, open or stop its job,
+  message the teammate, and when it was sent and what it cost. A channel: mark
+  read or unread, pin to the top, mute, status, ClickUp task, open its folder,
+  archive (also under ⋮ in the header). Pins, mutes and unread counts are kept
+  per browser. A muted channel still notifies you when a teammate needs your OK.
+- **Reactions:** your emoji on any message (its menu, or ☺ beside it); click
+  your reaction to take it off. Teammates react by answering with only an emoji.
+- **Reply to a message:** hover a message → ↩ beside it, or Reply in its menu. The composer shows what
   you're answering (Esc cancels), and the posted message quotes it (click the
   quote to jump there). A reply to a teammate's message wakes that teammate
   directly, with no router; an @mention in the reply wins instead. The
@@ -188,8 +199,8 @@ Jobs and memories stay.
   an Approve / Deny card appears. Approve adds both names of each tool (app and
   CLI form; the app form's connector id is read from the agent files) to `~/.claude/agents/<id>.md`, so the teammate has it for good, in
   the chat and in jobs; either way it hears back as an event and carries on.
-- **ClickUp task:** "+ ClickUp task" next to a channel's name tags it with a
-  task. Accepts a custom task id (`ABC-123`, or `123` when `clickupTaskPrefix`
+- **ClickUp task:** "+ ClickUp task" next to a channel's name (or the
+  channel's menu) tags it with a task. Accepts a custom task id (`ABC-123`, or `123` when `clickupTaskPrefix`
   is `ABC`), an internal id, or a task link. The task shows as a pill in the sidebar and the header. Clicking the
   header pill opens it in Chrome (`open -a "Google Chrome"`, falling back to
   the default browser); ✎ changes or removes it. Every chat turn in the
@@ -199,12 +210,13 @@ Jobs and memories stay.
   backticks) links to that ClickUp task, with no tagging needed (`linkTasks` in
   `markdown.js`; it needs `clickupWorkspace` and `clickupTaskPrefix`). In the app, ClickUp links open
   in Chrome, and other links in the default browser.
-- **Channel status:** the picker in a channel's header tags it In progress,
-  Waiting for response or For later, and the sidebar groups channels by tag.
+- **Channel status:** the channel's menu tags it In progress, Waiting for
+  response or For later, and the chat list groups channels by tag (newest
+  message first, pinned ones on top). The search box filters by name or task.
   Archived channels fold away at the bottom of the list. They're read-only:
   you can't post, nobody is woken there, and archiving is refused while a
   teammate or job is still working in the channel. Unarchive from the bar at
-  the bottom of an archived channel, or pick another status.
+  the bottom of an archived channel, or from its menu.
 - **Errors:** a failed turn leaves its messages unread, and the error has a
   **Try again** button. A chat session file that disappeared is replaced by a
   new session automatically.

@@ -18,6 +18,8 @@
     sessions: [], // the six chat sessions: { agentId, sessionId, busyIn, activity, queue, turns, cost, context, cacheRead, inputTotal }
     chatModels: {},
     chatEfforts: [],
+    previews: {}, // channelId → its latest message (the chat list's second line)
+    filter: "", // the chat list's search box
   };
   const byId = (id) => S.roster.find((t) => t.id === id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -45,6 +47,31 @@
   const store = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+  // Pinned and muted channels, and unread counts, are this Mac's choices: kept in the page's storage.
+  const storedSet = (k) => {
+    const set = new Set(JSON.parse(store.get(k) || "[]"));
+    return { has: (id) => set.has(id), toggle: (id) => (set.has(id) ? set.delete(id) : set.add(id), store.set(k, JSON.stringify([...set]))) };
+  };
+  const pinned = storedSet("team-chat:pinned");
+  const muted = storedSet("team-chat:muted");
+  S.unread = JSON.parse(store.get("team-chat:unread") || "{}");
+  const saveUnread = () => store.set("team-chat:unread", JSON.stringify(S.unread));
+  // The chat list's time: 14:05 today, then Yesterday, the weekday, the date.
+  const listTime = (ts) => {
+    const d = new Date(ts), now = new Date();
+    if (d.toDateString() === now.toDateString()) return fmtTime(ts);
+    const days = Math.floor((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400e3);
+    if (days === 1) return "Yesterday";
+    if (days < 7) return d.toLocaleDateString([], { weekday: "long" });
+    return d.toLocaleDateString([], { day: "numeric", month: "numeric", year: "2-digit" });
+  };
+  // A channel's avatar colour: one of the teammates' colours, picked by its name.
+  const chColor = (c) => {
+    const colors = S.roster.map((t) => t.color);
+    let h = 0;
+    for (const ch of c.name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return colors.length ? colors[h % colors.length] : "#888";
   };
 
   async function api(path, body) {
@@ -74,35 +101,75 @@
   ];
   const statusLabel = (id) => (STATUSES.find((x) => x.id === (id || "")) || {}).label || "";
   let showArchived = store.get("team-chat:archived-open") === "1";
+  /** The chat list's second line: who said what last, or who's typing right now. */
+  function previewHtml(c) {
+    const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
+    if (typing.length) return `<span class="c-typing">${esc(typing.map((t) => t.name).join(", "))} ${typing.length > 1 ? "are" : "is"} typing…</span>`;
+    const m = S.previews[c.id];
+    if (!m || (m.author === "system" && !m.text)) return `<span class="c-folder">${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>`;
+    const who = m.author === "user" ? "You" : m.author === "system" ? "" : authorName(m.author);
+    const t = byId(m.author);
+    const what = {
+      permission: "🔐 needs your OK",
+      tools: "🧰 asks for a tool",
+      job: `⚙️ started a job`,
+      error: `⚠️ ${snippet(m.text)}`,
+    }[m.kind] || snippet(m.text);
+    return `${who ? `<span class="c-who"${t ? ` style="--c:${t.color}"` : ""}>${esc(who)}:</span> ` : ""}<span dir="auto">${esc(what)}</span>`;
+  }
+
   function renderSidebar() {
     const row = (c) => {
       const n = S.unread[c.id] || 0;
       const active = S.view === "channel" && c.id === S.current;
-      return `<li><button data-ch="${c.id}" class="${active ? "active" : ""} ${n ? "unread" : ""} ${c.status === "archived" ? "archived" : ""}">
-        <span class="hash">#</span><span class="ch-label">${esc(c.name)}</span>${c.task ? `<span class="task-pill" title="ClickUp ${esc(c.task.id)}">${esc(c.task.id)}</span>` : ""}${n ? `<span class="badge">${n}</span>` : ""}</button></li>`;
+      const last = S.previews[c.id];
+      return `<li><button data-ch="${c.id}" class="chat-row ${active ? "active" : ""} ${n ? "unread" : ""} ${c.status === "archived" ? "archived" : ""}" aria-haspopup="menu">
+        <span class="c-av" style="--c:${chColor(c)}" aria-hidden="true">#${c.status ? `<span class="c-status status-dot s-${c.status}"></span>` : ""}</span>
+        <span class="c-main">
+          <span class="c-top"><span class="c-name">${esc(c.name)}</span>${c.task ? `<span class="task-pill" title="ClickUp ${esc(c.task.id)}">${esc(c.task.id)}</span>` : ""}<span class="c-time">${last ? listTime(last.ts) : ""}</span></span>
+          <span class="c-bot"><span class="c-prev">${previewHtml(c)}</span>
+            ${muted.has(c.id) ? `<span class="c-icon" title="Muted">🔕</span>` : ""}${pinned.has(c.id) ? `<span class="c-icon" title="Pinned">📌</span>` : ""}${n ? `<span class="badge ${muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</span>
+        </span></button></li>`;
     };
-    const tagged = S.channels.some((c) => c.status && c.status !== "archived");
-    $("channels").innerHTML = STATUSES.map((st) => {
-      const list = S.channels.filter((c) => (c.status || "") === st.id);
-      if (!list.length) return "";
-      if (st.id === "archived") {
-        list.sort((a, b) => (b.statusAt || 0) - (a.statusAt || 0));
-        return `<li><button class="ch-group archived-toggle" data-archived-toggle aria-expanded="${showArchived}">${showArchived ? "▾" : "▸"} Archived <span class="count">${list.length}</span></button></li>` +
-          (showArchived ? list.map(row).join("") : "");
-      }
-      // Untagged channels need no heading until some channel has a tag.
-      const head = st.id || tagged ? `<li class="ch-group"><span class="status-dot s-${st.id || "none"}" aria-hidden="true"></span>${st.label}</li>` : "";
-      return head + list.map(row).join("");
-    }).join("");
+    const byLatest = (a, b) => ((S.previews[b.id] || {}).ts || 0) - ((S.previews[a.id] || {}).ts || 0);
+    const q = S.filter.trim().toLowerCase();
+    const shown = S.channels.filter((c) => !q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q)));
+    const tagged = shown.some((c) => c.status && c.status !== "archived");
+    const pins = shown.filter((c) => pinned.has(c.id) && c.status !== "archived").sort(byLatest);
+    $("channels").innerHTML =
+      (pins.length ? `<li class="ch-group">Pinned</li>` + pins.map(row).join("") : "") +
+      STATUSES.map((st) => {
+        const list = shown.filter((c) => (c.status || "") === st.id && !(pinned.has(c.id) && st.id !== "archived")).sort(byLatest);
+        if (!list.length) return "";
+        if (st.id === "archived") {
+          list.sort((a, b) => (b.statusAt || 0) - (a.statusAt || 0));
+          const open = showArchived || !!q;
+          return `<li><button class="ch-group archived-toggle" data-archived-toggle aria-expanded="${open}">${open ? "▾" : "▸"} Archived <span class="count">${list.length}</span></button></li>` +
+            (open ? list.map(row).join("") : "");
+        }
+        // Untagged channels need no heading until some channel has a tag (or is pinned).
+        const head = st.id || tagged || pins.length ? `<li class="ch-group"><span class="status-dot s-${st.id || "none"}" aria-hidden="true"></span>${st.label}</li>` : "";
+        return head + list.map(row).join("");
+      }).join("") +
+      (q && !shown.length ? `<li class="c-none">No channel matches “${esc(S.filter)}”.</li>` : "");
     const busy = new Set([
       ...S.sessions.filter((x) => x.busyIn).map((x) => x.agentId),
       ...S.channels.flatMap((c) => (c.jobs || []).filter((j) => j.status === "running").map((j) => j.agentId)),
     ]);
     $("people").innerHTML = S.roster
-      .map((t) => `<li><button class="person ${busy.has(t.id) ? "busy" : ""} ${S.view === t.id ? "active" : ""}" data-person="${t.id}" title="${esc(t.name)}'s settings">
-          <span class="p-avatar">${t.avatar}<span class="dot"></span></span><span>${esc(t.name)}</span><span class="p-role">${esc(t.role)}</span></button></li>`)
+      .map((t) => `<li><button class="chat-row person ${busy.has(t.id) ? "busy" : ""} ${S.view === t.id ? "active" : ""}" data-person="${t.id}" title="${esc(t.name)}'s settings" aria-haspopup="menu">
+          <span class="c-av p-avatar" style="--c:${t.color}">${t.avatar}<span class="dot"></span></span>
+          <span class="c-main"><span class="c-top"><span class="c-name">${esc(t.name)}</span></span><span class="c-bot"><span class="c-prev">${busy.has(t.id) ? `<span class="c-typing">working…</span>` : esc(t.role)}</span></span></span></button></li>`)
       .join("");
   }
+  $("search").addEventListener("input", (e) => {
+    S.filter = e.target.value;
+    renderSidebar();
+  });
+  $("search").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") (e.target.value = ""), (S.filter = ""), renderSidebar();
+    if (e.key === "Enter") $("channels").querySelector("[data-ch]")?.click();
+  });
 
   $("channels").addEventListener("click", (e) => {
     if (e.target.closest("[data-archived-toggle]")) {
@@ -165,15 +232,12 @@
   const AUTH_ERROR = /authenticat|oauth|not logged in|log ?in|sign ?in|401/i;
 
   function msgHtml(m, prev) {
-    if (m.author === "system") return `<div class="msg system">${esc(m.text)}</div>`;
+    if (m.author === "system") return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}</span></div>`;
     const t = byId(m.author);
     const isUser = m.author === "user";
     const name = isUser ? S.user : t ? t.name : m.author;
-    const card = (x) => x.kind === "permission" || x.kind === "tools";
-    const cont = prev && prev.author === m.author && prev.author !== "system" && m.ts - prev.ts < 5 * 60e3 && !card(m) && !card(prev) && !(m.meta && m.meta.replyTo);
-    const avatar = isUser
-      ? `<div class="avatar user">${esc(S.user.charAt(0))}</div>`
-      : `<button class="avatar" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`;
+    // A run of messages from one person within a few minutes, on one day, shares one name and one bubble tail.
+    const cont = prev && prev.author === m.author && m.ts - prev.ts < 5 * 60e3 && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
 
     let body;
     if (m.kind === "job") {
@@ -202,10 +266,6 @@
       </div>`;
     } else {
       body = `<div class="text" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
-      if (isUser && m.meta && m.meta.routedTo) {
-        const who = m.meta.routedTo.map((id) => byId(id)).filter(Boolean).map((x) => `${x.avatar} ${esc(x.name)}`).join(", ");
-        body += `<div class="routed" title="Picked by the channel's router">→ ${who}${m.meta.routeWhy ? ` · ${esc(m.meta.routeWhy)}` : ""}</div>`;
-      }
       if (m.kind === "status") body = `<div class="text status-update" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
       if (m.kind === "error") {
         const fix = AUTH_ERROR.test(m.text) && !/thinking|signature/i.test(m.text) ? `<button class="btn primary" data-cli-login>Quick login to Claude CLI</button>` : "";
@@ -215,18 +275,49 @@
     }
 
     if (m.meta && m.meta.replyTo) body = quoteHtml(m.meta.replyTo) + body;
-    if (m.meta && m.meta.reactions && m.meta.reactions.length) body += reactionsHtml(m.meta.reactions);
-    if (isUser) body += `<span class="ticks" data-ticks="${m.id}"></span>`;
-    const tip = m.meta && [m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`, m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% from the prompt cache`].filter(Boolean).join(" · ");
-    const nameEl = t ? `<button class="name" data-person="${m.author}">${esc(name)}</button>` : `<span class="name">${esc(name)}</span>`;
+    const tip = msgInfo(m);
+    // Time and ticks sit in the bubble's bottom corner, like WhatsApp.
+    const foot = `<span class="b-meta" title="${esc(tip)}">${fmtTime(m.ts)}${isUser ? `<span class="ticks" data-ticks="${m.id}"></span>` : ""}</span>`;
+    const wide = ["job", "permission", "tools"].includes(m.kind);
     const archived = currentChannel()?.status === "archived";
-    return `<div class="msg ${cont ? "cont" : ""} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
-      ${archived ? "" : `<div class="msg-actions"><button class="btn" data-reply="${m.id}" title="Reply to this message${t ? ` (goes to ${esc(name)})` : ""}">↩ Reply</button></div>`}
-      ${cont ? `<div class="side-time">${fmtTime(m.ts)}</div>` : avatar}
-      <div class="body">
-        ${cont ? "" : `<div class="meta">${nameEl}${t ? `<span class="role">${esc(t.role)}</span>` : ""}<span class="time"${tip ? ` title="${esc(tip)}"` : ""}>${fmtTime(m.ts)}</span></div>`}
-        ${body}
-      </div></div>`;
+    const side = archived ? "" : `<div class="m-side">
+        <button class="m-btn" data-react-pick="${m.id}" title="React" aria-label="React">☺</button>
+        <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button></div>`;
+    return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
+      ${isUser ? "" : cont ? `<span class="m-av"></span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
+      <div class="m-col">
+        <div class="bubble ${wide ? "wide" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
+          <button class="m-more" data-msg-menu="${m.id}" aria-label="Message menu" title="More">⌄</button>
+          ${!isUser && !cont ? `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>` : ""}
+          ${body}${foot}
+        </div>
+        ${m.meta && m.meta.reactions && m.meta.reactions.length ? reactionsHtml(m.id, m.meta.reactions) : ""}
+        ${isUser && m.meta && m.meta.routedTo ? routedHtml(m.meta) : ""}
+      </div>
+      ${side}
+    </div>`;
+  }
+
+  /** The line under your message: who the router picked, and whether Laya (the local model) or a rule decided. */
+  function routedHtml(meta) {
+    const who = meta.routedTo.map((id) => byId(id)).filter(Boolean).map((x) => `${x.avatar} ${esc(x.name)}`).join(", ");
+    const why = meta.routeWhy || "";
+    const laya = /^Laya,/.test(why);
+    const text = laya ? `🧭 Laya picked ${who} · ${esc(why.replace(/^Laya, /, ""))}` : `→ ${who}${why ? ` · ${esc(why)}` : ""}`;
+    const tip = laya
+      ? "Laya, the local model, chose who answers this."
+      : /^nobody named/.test(why) ? "Laya couldn't decide, so it went to the teammate who takes unaddressed messages." : "A rule chose who answers this (not Laya): the conversation was already with them.";
+    return `<div class="routed" title="${tip}">${text}</div>`;
+  }
+
+  /** Message details: when, what it cost. The bubble's time tooltip and the menu's last line. */
+  function msgInfo(m) {
+    const d = new Date(m.ts);
+    return [
+      `${d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })} ${fmtTime(m.ts)}`,
+      m.meta && m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`,
+      m.meta && m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% cached`,
+    ].filter(Boolean).join(" · ");
   }
 
   // ---------- Router status (Laya, the local model that picks who answers) ----------
@@ -284,11 +375,18 @@
   };
 
   // ---------- Reactions and read ticks ----------
-  function reactionsHtml(list) {
+  function reactionsHtml(id, list) {
     const by = new Map();
-    for (const r of list) by.set(r.emoji, [...(by.get(r.emoji) || []), authorName(r.by)]);
-    return `<div class="reactions">${[...by].map(([emoji, who]) => `<span class="reaction" title="${esc(who.join(", "))}">${esc(emoji)}${who.length > 1 ? `<b>${who.length}</b>` : ""}</span>`).join("")}</div>`;
+    for (const r of list) by.set(r.emoji, [...(by.get(r.emoji) || []), r.by]);
+    return `<div class="reactions">${[...by]
+      .map(([emoji, who]) => {
+        const mine = who.includes("user");
+        const names = who.map((x) => (x === "user" ? "You" : authorName(x))).join(", ");
+        return `<button class="reaction ${mine ? "mine" : ""}" ${mine ? `data-react="${esc(emoji)}" data-mid="${id}" title="${esc(names)} · click to take yours off"` : `title="${esc(names)}" tabindex="-1"`}>${esc(emoji)}${who.length > 1 ? `<b>${who.length}</b>` : ""}</button>`;
+      })
+      .join("")}</div>`;
   }
+  const react = (id, emoji) => api(`/api/channels/${S.current}/react`, { messageId: id, emoji }).catch((err) => toast(err.message));
   /** ✓ sent, blue ✓✓ once a teammate has read it (its lastSeen in the channel is past the message). */
   function renderTicks() {
     const ch = currentChannel();
@@ -386,7 +484,7 @@
   }
 
   function dayDivider(m, prev) {
-    return !prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString() ? `<div class="day">${fmtDay(m.ts)}</div>` : "";
+    return !prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString() ? `<div class="day"><span>${fmtDay(m.ts)}</span></div>` : "";
   }
 
   function clampLong(root) {
@@ -437,7 +535,180 @@
     if (stick) toBottom();
   }
 
+  // ---------- Context menus (right-click, or the ⌄ / ⋮ buttons) ----------
+  // items: { label, icon, run, danger, checked, disabled } | { sep: true } | { head: "…" } | { emojis: [...], run(emoji) } | { info: "…" }
+  const menuEl = document.createElement("div");
+  menuEl.className = "menu";
+  menuEl.setAttribute("role", "menu");
+  menuEl.hidden = true;
+  document.body.append(menuEl);
+  let menuItems = [], menuReturn = null;
+
+  function openMenu(items, at, from) {
+    menuItems = items.filter(Boolean);
+    menuReturn = from || document.activeElement;
+    menuEl.innerHTML = menuItems
+      .map((it, i) => {
+        if (it.sep) return `<div class="menu-sep" role="separator"></div>`;
+        if (it.head) return `<div class="menu-head">${esc(it.head)}</div>`;
+        if (it.info) return `<div class="menu-info">${esc(it.info)}</div>`;
+        if (it.emojis) return `<div class="menu-emojis">${it.emojis.map((e) => `<button role="menuitem" data-i="${i}" data-emoji="${esc(e)}" class="${it.current === e ? "sel" : ""}" aria-label="React ${esc(e)}">${esc(e)}</button>`).join("")}</div>`;
+        return `<button role="menuitem${it.checked !== undefined ? "checkbox" : ""}" data-i="${i}" class="menu-item ${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""} ${it.checked !== undefined ? `aria-checked="${it.checked}"` : ""}>
+          <span class="mi-icon" aria-hidden="true">${it.checked ? "✓" : it.icon || ""}</span><span>${esc(it.label)}</span></button>`;
+      })
+      .join("");
+    menuEl.hidden = false;
+    // At the pointer, or under the button; kept inside the window.
+    const r = menuEl.getBoundingClientRect();
+    const x = Math.min(at.x, innerWidth - r.width - 8), y = at.y + r.height > innerHeight - 8 ? Math.max(8, at.y - r.height) : at.y;
+    menuEl.style.left = `${Math.max(8, x)}px`;
+    menuEl.style.top = `${y}px`;
+    menuEl.querySelector("button:not([disabled])")?.focus();
+  }
+  function closeMenu(refocus = true) {
+    if (menuEl.hidden) return;
+    menuEl.hidden = true;
+    if (refocus && menuReturn && document.contains(menuReturn)) menuReturn.focus();
+  }
+  menuEl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-i]");
+    if (!b || b.disabled) return;
+    const it = menuItems[b.dataset.i];
+    closeMenu(false);
+    it.run(b.dataset.emoji);
+  });
+  menuEl.addEventListener("keydown", (e) => {
+    const btns = [...menuEl.querySelectorAll("button:not([disabled])")];
+    const i = btns.indexOf(document.activeElement);
+    // Up and down move through the menu; left and right also work along the emoji row.
+    const sideways = e.key === "ArrowLeft" || e.key === "ArrowRight";
+    const step = { ArrowDown: 1, ArrowUp: -1, ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    if (step && (!sideways || document.activeElement.dataset.emoji)) {
+      e.preventDefault();
+      btns[(i + step + btns.length) % btns.length]?.focus();
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      closeMenu();
+    }
+  });
+  document.addEventListener("mousedown", (e) => !menuEl.contains(e.target) && closeMenu(false), true);
+  window.addEventListener("blur", () => closeMenu(false));
+  window.addEventListener("resize", () => closeMenu(false));
+  document.addEventListener("scroll", () => closeMenu(false), true);
+  const atButton = (b) => {
+    const r = b.getBoundingClientRect();
+    return { x: r.left, y: r.bottom + 4 };
+  };
+  const copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy."));
+  const QUICK = ["👍", "❤️", "😂", "😮", "🙏", "✅"];
+
+  function messageMenu(m) {
+    const t = byId(m.author);
+    const ch = currentChannel();
+    const archived = ch.status === "archived";
+    const mine = (m.meta?.reactions || []).find((r) => r.by === "user");
+    const job = m.kind === "job" && jobById(ch, m.meta.jobId);
+    return [
+      !archived && m.author !== "system" && { emojis: QUICK, current: mine && mine.emoji, run: (e) => react(m.id, e) },
+      !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "↩", run: () => setReply(m) },
+      m.text && { label: "Copy text", icon: "⧉", run: () => copy(m.text, "Text") },
+      m.meta?.replyTo && { label: "Show the quoted message", icon: "↑", run: () => gotoMessage(m.meta.replyTo.id) },
+      m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "↻", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
+      job && { sep: true },
+      job && { label: `Open ${job.id} in Claude`, icon: "↗", run: () => openJobSession(ch.id, job.id) },
+      job && job.status === "running" && { label: `Stop ${job.id}`, icon: "■", danger: true, run: () => api(`/api/channels/${S.current}/stop-job`, { jobId: job.id }).then((r) => toast(r.message), (err) => toast(err.message)) },
+      t && { sep: true },
+      t && !archived && { label: `Message @${t.name}`, icon: "@", run: () => mentionInComposer(t) },
+      t && { label: `${t.name}'s settings`, icon: "⚙", run: () => openAgent(t.id) },
+      { sep: true },
+      { info: msgInfo(m) },
+    ];
+  }
+
+  function channelMenu(c) {
+    const st = (id, label) => ({ label, checked: (c.status || "") === id, run: () => setStatus(c, id) });
+    const n = S.unread[c.id] || 0;
+    return [
+      { label: "Open", icon: "💬", run: () => openChannel(c.id) },
+      n ? { label: "Mark as read", icon: "✓", run: () => ((S.unread[c.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "●", run: () => ((S.unread[c.id] = 1), unreadChanged()) },
+      { label: pinned.has(c.id) ? "Unpin" : "Pin to the top", icon: "📌", run: () => (pinned.toggle(c.id), renderSidebar()) },
+      { label: muted.has(c.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(c.id) ? "🔔" : "🔕", run: () => (muted.toggle(c.id), renderSidebar(), updateTitle()) },
+      { sep: true },
+      { head: "Status" },
+      st("inProgress", "In progress"),
+      st("waiting", "Waiting for response"),
+      st("later", "For later"),
+      st("", "No status"),
+      { sep: true },
+      c.task && { label: `Open ${c.task.id} in Chrome`, icon: "↗", run: () => openTask(c) },
+      { label: c.task ? "Change the ClickUp task…" : "Add a ClickUp task…", icon: "🏷", run: () => editTask(c) },
+      { label: "Open the folder in Finder", icon: "📁", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
+      { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
+      { sep: true },
+      c.status === "archived" ? { label: "Unarchive", icon: "📤", run: () => setStatus(c, "") } : { label: "Archive", icon: "🗄", run: () => setStatus(c, "archived") },
+    ];
+  }
+
+  function personMenu(t) {
+    const sid = S.sessions.find((x) => x.agentId === t.id)?.sessionId;
+    const ch = currentChannel();
+    return [
+      ch && ch.status !== "archived" && { label: `Message @${t.name} in #${ch.name}`, icon: "@", run: () => (S.view !== "channel" ? openChannel(ch.id) : Promise.resolve()).then(() => mentionInComposer(t)) },
+      { label: "Settings and memory", icon: "⚙", run: () => openAgent(t.id) },
+      { label: "Open the chat session in Claude", icon: "↗", disabled: !sid, run: () => openAgentSession(t.id) },
+    ];
+  }
+
+  function mentionInComposer(t) {
+    const v = input.value;
+    if (!new RegExp(`@${t.name}\\b`, "i").test(v)) input.value = `@${t.name} ${v.replace(/^\s+/, "")}`;
+    input.focus();
+    input.selectionStart = input.selectionEnd = input.value.length;
+    autosize();
+  }
+
+  // Right-click anywhere on a channel, teammate or message; the keyboard's menu key or Shift+F10 on a focused one.
+  function menuFor(target) {
+    const ch = target.closest("#channels [data-ch]");
+    if (ch) return [channelMenu(S.channels.find((c) => c.id === ch.dataset.ch)), ch];
+    const p = target.closest("#people [data-person]");
+    if (p) return [personMenu(byId(p.dataset.person)), p];
+    const msg = target.closest("#messages .msg[data-id]:not(.sys)");
+    if (msg) {
+      const m = (S.msgs[S.current] || []).find((x) => x.id === msg.dataset.id);
+      return m && [messageMenu(m), msg.querySelector(".m-more")];
+    }
+  }
+  document.addEventListener("contextmenu", (e) => {
+    // Links, selected text and the composer keep the system menu (Copy, Look Up, Paste).
+    if (e.target.closest("a, textarea, input") || String(getSelection()).trim()) return;
+    const found = menuFor(e.target);
+    if (!found) return;
+    e.preventDefault();
+    openMenu(found[0], { x: e.clientX, y: e.clientY }, found[1]);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) return;
+    const found = menuFor(document.activeElement);
+    if (!found) return;
+    e.preventDefault();
+    openMenu(found[0], atButton(document.activeElement), document.activeElement);
+  });
+
   $("messages").addEventListener("click", async (e) => {
+    const more = e.target.closest("[data-msg-menu]");
+    if (more) {
+      const m = (S.msgs[S.current] || []).find((x) => x.id === more.dataset.msgMenu);
+      return m && openMenu(messageMenu(m), atButton(more), more);
+    }
+    const pickR = e.target.closest("[data-react-pick]");
+    if (pickR) {
+      const m = (S.msgs[S.current] || []).find((x) => x.id === pickR.dataset.reactPick);
+      const mine = m && (m.meta?.reactions || []).find((r) => r.by === "user");
+      return m && openMenu([{ emojis: QUICK, current: mine && mine.emoji, run: (em) => react(m.id, em) }], atButton(pickR), pickR);
+    }
+    const rx = e.target.closest("[data-react]");
+    if (rx) return react(rx.dataset.mid, rx.dataset.react);
     const who = e.target.closest("[data-person]");
     if (who) return openAgent(who.dataset.person);
     const rp = e.target.closest("[data-reply]");
@@ -466,19 +737,20 @@
   // ---------- Typing bar ----------
   function renderTyping() {
     const act = S.activity[S.current] || {};
+    // A typing bubble per teammate, like WhatsApp; what they're actually doing is in the tooltip and the sessions panel.
     $("typing").innerHTML = Object.entries(act)
       .map(([id, status]) => {
         if (id === "router")
-          return `<div class="typing-row"><span class="t-av">🧭</span><span class="dots"><i></i><i></i><i></i></span><span class="t-txt">Choosing who answers…</span></div>`;
+          return `<div class="typing-row"><span class="t-av">🧭</span><span class="t-bubble"><span class="dots"><i></i><i></i><i></i></span></span><span class="t-txt">Laya is choosing who answers</span></div>`;
         const t = byId(id);
         if (!t) return "";
-        // Just "typing…", like WhatsApp; what it's actually doing is in the tooltip and the sessions panel.
         const busyElsewhere = status && /^busy in /.test(status);
-        return `<div class="typing-row" title="${esc(status || "")}"><span class="t-av">${t.avatar}</span><span class="dots"><i></i><i></i><i></i></span>
-          <span class="t-txt"><b>${esc(t.name)}</b> ${busyElsewhere ? `is ${esc(status)}` : "is typing…"}</span>
-          <button class="stop" data-stop="${id}" title="Stop ${esc(t.name)}">stop</button></div>`;
+        return `<div class="typing-row" title="${esc(status || "")}"><span class="t-av">${t.avatar}</span><span class="t-bubble"><span class="dots"><i></i><i></i><i></i></span></span>
+          <span class="t-txt">${esc(t.name)}${busyElsewhere ? ` is ${esc(status)}` : ""}</span>
+          <button class="stop" data-stop="${id}" title="Stop ${esc(t.name)}">Stop</button></div>`;
       })
       .join("");
+    renderSubtitle();
   }
   $("typing").addEventListener("click", (e) => {
     const b = e.target.closest("[data-stop]");
@@ -597,13 +869,12 @@
     if (S.current !== id && replyTo) setReply(null);
     S.current = id;
     S.unread[id] = 0;
+    saveUnread();
     store.set("team-chat:channel", id);
     showView("channel");
     const c = currentChannel();
-    $("ch-name").textContent = `# ${c.name}`;
-    $("ch-folder").textContent = c.cwd.replace(/^\/Users\/[^/]+/, "~");
-    $("ch-folder").title = c.cwd;
     $("input").placeholder = `Message #${c.name}`;
+    renderSubtitle();
     renderStatus();
     renderTask();
     if (!S.msgs[id]) S.msgs[id] = await api(`/api/channels/${id}/messages`);
@@ -624,33 +895,37 @@
       ? `<button class="task-pill big" data-open-task title="Open ${esc(c.task.id)} in Chrome">${esc(c.task.id)} <span aria-hidden="true">↗</span></button><button class="task-edit" data-edit-task title="Change or remove the task" aria-label="Change the ClickUp task">✎</button>`
       : `<button class="task-add" data-edit-task title="Tag this channel with a ClickUp task">+ ClickUp task</button>`;
   }
-  $("ch-task").addEventListener("click", async (e) => {
+  async function openTask(c) {
+    try {
+      await api(`/api/channels/${c.id}/open-task`, {});
+      toast(`Opening ${c.task.id} in Chrome…`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  let taskFor = null; // the channel the task dialog edits
+  function editTask(c) {
+    taskFor = c.id;
+    // Prefill from the channel's name when it looks like a task (#abc-123 → ABC-123).
+    const guess = (c.name.match(/^([a-z]+)-(\d+)/) || []).slice(1).join("-").toUpperCase();
+    $("task-input").value = c.task ? c.task.id : guess;
+    $("task-remove").hidden = !c.task;
+    $("task-error").textContent = "";
+    $("task-dialog").showModal();
+    $("task-input").select();
+  }
+  $("ch-task").addEventListener("click", (e) => {
     const c = currentChannel();
     if (!c) return;
-    if (e.target.closest("[data-open-task]")) {
-      try {
-        await api(`/api/channels/${c.id}/open-task`, {});
-        toast(`Opening ${c.task.id} in Chrome…`);
-      } catch (err) {
-        toast(err.message);
-      }
-      return;
-    }
-    if (e.target.closest("[data-edit-task]")) {
-      // Prefill from the channel's name when it looks like a task (#abc-123 → ABC-123).
-      const guess = (c.name.match(/^([a-z]+)-(\d+)/) || []).slice(1).join("-").toUpperCase();
-      $("task-input").value = c.task ? c.task.id : guess;
-      $("task-remove").hidden = !c.task;
-      $("task-error").textContent = "";
-      $("task-dialog").showModal();
-      $("task-input").select();
-    }
+    if (e.target.closest("[data-open-task]")) return openTask(c);
+    if (e.target.closest("[data-edit-task]")) editTask(c);
   });
   $("task-form").addEventListener("submit", async (e) => {
     const act = e.submitter && e.submitter.value;
     if (act !== "ok" && act !== "remove") return;
     e.preventDefault();
-    const c = currentChannel();
+    const c = S.channels.find((x) => x.id === taskFor);
+    if (!c) return $("task-dialog").close();
     try {
       const updated = await api(`/api/channels/${c.id}/task`, { task: act === "remove" ? "" : $("task-input").value });
       const i = S.channels.findIndex((x) => x.id === c.id);
@@ -670,27 +945,54 @@
     const archived = c.status === "archived";
     $("archived-bar").hidden = !archived;
     $("composer").hidden = archived;
-    $("ch-status").value = c.status || "";
-    $("status-dot").className = `status-dot s-${c.status || "none"}`;
-    $("ch-name").textContent = `# ${c.name}`;
+    $("ch-status").hidden = !c.status;
+    $("ch-status").innerHTML = c.status ? `<span class="status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}` : "";
+    $("ch-name").textContent = c.name;
+    $("ch-av").style.setProperty("--c", chColor(c));
   }
-  async function setStatus(status) {
-    const c = currentChannel();
-    if (!c) return;
+  async function setStatus(c, status) {
     try {
       const updated = await api(`/api/channels/${c.id}/status`, { status });
       const i = S.channels.findIndex((x) => x.id === c.id);
       S.channels[i] = { ...updated, jobs: c.jobs };
       renderSidebar();
-      renderStatus();
+      if (c.id === S.current) (renderStatus(), renderMessages());
       toast(status ? `#${c.name}: ${statusLabel(status)}.` : `#${c.name} has no status now.`);
     } catch (err) {
-      renderStatus(); // back to what it was
       toast(err.message);
     }
   }
-  $("ch-status").addEventListener("change", (e) => setStatus(e.target.value));
-  $("unarchive-btn").addEventListener("click", () => setStatus(""));
+  $("ch-status").addEventListener("click", (e) => currentChannel() && openMenu(channelMenu(currentChannel()), atButton(e.currentTarget), e.currentTarget));
+  $("ch-menu").addEventListener("click", (e) => currentChannel() && openMenu(channelMenu(currentChannel()), atButton(e.currentTarget), e.currentTarget));
+  $("unarchive-btn").addEventListener("click", () => setStatus(currentChannel(), ""));
+
+  /** The header's second line: who's typing, like WhatsApp, or else the channel's folder. */
+  function renderSubtitle() {
+    const c = currentChannel();
+    if (!c) return;
+    const typing = Object.keys(S.activity[c.id] || {}).filter((id) => id !== "router").map(byId).filter(Boolean);
+    const el = $("ch-folder");
+    el.classList.toggle("typing-now", typing.length > 0 || !!(S.activity[c.id] || {}).router);
+    el.textContent = typing.length
+      ? `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
+      : (S.activity[c.id] || {}).router ? "choosing who answers…" : c.cwd.replace(/^\/Users\/[^/]+/, "~");
+    el.title = c.cwd;
+  }
+
+  // ---------- Unread (the badges, the window title, and the Dock icon through it) ----------
+  function unreadChanged() {
+    saveUnread();
+    renderSidebar();
+    updateTitle();
+  }
+  /** You're looking at the open channel again: it's read. The app calls this when it comes to the front. */
+  function seen() {
+    if (S.view === "channel" && S.current && S.unread[S.current] && lookingAt(S.current)) {
+      S.unread[S.current] = 0;
+      unreadChanged();
+    }
+  }
+  window.addEventListener("focus", () => setTimeout(seen, 0));
 
   function openAgent(id) {
     showView(id);
@@ -779,7 +1081,8 @@
   }
 
   function updateTitle() {
-    const n = Object.values(S.unread).reduce((a, b) => a + b, 0);
+    // Muted channels keep their count in the list, but not on the Dock.
+    const n = Object.entries(S.unread).reduce((a, [id, k]) => a + (muted.has(id) || !S.channels.some((c) => c.id === id) ? 0 : k), 0);
     document.title = n ? `(${n}) Team Chat` : "Team Chat";
   }
 
@@ -891,6 +1194,7 @@
     const f = new FormData(e.target);
     try {
       const ch = await api("/api/channels", { name: f.get("name"), cwd: f.get("cwd") });
+      S.previews[ch.id] = { author: "system", text: "", ts: Date.now() };
       $("new-channel").close();
       if (!S.channels.find((c) => c.id === ch.id)) S.channels.push(ch);
       openChannel(ch.id);
@@ -928,6 +1232,8 @@
     if (!t || m.kind === "status" || m.kind === "job" || m.meta?.interim || lookingAt(channelId)) return;
     const forMe = m.kind === "permission" || m.kind === "tools" || new RegExp(`@${S.user}\\b`, "i").test(m.text);
     if (notifyLevel === "mentions" && !forMe) return;
+    // A muted channel stays quiet, except when a teammate is stuck waiting for your OK.
+    if (muted.has(channelId) && m.kind !== "permission" && m.kind !== "tools") return;
     const c = S.channels.find((x) => x.id === channelId);
     const where = c ? ` · #${c.name}` : "";
     if (m.kind === "permission") return showNotification(channelId, `${t.avatar} ${t.name} needs your OK${where}`, `wants to use ${m.meta.permission.tool}`, true);
@@ -938,6 +1244,7 @@
 
   function notifyJob(channelId, before, job) {
     if (notifyLevel !== "all" || !before || before.status !== "running" || job.status === "running" || lookingAt(channelId)) return;
+    if (muted.has(channelId) && job.status !== "blocked") return;
     const t = byId(job.agentId);
     const c = S.channels.find((x) => x.id === channelId);
     const what = { done: "finished", failed: "failed", stopped: "stopped", blocked: "needs permission" }[job.status] || job.status;
@@ -955,30 +1262,37 @@
       (S.msgs[e.channelId] ||= []);
       if (S.msgs[e.channelId].some((m) => m.id === e.message.id)) return;
       S.msgs[e.channelId].push(e.message);
+      const m = e.message;
+      if (m.kind !== "status") S.previews[e.channelId] = m;
       const here = e.channelId === S.current && S.view === "channel";
       if (here) {
-        appendMessage(e.message);
+        appendMessage(m);
         renderSessions();
       }
-      if (e.message.author !== "user" && (!here || document.hidden)) {
+      // Unread unless you're looking at it: in another channel, or Team Chat isn't the app in front.
+      if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !lookingAt(e.channelId)) {
         S.unread[e.channelId] = (S.unread[e.channelId] || 0) + 1;
-        renderSidebar();
+        saveUnread();
         updateTitle();
       }
-      notify(e.channelId, e.message);
+      renderSidebar();
+      notify(e.channelId, m);
     } else if (e.type === "update") {
       const list = S.msgs[e.channelId] || [];
       const i = list.findIndex((m) => m.id === e.message.id);
       if (i >= 0) list[i] = e.message;
+      if (S.previews[e.channelId]?.id === e.message.id) S.previews[e.channelId] = e.message;
       if (e.channelId === S.current) {
         const old = document.querySelector(`.msg[data-id="${e.message.id}"]`);
         if (old) old.outerHTML = msgHtml(e.message, list[i - 1]);
       }
     } else if (e.type === "activity") {
       const a = (S.activity[e.channelId] ||= {});
+      const was = !!a[e.agentId];
       if (e.status) a[e.agentId] = e.status;
       else delete a[e.agentId];
       if (e.channelId === S.current) renderTyping();
+      if (was !== !!e.status) renderSidebar(); // "Elliot is typing…" in the chat list
     } else if (e.type === "channel") {
       const i = S.channels.findIndex((c) => c.id === e.channel.id);
       if (i >= 0) S.channels[i] = e.channel;
@@ -1023,9 +1337,7 @@
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && S.current) {
-      S.unread[S.current] = 0;
-      renderSidebar();
-      updateTitle();
+      seen();
       refreshCli();
       refreshUsage();
     }
@@ -1061,6 +1373,7 @@
     S.chatModels = st.chatModels;
     S.chatEfforts = st.chatEfforts;
     S.channels = st.channels;
+    S.previews = st.previews || {};
     S.defaultCwd = st.defaultCwd;
     setRoster(st.roster);
     S.activity = {};
@@ -1076,7 +1389,7 @@
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, openAgentSession, currentChannel, kTok, STATUS };
+  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);

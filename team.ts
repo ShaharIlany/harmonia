@@ -246,7 +246,7 @@ export class Team {
       this.setActivity(ch, "router", "choosing who answers");
       const r = await route({ all: messages.get(ch.id) ?? [], msg, waitingOn }).catch(() => ({
         to: [waitingOn ?? TRIAGE],
-        why: "",
+        why: "the router failed",
       }));
       this.setActivity(ch, "router", null);
       msg.meta = { ...msg.meta, routedTo: r.to, routeWhy: r.why };

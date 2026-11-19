@@ -8,7 +8,7 @@ import type { ServerWebSocket } from "bun";
 import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, messages } from "./store";
+import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { layaStatus, startLaya, stopLaya, type LayaStatus } from "./laya";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
@@ -61,6 +61,11 @@ function refreshUsage(maxAgeMs: number) {
 refreshUsage(0);
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
+/** The chat list's line under each channel: its latest message, clipped. */
+const preview = (id: string) => {
+  const m = (messages.get(id) ?? []).findLast((x: Message) => x.kind !== "status");
+  return m && { id: m.id, author: m.author, kind: m.kind ?? "text", text: m.text.slice(0, 200), ts: m.ts, meta: m.meta?.jobId ? { jobId: m.meta.jobId } : undefined };
+};
 const state = () => ({
   user: USER_NAME,
   roster: ROSTER,
@@ -78,6 +83,7 @@ const state = () => ({
   defaultCwd: DEFAULT_CWD,
   stub: !!process.env.TEAM_CHAT_STUB,
   channels: allChannels(),
+  previews: Object.fromEntries(allChannels().map((c) => [c.id, preview(c.id)])),
   activity: Object.fromEntries(allChannels().map((c) => [c.id, team.activityFor(c.id)])),
 });
 
@@ -247,7 +253,7 @@ Bun.serve({
       }
 
       // ----- Channels -----
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -269,11 +275,29 @@ Bun.serve({
         if (r.code !== 0) r = await run(["open", ch.task.url]);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the task." }, 500);
       }
+      if (m[2] === "open-folder" && post) {
+        if (!existsSync(ch.cwd)) return json({ error: `The folder is gone: ${ch.cwd}` }, 404);
+        const r = await run(["open", ch.cwd]);
+        return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the folder." }, 500);
+      }
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);
       if (m[2] === "messages" && post) {
         const text = String(body.text ?? "").trim();
         if (!text) return json({ error: "empty" }, 400);
         team.userMessage(ch, text, body.replyTo ? String(body.replyTo) : undefined);
+        return json({ ok: true });
+      }
+      // Your emoji on a message, like a teammate's. The same emoji again takes it off.
+      if (m[2] === "react" && post) {
+        const msg = (messages.get(ch.id) ?? []).find((x) => x.id === String(body.messageId));
+        const emoji = String(body.emoji ?? "");
+        if (!msg) return json({ error: "No such message." }, 404);
+        if (!emoji || emoji.length > 16 || /[\w\s<>]/.test(emoji)) return json({ error: "That isn't an emoji." }, 400);
+        const mine = msg.meta?.reactions?.find((x) => x.by === "user");
+        msg.meta ??= {};
+        msg.meta.reactions = [...(msg.meta.reactions ?? []).filter((x) => x.by !== "user"), ...(mine?.emoji === emoji ? [] : [{ by: "user", emoji }])];
+        saveMessages(ch.id);
+        broadcast({ type: "update", channelId: ch.id, message: msg });
         return json({ ok: true });
       }
       if (m[2] === "stop" && post) {

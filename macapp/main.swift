@@ -324,7 +324,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   }
 
   // The page notifies only when you're not looking, so it needs to know when the app is in the background.
-  func applicationDidBecomeActive(_ note: Notification) { web?.evaluateJavaScript("window.__teamAppActive = true") }
+  // Coming back to the front reads the open channel, which clears its part of the Dock badge.
+  func applicationDidBecomeActive(_ note: Notification) {
+    web?.evaluateJavaScript("window.__teamAppActive = true; window.TeamApp && window.TeamApp.seen && window.TeamApp.seen()")
+  }
   func applicationDidResignActive(_ note: Notification) { web?.evaluateJavaScript("window.__teamAppActive = false") }
 
   // MARK: Menu
