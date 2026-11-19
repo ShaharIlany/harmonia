@@ -27,15 +27,21 @@ xcrun swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/Team Chat" macapp/main.
   -framework Cocoa -framework WebKit -framework UserNotifications
 cp macapp/Info.plist "$APP/Contents/Info.plist"
 
-if [ ! -f build/AppIcon.icns ]; then
+# The icon is drawn by make-icon.swift (docs/brand/app-icon.svg is the same drawing) and rebuilt when that script changes.
+ICON_STAMP="$(shasum macapp/make-icon.swift | cut -d' ' -f1)"
+if [ ! -f build/AppIcon.icns ] || [ "$(cat build/AppIcon.stamp 2>/dev/null)" != "$ICON_STAMP" ]; then
   echo "› icon"
   swift macapp/make-icon.swift build/icon-1024.png >/dev/null
-  mkdir -p build/AppIcon.iconset
+  swift macapp/make-icon.swift build/icon-small.png --small >/dev/null
+  rm -rf build/AppIcon.iconset && mkdir -p build/AppIcon.iconset
   for s in 16 32 128 256 512; do
-    sips -z $s $s build/icon-1024.png --out "build/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) build/icon-1024.png --out "build/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+    # 16 and 32 px (and their @2x) use the small cut: bigger dots on a fuller tile.
+    SRC=build/icon-1024.png; [ $s -le 32 ] && SRC=build/icon-small.png
+    sips -z $s $s "$SRC" --out "build/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$SRC" --out "build/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
   done
   iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns
+  echo "$ICON_STAMP" > build/AppIcon.stamp
 fi
 cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 

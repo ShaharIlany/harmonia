@@ -247,6 +247,10 @@ Jobs and memories stay.
 to try the UI. `TEAM_CHAT_DATA` moves the data folder, `PORT` the port, and
 `TEAM_CHAT_CWD` the default working folder for new channels.
 
+## Brand
+
+The logo, app icon, colours and usage rules are in [docs/brand](docs/brand/guidelines.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

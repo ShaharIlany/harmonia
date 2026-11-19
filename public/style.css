@@ -5,12 +5,13 @@
   --faint: #6f6d70;
   --line: #e8e8e8;
   --hover: #f8f8f8;
-  --side-bg: #2b1f33;
-  --side-text: #cfc3d6;
+  /* Brand (docs/brand/guidelines.md): warm ink sidebar, coral accent. */
+  --side-bg: #2a211e;
+  --side-text: #d9cdc6;
   --side-strong: #ffffff;
-  --side-hover: #3b2c45;
-  --side-active: #1264a3;
-  --accent: #1264a3;
+  --side-hover: #3a2e2a;
+  --side-active: #c4462b;
+  --accent: #c4462b;
   --accent-text: #ffffff;
   --code-bg: #f6f6f6;
   --code-line: #dddddd;
@@ -31,12 +32,12 @@
     --faint: #9a9a9e;
     --line: #2f3236;
     --hover: #222529;
-    --side-bg: #19171d;
-    --side-text: #b6b4ba;
+    --side-bg: #1c1715;
+    --side-text: #bdb3ad;
     --side-strong: #ffffff;
-    --side-hover: #27242c;
-    --side-active: #1164a3;
-    --accent: #1d9bd1;
+    --side-hover: #2a2320;
+    --side-active: #b8432a;
+    --accent: #eb6b4d;
     --code-bg: #222529;
     --code-line: #35383c;
     --me-bg: #4a3b00;
@@ -64,7 +65,8 @@ button { font: inherit; color: inherit; }
 /* ---------- Sidebar ---------- */
 .sidebar { background: var(--side-bg); color: var(--side-text); overflow-y: auto; display: flex; flex-direction: column; }
 .ws { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
-.ws-name { color: var(--side-strong); font-weight: 800; font-size: 18px; }
+.ws-mark { width: 24px; height: 24px; flex: none; }
+.ws-name { color: var(--side-strong); font-family: ui-rounded, -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 800; font-size: 18px; letter-spacing: -0.01em; }
 .ws-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #b45309; color: #fff; font-weight: 700; }
 .usage { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 10px 16px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-size: 12px; color: var(--side-text); }
 .usage:empty { display: none; }

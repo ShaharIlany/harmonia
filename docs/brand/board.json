@@ -1,0 +1,54 @@
+{
+ "brand": "Team Chat",
+ "tagline": "A group chat with six AI teammates",
+ "brief": "A Mac app where you work with six Claude Code teammates in channels, like a group chat that gets things done. Warm and human, not robotic or corporate, and distinct from the big chat apps. The mark works as the macOS app icon from 16 to 1024 px, in the Dock, as the favicon, in the sidebar header and in the README, on light and dark.",
+ "adjectives": [
+  "warm",
+  "human",
+  "together",
+  "quietly capable"
+ ],
+ "criteria": "Reads at 16 px, works in one colour, says 'you and a team, talking'.",
+ "mockups": [
+  "app-icon",
+  "favicon-tab",
+  "readme",
+  "website",
+  "social",
+  "sticker"
+ ],
+ "nav": [
+  "Channels",
+  "Teammates",
+  "Sessions"
+ ],
+ "brand_color": "#E0583A",
+ "tile_color": "#2A211E",
+ "greyscale": false,
+ "final": true,
+ "designer": "Claude Code",
+ "round": 2,
+ "concepts": [
+  {
+   "name": "Table",
+   "symbol": "mark.svg",
+   "lockup": "lockup.svg",
+   "symbol_on_tile": "mark.svg",
+   "symbol_on_dark": "mark.svg",
+   "lockup_on_dark": "lockup-white.svg",
+   "idea": "Your message in the middle, six teammates sitting around it.",
+   "rationale": [
+    "Says what the app is: you plus six teammates",
+    "The teammates' own colours ring the coral bubble",
+    "Small cut with bigger dots keeps 16 px legible",
+    "Monoline rounded wordmark echoes the round dots"
+   ]
+  }
+ ],
+ "recommendation": "Final direction: Table, in coral and warm ink.",
+ "next_steps": [
+  "App icon from macapp/make-icon.swift",
+  "Favicon and sidebar header in public/",
+  "Palette in public/style.css"
+ ]
+}

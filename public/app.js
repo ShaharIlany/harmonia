@@ -780,7 +780,7 @@
 
   function updateTitle() {
     const n = Object.values(S.unread).reduce((a, b) => a + b, 0);
-    document.title = n ? `(${n}) Team` : "Team";
+    document.title = n ? `(${n}) Team Chat` : "Team Chat";
   }
 
   // ---------- Composer ----------
