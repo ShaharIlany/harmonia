@@ -340,17 +340,18 @@
     el.hidden = !show;
     if (!show) return;
     const n = (u.commits || []).length;
-    const what = n ? `${n} new commit${n === 1 ? "" : "s"}` : `version ${short(u.latest)}`;
+    const what = u.latestVersion ? `version ${u.latestVersion}` : n ? `${n} new commit${n === 1 ? "" : "s"}` : `version ${short(u.latest)}`;
+    const running = u.version ? `Running version ${u.version}` : `Running ${short(u.current)}`;
     const [text, button] = {
       available: [`Update: ${what}`, u.auto ? "" : "Update"],
-      building: [`Building the update… (${what})`, ""],
+      building: [u.from === "release" ? `Getting ${what}… (${u.detail || "downloading"})` : `Building the update… (${what})`, ""],
       ready: [`Update ready: ${what}`, "Restart to update"],
-      waiting: [`Restarts when nobody's working (${u.detail || "busy"})`, ""],
+      waiting: [`Update ready: restarts when nobody's working (${u.detail || "busy"})`, ""],
       installing: ["Restarting with the update…", ""],
       failed: ["Update failed", "Try again"],
     }[u.state];
     el.className = `update-status ${u.state}`;
-    el.title = [u.state === "failed" ? u.detail : "", ...(u.commits || []), `Running ${short(u.current)}`].filter(Boolean).join("\n");
+    el.title = [u.state === "failed" ? u.detail : "", ...(u.commits || []), running].filter(Boolean).join("\n");
     el.innerHTML = `<span class="up-text">⬆ ${esc(text)}</span>${button ? `<button class="cli-btn ghost" data-update-apply>${esc(button)}</button>` : ""}`;
   }
   document.addEventListener("click", async (e) => {
@@ -367,7 +368,7 @@
       const u = await api("/api/update/check", {});
       renderUpdate(u);
       if (u.state === "off") toast(u.detail || "Updates are off.");
-      else if (u.state === "idle") toast(`Team Chat is up to date (${short(u.current)}).`);
+      else if (u.state === "idle") toast(u.detail ? `${u.detail} (running ${u.version ? `version ${u.version}` : short(u.current)})` : `Team Chat is up to date (${u.version ? `version ${u.version}` : short(u.current)}).`);
       else if (u.state === "failed") toast(`Couldn't check for updates: ${u.detail}`);
     } catch (err) {
       toast(err.message);
@@ -487,22 +488,31 @@
     return !prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString() ? `<div class="day"><span>${fmtDay(m.ts)}</span></div>` : "";
   }
 
-  function clampLong(root) {
-    root.querySelectorAll(".text:not([data-checked])").forEach((el) => {
+  /** Folds long messages behind "Show more". Measured again when the window changes size (`all`). */
+  function clampLong(root, all = false) {
+    root.querySelectorAll(all ? ".text[data-checked]" : ".text:not([data-checked])").forEach((el) => {
       el.dataset.checked = "1";
-      if (el.scrollHeight > 420) {
-        el.classList.add("clamped");
-        const b = document.createElement("button");
-        b.className = "more";
-        b.textContent = "Show more";
-        b.onclick = () => {
-          const open = el.classList.toggle("clamped");
-          b.textContent = open ? "Show more" : "Show less";
-        };
-        el.after(b);
-      }
+      let b = el.nextElementSibling && el.nextElementSibling.classList.contains("more") ? el.nextElementSibling : null;
+      if (b && b.textContent === "Show less") return; // opened by you: leave it
+      el.classList.remove("clamped");
+      if (el.scrollHeight <= 420) return b && b.remove();
+      el.classList.add("clamped");
+      if (b) return;
+      b = document.createElement("button");
+      b.className = "more";
+      b.textContent = "Show more";
+      b.onclick = () => {
+        const open = el.classList.toggle("clamped");
+        b.textContent = open ? "Show more" : "Show less";
+      };
+      el.after(b);
     });
   }
+  let reclampTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(reclampTimer);
+    reclampTimer = setTimeout(() => clampLong($("messages"), true), 200);
+  });
 
   const nearBottom = () => {
     const el = $("messages");

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { USER_NAME } from "./roster";
+import { guarded, PROTECTED_NOTE } from "./sandbox";
 
 export type Denial = { tool: string; rule: string; summary: string };
 export type RunResult = {
@@ -72,9 +73,9 @@ const childEnv = () => {
 /** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
 export async function quickAnswer(system: string, prompt: string, cwd: string): Promise<string> {
   if (process.env.TEAM_CHAT_STUB) return "(stub) I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
-  const proc = Bun.spawn(
+  const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
-      "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"],
+      "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),
     { cwd, env: childEnv(), stdin: new TextEncoder().encode(prompt), stdout: "pipe", stderr: "ignore" },
   );
   const timer = setTimeout(() => proc.kill(), 90_000);
@@ -97,9 +98,9 @@ export async function probeUsage(cwd: string) {
     const now = Date.now() / 1000;
     return readUsage({ unifiedWindows: { five_hour: { utilization: 0.12, resetsAt: now + 3 * 3600, status: "allowed" }, seven_day: { utilization: 0.31, resetsAt: now + 4 * 86400, status: "allowed" } } });
   }
-  const proc = Bun.spawn(
+  const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--tools", "", "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
-      "--system-prompt", "Reply with OK.", "--no-session-persistence", "--output-format", "stream-json", "--verbose", "ok"],
+      "--system-prompt", "Reply with OK.", "--no-session-persistence", "--output-format", "stream-json", "--verbose", "ok"], cwd),
     { cwd, env: childEnv(), stdout: "pipe", stderr: "ignore" },
   );
   const out = await new Response(proc.stdout).text();
@@ -135,10 +136,11 @@ export function runAgent(o: RunOptions): Run {
   // A chat turn runs as an inline agent: the chat prompt, and the teammate's own tools (minus file edits) plus the
   // job tools. The definition is the same every turn, so the cached prefix holds.
   const chatAgent = `${o.agentId}-chat`;
+  const systemPrompt = guarded([], o.cwd).length ? `${o.systemPrompt}\n\n${PROTECTED_NOTE}` : o.systemPrompt;
   const mode = o.mode ?? (o.chat
     ? [
         "--agents", JSON.stringify({
-          [chatAgent]: { description: `${o.title}: the teammate's chat side`, prompt: o.systemPrompt, ...(o.chat.tools ? { tools: o.chat.tools } : {}) },
+          [chatAgent]: { description: `${o.title}: the teammate's chat side`, prompt: systemPrompt, ...(o.chat.tools ? { tools: o.chat.tools } : {}) },
         }),
         "--agent", chatAgent,
         ...(o.chat.tools ? [] : ["--disallowedTools", ...NO_CHAT_TOOLS]),
@@ -150,7 +152,7 @@ export function runAgent(o: RunOptions): Run {
         "--mcp-config", o.chat.mcpConfig,
         "--disable-slash-commands",
       ]
-    : ["--agent", o.agentId, "--append-system-prompt", o.systemPrompt]);
+    : ["--agent", o.agentId, "--append-system-prompt", systemPrompt]);
   const args = [
     "-p",
     ...mode,
@@ -164,7 +166,7 @@ export function runAgent(o: RunOptions): Run {
   ];
   const env = childEnv();
 
-  const proc = Bun.spawn([CLAUDE, ...args], {
+  const proc = Bun.spawn(guarded([CLAUDE, ...args], o.cwd), {
     cwd: o.cwd,
     env,
     stdin: new TextEncoder().encode(o.prompt),

@@ -30,14 +30,34 @@ and `docs/screenshots/capture.mjs` takes them.
 curl -fsSL https://raw.githubusercontent.com/ShaharIlany/team-chat/main/install.sh | bash
 ```
 
-You need a Mac with Xcode's command line tools (`xcode-select --install`),
-[Bun](https://bun.sh), [uv](https://docs.astral.sh/uv/) and the
-[Claude Code CLI](https://claude.com/claude-code), signed in. The script checks
-for them, clones the repo into the app's folder, builds the app, installs it in
-`~/Applications` and opens it. It also adds the six starter teammates from
-`agents/` to `~/.claude/agents` (see [agents/README.md](agents/README.md)),
+You need an Apple Silicon Mac and the
+[Claude Code CLI](https://claude.com/claude-code), signed in. Nothing to build:
+the script downloads the latest release, checks it against its SHA-256,
+installs it in `~/Applications` and opens it. It also adds the six starter
+teammates to `~/.claude/agents` (see [agents/README.md](agents/README.md)),
 leaving any file you already have alone. From then on the app updates itself
-from `main`. Run the script again any time to reinstall.
+from new releases. Run the script again any time to reinstall.
+
+To build it yourself instead (an Intel Mac, or to follow a branch):
+`TEAM_CHAT_FROM_SOURCE=1` before `bash`. That needs Xcode's command line tools
+(`xcode-select --install`), [Bun](https://bun.sh) and
+[uv](https://docs.astral.sh/uv/).
+
+## Releases
+
+Every version tag is a release, built on GitHub
+([.github/workflows/release.yml](.github/workflows/release.yml), on an Apple
+Silicon runner):
+
+```bash
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+It builds the app with `build.sh` and publishes `Team-Chat-arm64.zip` (about
+20 MB) with its `.sha256`. Laya's Python (~800 MB) isn't in it: it has a
+release of its own, `laya-<version>-py<python>` (a prerelease, so never the
+latest), built only when the stamp in `macapp/laya.sh` has none yet. Pushing to
+`main` alone ships nothing.
 
 ## Team Chat.app
 
@@ -76,24 +96,30 @@ tools (`team-chat-server --job-tools`).
   opens its channel. The 🔔 setting at the bottom of the sidebar switches
   between all of these, only @mentions of you, or off (saved per browser). In
   a browser they're web notifications.
-- **Updates over the air:** the app follows the git repo and branch it was
-  built from (`build.json` in the app, written by `build.sh`). Every 30 minutes
-  it fetches the branch into its own clone (`source/` in the data folder). When
-  there are new commits, it builds them there with the same `build.sh`, in the
-  background, and swaps the new build in when no teammate or job is working
-  and you haven't sent anything for 10 minutes: the server moves the running
-  build to `previous/` in the data folder, puts the new one in its place and
-  exits, and the app reopens itself on the new build. (A helper that outlives
-  the app can't do it: macOS ends everything an app started when it quits.) The sidebar footer shows an update while it's pending,
-  with **Restart to update** to install it as soon as nobody's working.
-  Team Chat → Check for Updates… checks now. `settings.json`: `updateRepo`,
-  `updateBranch`, and `autoUpdate: false` to only show updates. Building needs
-  git, bun and Xcode's command line tools; Laya's Python is cloned from the
-  installed app when its version hasn't changed. Log: `update.log` in the data
-  folder. A build from a commit that isn't on the branch (not pushed yet)
-  doesn't update.
-- **After a code change:** run `build.sh --install` again and reopen the app, or
-  push it and let the app update itself. The old build goes to the Trash.
+- **Updates over the air:** every 30 minutes the app asks GitHub for the
+  repo's latest release (`updates.ts`; the repo is in `build.json`, written by
+  `build.sh`). When it's newer than the running version, the app downloads the
+  zip in the background, checks its SHA-256, unpacks it, adds Laya's Python
+  (cloned from itself when the release needs the same one, else downloaded
+  from its release) and signs it ad hoc. It swaps the new build in when no
+  teammate or job is working and you haven't sent anything for 10 minutes: the
+  server moves the running build to `previous/` in the data folder, puts the
+  new one in its place and exits, and the app reopens itself on the new build.
+  (A helper that outlives the app can't do it: macOS ends everything an app
+  started when it quits.) The chat list's footer shows an update while it's
+  pending, with **Restart to update** to install it as soon as nobody's
+  working. Team Chat → Check for Updates… checks now. A build without a
+  version (made from source) counts as older than any release.
+  `settings.json`: `updateRepo` (`owner/name`), `autoUpdate: false` to only
+  show updates, and `"updateFrom": "source"` to follow a branch's commits
+  instead (`updateBranch`): the app then fetches them into its own clone
+  (`source/` in the data folder) and builds them there with `build.sh`, which
+  needs git, bun and Xcode's command line tools. Log: `update.log` in the data
+  folder.
+- **After a code change:** run `build.sh --install` again and reopen the app,
+  or tag a release and let the app update itself. The old build goes to the
+  Trash. (A build from source updates itself to the next release, unless
+  `updateFrom` is `source`.)
 
 To run from source instead: `TEAM_CHAT_DATA="$HOME/Library/Application Support/Team Chat" bun team-chat/server.ts`
 or `bun run stub` to try the UI.
@@ -168,6 +194,19 @@ Jobs and memories stay.
   if it crashes. The model files (~1.4 GB) live in
   `~/Library/Application Support/Team Chat/laya/hf` (HF_HOME) and download on
   first start. `bun server.ts` in the repo uses the same `build/laya`.
+- **Protected folders:** every `claude` the app starts runs in a macOS
+  sandbox (`sandbox.ts`, `sandbox-exec`) that blocks the folders macOS asks
+  permission for: Desktop, Documents, Downloads, Music, Pictures, Movies,
+  iCloud Drive, `~/Library/CloudStorage`, Mail, Messages, Safari, Calendars,
+  Contacts, Notes, Reminders, other apps' data (`~/Library/Containers`) and
+  `/Volumes`. A teammate gets "Operation not permitted" there, so it never
+  triggers a permission prompt for Team Chat. It can move things into the
+  Trash but not look inside. Allowed anyway: the channel's own folder, and
+  anything in `settings.json` `"protectedAllow": ["~/Downloads"]` (read on
+  every turn, no restart). `"protectedGuard": false` turns the sandbox off.
+  A sandboxed process can't start its own sandbox: Chrome needs
+  `--no-sandbox` (Playwright's default) and `swift build` needs
+  `--disable-sandbox`.
 - **Handoffs:** a teammate's `@Name` wakes that teammate, unless it's in the
   same sentence as a question to you. Teammates write a name without `@` when
   they don't need that person yet. A woken teammate first checks it's really
@@ -240,17 +279,20 @@ Jobs and memories stay.
 | `team.json` | Default roster (copied into the data folder, which holds the live one) |
 | `paths.ts` | Data folder, TeamAgents folder, default channel folder, embedded-file detection |
 | `main.ts` | Entry point of the compiled server (`--job-tools` runs the job tools) |
-| `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
+| `macapp/` | The Swift app shell, Info.plist, icon script, `build.sh`, and `laya.sh` (Laya's Python) |
+| `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
+| `install.sh` | Installs the latest release (or builds from source) |
 | `roster.ts` | Loads and validates `team.json`, @mention parsing |
 | `chat-rules.md` | The chat session's system prompt (plus the agent's instructions) |
 | `job-rules.md` | Appended to every job's system prompt |
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
 | `router.ts` | Picks who answers a message that names nobody (conversation rules, then Laya) |
 | `laya.ts`, `laya-router.py` | Laya, the local decision model, as a child process of the server |
-| `updates.ts` | Over-the-air updates: check, build in the background, swap in when idle |
+| `updates.ts` | Over-the-air updates: check for a release (or commits), get it in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
 | `runner.ts` | Runs `claude -p --agent …`, plus the stub used by `bun run stub` |
+| `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings) |
