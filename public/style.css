@@ -260,8 +260,8 @@ span.m-av { background: none; cursor: default; }
 .stop:hover { color: var(--text); }
 
 .composer { position: relative; display: flex; align-items: flex-end; gap: 10px; padding: 10px 16px; background: var(--head); }
-.composer .field { flex: 1; min-width: 0; display: flex; background: var(--field); border-radius: 21px; padding: 9px 16px; }
-.composer:focus-within .field { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 30%, transparent); }
+.composer .entry { flex: 1; min-width: 0; display: flex; background: var(--field); border-radius: 21px; padding: 9px 16px; }
+.composer:focus-within .entry { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 30%, transparent); }
 .composer textarea { flex: 1; border: 0; outline: 0; resize: none; background: none; color: var(--text); font: inherit; max-height: 220px; padding: 0; line-height: 22px; }
 .send { flex: none; border: 0; border-radius: 50%; width: 42px; height: 42px; display: grid; place-items: center; background: var(--accent); color: #fff; cursor: pointer; }
 .send:disabled { background: transparent; color: var(--faint); cursor: default; }
@@ -303,6 +303,9 @@ dialog input { font: inherit; font-weight: 400; padding: 8px 10px; border: 1px s
 .hint { margin: 0; font-size: 13px; color: var(--muted); }
 .error { margin: 0; font-size: 13px; color: var(--error-text); min-height: 1em; }
 .dialog-btns { display: flex; justify-content: flex-end; gap: 8px; }
+dialog textarea { font: inherit; font-weight: 400; line-height: 1.45; padding: 8px 10px; border: 1px solid var(--faint); border-radius: 6px; background: var(--bg); color: var(--text); resize: none; max-height: 260px; }
+#feedback-quote .reply-quote { pointer-events: none; margin: 0; }
+.fb-tag { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 
 /* ---------- Phone ---------- */
 @media (max-width: 760px) {

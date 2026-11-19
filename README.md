@@ -207,6 +207,16 @@ Jobs and memories stay.
   A sandboxed process can't start its own sandbox: Chrome needs
   `--no-sandbox` (Playwright's default) and `swift build` needs
   `--disable-sandbox`.
+- **Feedback:** ✎ next to React and Reply on a teammate's message (or
+  "Feedback for …" in its ⌄ menu) opens a box for your feedback; Enter sends,
+  Shift+Enter adds a line. It's posted in the channel as a reply to that
+  message, and starts a job for the teammate who wrote it, with
+  `feedback-rules.md` around it: the message, the 40 messages before it, the
+  job's brief and report when it's a job card, the teammate's instructions
+  file and memories, and the team rules. The teammate works out how its rules
+  led to the message and amends its own instructions to include the feedback,
+  keeping every intended behavior and the file as short as it can. Its report
+  comes back in the chat like any job's.
 - **Handoffs:** a teammate's `@Name` wakes that teammate, unless it's in the
   same sentence as a question to you. Teammates write a name without `@` when
   they don't need that person yet. A woken teammate first checks it's really
@@ -285,6 +295,7 @@ Jobs and memories stay.
 | `roster.ts` | Loads and validates `team.json`, @mention parsing |
 | `chat-rules.md` | The chat session's system prompt (plus the agent's instructions) |
 | `job-rules.md` | Appended to every job's system prompt |
+| `feedback-rules.md` | The prompt of a feedback job (a teammate amending its rules) |
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
 | `router.ts` | Picks who answers a message that names nobody (conversation rules, then Laya) |
 | `laya.ts`, `laya-router.py` | Laya, the local decision model, as a child process of the server |

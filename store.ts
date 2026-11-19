@@ -22,6 +22,7 @@ export type Message = {
     tokens?: number;
     cached?: number; // share of the turn's input read from the prompt cache (0–1)
     routedTo?: string[]; // user messages: the teammates the router picked
+    feedbackFor?: string; // user messages: feedback for this teammate on the replyTo message (it amends its rules)
     routeWhy?: string;
     jobId?: string; // kind "job": the card for that job
     retried?: boolean; // kind "error": Try again was used

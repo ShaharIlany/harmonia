@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
-import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
-import { addTools, readAgent } from "./agents";
+import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
+import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { route } from "./router";
@@ -52,7 +54,9 @@ export type Event =
 
 type Emit = (e: Event) => void;
 
-const RULES = { chat: readFileSync(chatRulesFile, "utf8"), job: readFileSync(jobRulesFile, "utf8") };
+const RULES = { chat: readFileSync(chatRulesFile, "utf8"), job: readFileSync(jobRulesFile, "utf8"), feedback: readFileSync(feedbackRulesFile, "utf8") };
+/** Fills {{key}} placeholders in one pass, so text put in is never filled again. Unknown keys stay as they are. */
+const fill = (tpl: string, vars: Record<string, string>) => tpl.replace(/\{\{(\w+)\}\}/g, (all, k) => vars[k] ?? all);
 const roster = (agentId: string) => ROSTER.map((r) => `- ${r.name} (@${r.name}): ${r.role}${r.id === agentId ? " (you)" : ""}`).join("\n");
 
 /** The chat session's whole system prompt. Nothing in it is per channel or per turn, so the cached prefix stays put. */
@@ -121,7 +125,7 @@ function line(m: Message): string {
   if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
   if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
   const re = m.meta?.replyTo;
-  const quote = re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
+  const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
   return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}`;
 }
 
@@ -631,7 +635,46 @@ export class Team {
     return `Stopping job ${jobId}.`;
   }
 
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string }): string {
+  /**
+   * The user's feedback on a teammate's message: posted in the channel as a reply to it, then a job where that
+   * teammate reviews how its rules led to the message and amends its own instructions (feedback-rules.md).
+   */
+  feedback(ch: Channel, messageId: string, text: string): string | undefined {
+    const all = messages.get(ch.id) ?? [];
+    const i = all.findIndex((m) => m.id === messageId);
+    const target = all[i];
+    if (!target || !teammate(target.author)) return "Feedback goes on a teammate's message.";
+    const agentId = target.author;
+    const job = target.meta?.jobId ? ch.jobs.find((j) => j.id === target.meta!.jobId) : undefined;
+    this.post(ch, {
+      author: "user",
+      text,
+      meta: { replyTo: { id: target.id, author: agentId, text: replyText(target).slice(0, 300) }, feedbackFor: agentId },
+    });
+    const t = teammate(agentId)!;
+    const prompt = fill(RULES.feedback, {
+      user: USER_NAME,
+      what: job ? `your job ${job.id} "${job.title}"` : "one of your messages",
+      channel: ch.name,
+      feedback: text,
+      time: new Date(target.ts).toISOString(),
+      message: line(target),
+      job: job
+        ? `\nThe job: brief\n<brief>\n${clip(job.brief, 4000)}\n</brief>\nreport\n<report>\n${clip(job.report ?? "(none yet)", 6000)}\n</report>\nIts whole run is Claude Code session ${job.sessionId} (~/.claude/projects/*/${job.sessionId}.jsonl).\n`
+        : "",
+      messagesFile: join(DATA, "messages", `${ch.id}.json`),
+      history: all.slice(Math.max(0, i - 40), i + 1).map(line).join("\n"),
+      agentFile: agentFile(agentId),
+      memoryDir: memoryDir(agentId),
+      chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId) }),
+      jobRules: jobPrompt(ch, agentId),
+    });
+    const title = `Feedback: ${text.replace(/\s+/g, " ").slice(0, 60)}`;
+    this.startJob(ch, agentId, { title, brief: text }, prompt);
+  }
+
+  /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string }, prompt?: string): string {
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
@@ -651,7 +694,7 @@ export class Team {
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
     this.emitJob(ch, job); // before the card, so the page can draw it
     this.post(ch, { author: agentId, kind: "job", text: `started job ${job.id}: ${job.title}`, meta: { jobId: job.id } });
-    this.runJob(ch, job, job.brief, !!prev);
+    this.runJob(ch, job, prompt ?? job.brief, !!prev);
     return `Started job ${job.id}. Its report comes back to you here when it finishes.`;
   }
 

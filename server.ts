@@ -253,7 +253,7 @@ Bun.serve({
       }
 
       // ----- Channels -----
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -288,6 +288,13 @@ Bun.serve({
         return json({ ok: true });
       }
       // Your emoji on a message, like a teammate's. The same emoji again takes it off.
+      if (m[2] === "feedback" && post) {
+        const text = String(body.text ?? "").trim();
+        if (!text) return json({ error: "Write your feedback first." }, 400);
+        if (text.length > 4000) return json({ error: "Feedback is up to 4000 characters." }, 400);
+        const err = team.feedback(ch, String(body.messageId ?? ""), text);
+        return err ? json({ error: err }, 400) : json({ ok: true });
+      }
       if (m[2] === "react" && post) {
         const msg = (messages.get(ch.id) ?? []).find((x) => x.id === String(body.messageId));
         const emoji = String(body.emoji ?? "");

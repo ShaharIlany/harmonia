@@ -275,6 +275,7 @@
     }
 
     if (m.meta && m.meta.replyTo) body = quoteHtml(m.meta.replyTo) + body;
+    if (m.meta && m.meta.feedbackFor) body = `<div class="fb-tag">✎ Feedback for ${esc(authorName(m.meta.feedbackFor))}</div>` + body;
     const tip = msgInfo(m);
     // Time and ticks sit in the bubble's bottom corner, like WhatsApp.
     const foot = `<span class="b-meta" title="${esc(tip)}">${fmtTime(m.ts)}${isUser ? `<span class="ticks" data-ticks="${m.id}"></span>` : ""}</span>`;
@@ -282,7 +283,8 @@
     const archived = currentChannel()?.status === "archived";
     const side = archived ? "" : `<div class="m-side">
         <button class="m-btn" data-react-pick="${m.id}" title="React" aria-label="React">☺</button>
-        <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button></div>`;
+        <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button>${t ? `
+        <button class="m-btn" data-feedback="${m.id}" title="Feedback for ${esc(name)}: ${esc(name)} updates its rules" aria-label="Feedback for ${esc(name)}">✎</button>` : ""}</div>`;
     return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
       ${isUser ? "" : cont ? `<span class="m-av"></span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
       <div class="m-col">
@@ -621,6 +623,7 @@
     return [
       !archived && m.author !== "system" && { emojis: QUICK, current: mine && mine.emoji, run: (e) => react(m.id, e) },
       !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "↩", run: () => setReply(m) },
+      t && !archived && { label: `Feedback for ${t.name}…`, icon: "✎", run: () => openFeedback(m) },
       m.text && { label: "Copy text", icon: "⧉", run: () => copy(m.text, "Text") },
       m.meta?.replyTo && { label: "Show the quoted message", icon: "↑", run: () => gotoMessage(m.meta.replyTo.id) },
       m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "↻", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
@@ -721,6 +724,8 @@
     if (rx) return react(rx.dataset.mid, rx.dataset.react);
     const who = e.target.closest("[data-person]");
     if (who) return openAgent(who.dataset.person);
+    const fb = e.target.closest("[data-feedback]");
+    if (fb) return openFeedback((S.msgs[S.current] || []).find((x) => x.id === fb.dataset.feedback));
     const rp = e.target.closest("[data-reply]");
     if (rp) return setReply((S.msgs[S.current] || []).find((x) => x.id === rp.dataset.reply));
     const go = e.target.closest("[data-goto]");
@@ -1210,6 +1215,51 @@
       openChannel(ch.id);
     } catch (err) {
       $("new-channel-error").textContent = err.message;
+    }
+  });
+
+  // ---------- Feedback ----------
+  // Feedback on a teammate's message goes to that teammate as a job: it reviews how its rules led to the message
+  // and amends its own instructions (feedback-rules.md). Enter sends, Shift+Enter adds a line.
+  let feedbackOn = null;
+  const fbText = $("feedback-text");
+  const fbGrow = () => {
+    fbText.style.height = "auto";
+    fbText.style.height = Math.min(fbText.scrollHeight + 2, 260) + "px";
+  };
+  function openFeedback(m) {
+    const t = m && byId(m.author);
+    if (!t) return;
+    feedbackOn = m;
+    $("feedback-form").reset();
+    $("feedback-title").textContent = `Feedback for ${t.name}`;
+    $("feedback-quote").innerHTML = quoteHtml({ id: m.id, author: m.author, text: replyTextOf(m) });
+    $("feedback-hint").textContent = `${t.name} reviews the conversation that led here, finds the rule behind it, and updates its own rules to match, keeping them short. Its report comes back in this channel.`;
+    $("feedback-error").textContent = "";
+    $("feedback-dialog").showModal();
+    fbGrow();
+    fbText.focus();
+  }
+  fbText.addEventListener("input", fbGrow);
+  fbText.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      $("feedback-form").requestSubmit($("feedback-send"));
+    }
+  });
+  $("feedback-form").addEventListener("submit", async (e) => {
+    if (e.submitter?.value !== "ok") return;
+    e.preventDefault();
+    const text = fbText.value.trim();
+    if (!text || !feedbackOn) return;
+    $("feedback-send").disabled = true;
+    try {
+      await api(`/api/channels/${S.current}/feedback`, { messageId: feedbackOn.id, text });
+      $("feedback-dialog").close();
+    } catch (err) {
+      $("feedback-error").textContent = err.message;
+    } finally {
+      $("feedback-send").disabled = false;
     }
   });
 
