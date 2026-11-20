@@ -426,9 +426,11 @@ export class TeamsBridge {
     const path = link.kind === "channel" ? (team?.groupId ? `/teams/${team.groupId}/installedApps` : undefined) : `/chats/${encodeURIComponent(link.conversationId)}/installedApps`;
     if (!path) return;
     try {
-      const j = await mozart.graph("GET", `${path}?$expand=teamsAppDefinition($select=teamsAppId)`);
-      const apps = new Set<string>((j.value ?? []).map((x: any) => x.teamsAppDefinition?.teamsAppId).filter(Boolean));
-      for (const r of Object.values(this.records)) this.noteInstalled(r.agentId, key, apps.has(r.teamsAppId));
+      // An uploaded (sideloaded) app gets its own id in Teams; the id in its manifest, which we keep, is its externalId.
+      const j = await mozart.graph("GET", `${path}?$expand=teamsApp($select=id,externalId)`);
+      const apps = new Set<string>((j.value ?? []).flatMap((x: any) => [x.teamsApp?.externalId, x.teamsApp?.id]).filter(Boolean));
+      for (const r of Object.values(this.records)) this.noteInstalled(r.agentId, key, apps.has(r.teamsAppId) || Boolean(r.catalogId && apps.has(r.catalogId)));
+      this.deps.log("teams.members", { conversation: link.conversationId, bots: Object.values(this.records).filter((r) => r.installedIn?.includes(key)).map((r) => r.agentId) });
     } catch (err: any) {
       this.deps.log("teams.members_failed", { conversation: link.conversationId, error: err.message });
     }
@@ -770,7 +772,8 @@ export class TeamsBridge {
     if (e.type === "activity") {
       if (!teammate(e.agentId)) return;
       const key = `${link.channelId}:${e.agentId}`;
-      const bot = this.installedIn(e.agentId, link) ? this.live.get(e.agentId) : undefined;
+      // Its own bot types when it's there; otherwise Mozart, which posts the answer for it.
+      const bot = this.installedIn(e.agentId, link) ? this.live.get(e.agentId) : this.mozartBot();
       if (e.status && bot && !this.typing.has(key)) {
         bot.typeOnce(target);
         this.typing.set(key, setInterval(() => bot.typeOnce(target), TYPING_EVERY));
