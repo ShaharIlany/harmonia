@@ -8,7 +8,7 @@
 # install of Team Chat is replaced, and its data moves to Harmonia's folder.
 #
 # Environment: HARMONIA_REPO (owner/name on GitHub), HARMONIA_NO_OPEN=1 (don't open it),
-# HARMONIA_FROM_SOURCE=1 (clone and build instead, and follow HARMONIA_BRANCH from source: needs git, bun, uv and
+# HARMONIA_FROM_SOURCE=1 (clone and build instead, and follow HARMONIA_BRANCH from source: needs git, bun and
 # Xcode's command line tools). The TEAM_CHAT_ names from before the rename still work.
 set -euo pipefail
 
@@ -93,7 +93,6 @@ if [ -n "$FROM_SOURCE" ]; then
   xcode-select -p >/dev/null 2>&1 || missing+=("Xcode command line tools: xcode-select --install")
   command -v git >/dev/null || missing+=("git: comes with the Xcode command line tools")
   command -v bun >/dev/null || missing+=("Bun: curl -fsSL https://bun.sh/install | bash")
-  command -v uv >/dev/null || missing+=("uv (for the router's local model): curl -LsSf https://astral.sh/uv/install.sh | sh")
   if [ ${#missing[@]} -gt 0 ]; then
     printf '  Missing:\n'; printf '  - %s\n' "${missing[@]}"
     fail "Install those, open a new Terminal window, and run this again."
@@ -113,7 +112,7 @@ if [ -n "$FROM_SOURCE" ]; then
   fi
   echo "  $(git -C "$SRC" log -1 --format='%h %s')"
 
-  step "Building the app (the first build downloads the router's model runtime, ~800 MB)"
+  step "Building the app"
   export HARMONIA_REPO="$URL" HARMONIA_BRANCH="$BRANCH"
   (cd "$SRC" && bash macapp/build.sh)
   quit_running

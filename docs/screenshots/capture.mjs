@@ -1,11 +1,14 @@
-// README screenshots: run the demo server (HARMONIA_STUB=1 PORT=4749 HARMONIA_DATA=<demo-data.py output> bun server.ts), then node capture.mjs docs/screenshots
+// README screenshots: python3 docs/screenshots/demo-data.py build/demo-data, run the demo server
+// (HARMONIA_USER=Alex HARMONIA_STUB=1 PORT=4749 HARMONIA_DATA=build/demo-data bun server.ts), then
+// PLAYWRIGHT_FROM=<a folder with playwright installed>/package.json PLAYWRIGHT_CHANNEL=chrome node docs/screenshots/capture.mjs docs/screenshots
 import { createRequire } from "node:module";
 const require = createRequire(process.env.PLAYWRIGHT_FROM ?? import.meta.url); // a folder whose node_modules has playwright
 const { chromium } = require("playwright");
 
 const OUT = process.argv[2];
 const URL = "http://localhost:4749/";
-const browser = await chromium.launch();
+// PLAYWRIGHT_CHANNEL=chrome uses the installed Google Chrome instead of Playwright's own browser.
+const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
 
 async function page(scheme) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: scheme });

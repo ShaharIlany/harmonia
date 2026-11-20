@@ -21,8 +21,9 @@ their permissions and new tools from cards in the chat.
 
 </details>
 
-The screenshots use made-up demo data: `docs/screenshots/demo-data.py` builds it,
-and `docs/screenshots/capture.mjs` takes them.
+The screenshots use made-up demo data and a made-up user, Alex:
+`docs/screenshots/demo-data.py` builds the data, and `docs/screenshots/capture.mjs`
+takes them from the demo server (its first line has the commands).
 
 ## Install
 
@@ -347,7 +348,8 @@ Jobs and memories stay.
 | File | What it holds |
 |---|---|
 | `team.json` | Default roster (copied into the data folder, which holds the live one) |
-| `paths.ts` | Data folder, TeamAgents folder, default channel folder, embedded-file detection |
+| `paths.ts` | Data folder (and moving Team Chat's over), TeamAgents folder, default channel folder, embedded-file detection |
+| `env.ts` | Reads a `HARMONIA_*` setting, or its `TEAM_CHAT_*` name from before the rename |
 | `main.ts` | Entry point of the compiled server (`--job-tools` runs the job tools) |
 | `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
 | `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
@@ -368,14 +370,22 @@ Jobs and memories stay.
 | `teams.ts` | Teammates and Mozart as Microsoft Teams bots: setup through the Teams CLI, the Keychain, 1:1 mirrors, linked channels and group chats, `new channel` and `new group chat` |
 | `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
+| `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |
+| `docs/screenshots/` | The README screenshots, their demo data and the script that takes them |
 
 `HARMONIA_STUB=1` (`bun run stub`) gives canned replies, with no Claude runs,
-to try the UI. `HARMONIA_DATA` moves the data folder, `PORT` the port, and
-`HARMONIA_CWD` the default working folder for new channels.
+to try the UI. `HARMONIA_DATA` moves the data folder, `PORT` the port,
+`HARMONIA_CWD` the default working folder for new channels, and `HARMONIA_USER`
+the name the teammates call you (your login name by default). The `TEAM_CHAT_*`
+names from before the rename still work.
 
 ## Brand
 
-The logo, app icon, colours and usage rules are in [docs/brand](docs/brand/guidelines.md).
+*Harmonia* first meant tuning a lyre's strings to each other, so the logo is a
+lyre whose six strings are the starter teammates' colours, on a thin graphite
+frame. The wordmark is Poppins, and the app is graphite and cool greys: the
+teammates are the colour. The logo, app icon, colours and usage rules are in
+[docs/brand](docs/brand/guidelines.md).
 
 ## License
 
