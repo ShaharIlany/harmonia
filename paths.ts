@@ -2,7 +2,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "./env";
+import { setting } from "./env";
 import teamDefaults from "./team.json" with { type: "file" };
 
 /** True inside the compiled binary, where the sources live in Bun's embedded file system. */
@@ -19,8 +19,8 @@ const readJson = (path: string) => {
 const SUPPORT = join(homedir(), "Library/Application Support");
 
 /** Channels, messages, sessions and team.json. The app keeps them in Application Support. */
-export const DATA = env("DATA") ?? (COMPILED ? join(SUPPORT, "Harmonia") : join(import.meta.dir, "data"));
-if (COMPILED && !env("DATA")) moveFromTeamChat();
+export const DATA = setting("DATA") ?? (COMPILED ? join(SUPPORT, "Harmonia") : join(import.meta.dir, "data"));
+if (COMPILED && !setting("DATA")) moveFromTeamChat();
 mkdirSync(DATA, { recursive: true });
 
 /**
@@ -66,7 +66,7 @@ export const CLICKUP_WORKSPACE: string = process.env.CLICKUP_WORKSPACE ?? settin
 export const CLICKUP_TASK_PREFIX: string = String(process.env.CLICKUP_TASK_PREFIX ?? settings.clickupTaskPrefix ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 
 /** Default working folder for new channels. */
-export const DEFAULT_CWD: string = env("CWD") ?? settings.defaultCwd ?? homedir();
+export const DEFAULT_CWD: string = setting("CWD") ?? settings.defaultCwd ?? homedir();
 
 /** The roster (names, avatars, chat models). Starts as a copy of the bundled team.json. */
 export const TEAM_FILE = join(DATA, "team.json");

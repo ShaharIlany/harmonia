@@ -14,7 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { COMPILED, DATA, SETTINGS } from "./paths";
-import { env } from "./env";
+import { setting } from "./env";
 
 export type UpdateStatus = {
   state: "off" | "idle" | "checking" | "available" | "building" | "ready" | "waiting" | "installing" | "failed";
@@ -50,7 +50,7 @@ const auto: boolean = SETTINGS.autoUpdate ?? true;
 const from: "release" | "source" = SETTINGS.updateFrom === "source" ? "source" : "release";
 /** "owner/name" from a GitHub URL or the setting itself. */
 const slug = repo.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1] ?? (/^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : "");
-const API = env("RELEASES_API") ?? "https://api.github.com";
+const API = setting("RELEASES_API") ?? "https://api.github.com";
 const APP_ASSET = "Harmonia-arm64.zip";
 const DOWNLOAD = join(DATA, "download");
 /** Where the next build waits until it's installed: the clone's build, or the unpacked release. */
@@ -93,7 +93,7 @@ const git = (...args: string[]) => sh(["git", "-C", SOURCE, ...args]);
 export function startUpdates(o: { notify: (s: UpdateStatus) => void; busy: () => number }) {
   onStatus = o.notify;
   busyCount = o.busy;
-  if (env("STUB")) return;
+  if (setting("STUB")) return;
   if (!build) return set({ state: "off", detail: COMPILED ? "This build has no build.json." : "Running from source: update with git." });
   if (!repo) return set({ state: "off", detail: "The build has no git remote. Set updateRepo in settings.json." });
   if (from === "release" && !slug) return set({ state: "off", detail: `Releases come from GitHub, and ${repo} isn't a GitHub repo. Set updateRepo, or "updateFrom": "source".` });

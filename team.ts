@@ -4,7 +4,7 @@ import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
-import { env } from "./env";
+import { setting } from "./env";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
@@ -27,10 +27,10 @@ import {
 } from "./store";
 
 /** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
-const STATUS_EVERY_MS = Number(env("STATUS_MINUTES") ?? 5) * 60_000;
+const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
 /** Agent turns allowed after one user message before the chat pauses (stops ping-pong). */
 const MAX_TURNS_PER_USER_MESSAGE = 8;
-const STUB = !!env("STUB");
+const STUB = !!setting("STUB");
 
 // TEAM_AGENTS: the Claude Code project that holds the six chat sessions. Claude Code files a session (and its
 // prompt cache) under the folder it started in, so every chat turn runs there, whatever the channel. Jobs run in
