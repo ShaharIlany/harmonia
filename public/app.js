@@ -875,9 +875,11 @@
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
-    $("agent-view").hidden = view === "channel";
+    $("agent-view").hidden = view === "channel" || view === "teams";
+    $("teams-view").hidden = view !== "teams";
     $("app").classList.remove("nav-open");
     renderSidebar();
+    renderTeamsStatus();
   }
 
   async function openChannel(id) {
@@ -1013,6 +1015,32 @@
     showView(id);
     window.AgentPage.render(id);
   }
+
+  // ---------- Microsoft Teams bridge (teams.ts): its light at the bottom left, and its page ----------
+  function renderTeamsStatus() {
+    const el = $("teams-status");
+    const all = S.teams || [];
+    const on = all.filter((b) => b.enabled);
+    const name = (id) => (S.roster.find((t) => t.id === id) || {}).name || id;
+    const names = (list) => list.map((b) => name(b.agentId)).join(", ");
+    let cls, text;
+    if (!on.length) [cls, text] = ["off", all.length ? "Teams bridge off" : "Teams bridge off · set up"];
+    else if (on.some((b) => b.state === "failed")) [cls, text] = ["bad", `Teams bridge: ${names(on.filter((b) => b.state === "failed"))} needs you`];
+    else if (on.every((b) => b.state === "ready")) [cls, text] = ["ok", `Teams bridge on · ${names(on)}`];
+    else [cls, text] = ["wait", "Teams bridge connecting…"];
+    el.className = `teams-status ${cls}`;
+    el.setAttribute("aria-current", S.view === "teams" ? "page" : "false");
+    el.title = on.length
+      ? on.map((b) => `${name(b.agentId)}: ${b.state}${b.detail && b.state !== "ready" ? ` (${b.detail})` : ""}${b.paired ? "" : ", waiting for your Teams chat"}`).join("\n")
+      : "Chat with your teammates from Microsoft Teams. Click to set it up.";
+    el.innerHTML = `<span class="cli-dot ${cls}" aria-hidden="true"></span><span class="ts-text">${esc(text)}</span>`;
+  }
+  function openTeams() {
+    showView("teams");
+    renderTeamsStatus();
+    window.TeamsPage.render();
+  }
+  $("teams-status").addEventListener("click", openTeams);
 
   // ---------- Plan usage (top of the sidebar) ----------
   // Same pacing as the usage-limits-band mod (~/.claude/mods/usage-limits-band): the marker is where usage
@@ -1372,6 +1400,10 @@
       if (e.channelId === S.current) renderSessions();
       renderSidebar();
       if (S.view !== "channel") window.AgentPage.refreshSession?.();
+    } else if (e.type === "teams") {
+      S.teams = e.teams;
+      renderTeamsStatus();
+      window.TeamsPage.update();
     } else if (e.type === "laya") {
       renderLaya(e.laya);
     } else if (e.type === "appUpdate") {
@@ -1436,6 +1468,8 @@
     S.previews = st.previews || {};
     S.defaultCwd = st.defaultCwd;
     setRoster(st.roster);
+    S.teams = st.teams || [];
+    renderTeamsStatus();
     S.activity = {};
     for (const [cid, list] of Object.entries(st.activity)) S.activity[cid] = Object.fromEntries(list.map((a) => [a.agentId, a.status]));
     $("stub-badge").hidden = !st.stub;
@@ -1449,7 +1483,7 @@
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS };
+  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, renderTeamsStatus };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);

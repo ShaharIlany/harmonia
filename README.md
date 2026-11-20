@@ -281,6 +281,17 @@ Jobs and memories stay.
 - **Safety:** the server listens on 127.0.0.1 only, and accepts API calls and
   the WebSocket only from its own page. Teammates draft emails and posts but
   don't send them without your OK.
+- **Microsoft Teams:** any teammate can also be a Teams contact. Click the
+  **Teams bridge** light at the bottom left for a step-by-step page: get
+  Microsoft's Teams CLI (`npm install -g @microsoft/teams.cli`, `teams login`),
+  create the teammate's bot (`teams app create --messaging-mode socket`, for
+  your organization only, the secret in your Keychain), add it in Teams, and
+  write to them. Your 1:1 Teams chat mirrors the channel `#teams-<id>`: your
+  messages go there addressed to that teammate, and their answers, job starts,
+  errors and anything waiting for your OK come back to Teams, with typing while
+  they work. The bot connects out over Teams Socket Mode (a preview feature),
+  so nothing listens on the internet, and it only talks to you, one-to-one.
+  The light is green when every bot is connected.
 
 ## Files
 
@@ -306,7 +317,9 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings) |
+| `teams.ts` | Teammates as Microsoft Teams bots: setup through the Teams CLI, the Keychain, mirroring a channel to your Teams chat |
+| `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
+| `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
 
 `TEAM_CHAT_STUB=1` (`bun run stub`) gives canned replies, with no Claude runs,
 to try the UI. `TEAM_CHAT_DATA` moves the data folder, `PORT` the port, and

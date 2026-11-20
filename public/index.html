@@ -41,6 +41,7 @@
             <option value="off">Notifications off</option>
           </select>
         </label>
+        <button type="button" id="teams-status" class="teams-status off" title="Chat with your teammates from Microsoft Teams"></button>
         <div id="update" class="update-status" hidden></div>
         <div id="laya" class="laya-status" hidden></div>
         <div id="cli"></div>
@@ -91,6 +92,9 @@
 
     <!-- Teammate settings view -->
     <main class="main agent-view" id="agent-view" hidden></main>
+
+    <!-- Microsoft Teams view -->
+    <main class="main agent-view" id="teams-view" hidden></main>
   </div>
 
   <dialog id="task-dialog">
@@ -144,5 +148,6 @@
   <script src="/markdown.js"></script>
   <script src="/app.js"></script>
   <script src="/agent-page.js"></script>
+  <script src="/teams-page.js"></script>
 </body>
 </html>
