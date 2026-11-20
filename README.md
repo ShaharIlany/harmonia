@@ -290,27 +290,36 @@ Jobs and memories stay.
     `#teams-<id>`: your messages go there addressed to that teammate, and
     their answers, job starts, errors and anything waiting for your OK come
     back to Teams, with typing while they work.
-  - **Channels and group chats:** add the **Mozart** bot (the Teams page
+  - **Group chats and channels:** add the **Mozart** bot (the Teams page
     creates it and sets its resource-specific consent with `teams app rsc
-    set`: reading messages in the team or chat, creating channels, seeing
-    which apps are installed) and the teammates' bots to a team or a group
-    chat. The first time you write there, it's linked to a new channel here.
+    set`: reading messages in the chat or team, seeing which apps are
+    installed) and, if you like, the teammates' bots to a group chat or a
+    team. The first time you write there, it's linked to a new channel here.
     Your messages land as yours and Mozart picks who answers, as in the app;
     `@Leo` goes straight to Leo. A teammate answers with its own bot when
-    it's in that team or chat (typing included), else Mozart posts the answer
+    it's in that chat or team (typing included), else Mozart posts the answer
     under its name. What you type in the app goes to Teams through Mozart
-    ("**Alex** (in Team Chat): …"). Answers go to the thread your last
-    message was in.
+    ("**Alex** (in Team Chat): …"). In a channel, answers go to the thread
+    your last message was in.
   - **Only you wake the teammates.** Other people's messages in a linked
-    channel or chat show here as "Bob · in Teams" and the teammates and
+    chat or channel show here as "Bob · in Teams" and the teammates and
     Mozart read them as context, but they never wake anyone: the teammates can
     read your mail and calendar. Only you can run Mozart's commands.
-  - **New channels from Teams:** `@Mozart new channel <name>` in one of a
-    team's channels creates a standard channel in that team (Microsoft Graph,
-    with Mozart's `Channel.Create.Group` consent) and a linked channel here.
-    Every teammate whose bot is in the team is in it; Mozart's welcome message
-    says who isn't yet, with links to add them. `@Mozart help` lists the
-    commands.
+  - **New members-only chats from Teams:** `@Mozart new channel <name>` (in
+    any chat with Mozart, your 1:1 included; also `new chat`) creates a Teams
+    **group chat**: only its members see it, and nobody can join on their
+    own. You're in it, plus anyone you @mention or write the email of
+    (`@Mozart new channel Launch with @Dana and ron@corp.com`). Mozart then
+    installs itself and every teammate's bot in it and links it to a new
+    channel here, all through Microsoft Graph. (Not a Teams channel: bots
+    can't post in private channels, and in shared channels each bot has to
+    be added by hand.) A Microsoft 365 admin sets this up once, with the
+    checklist on the Teams page: give Mozart's app the Graph application
+    permissions `Chat.Create`, `TeamsAppInstallation.ReadWriteAndConsentForChat.All`
+    and `AppCatalog.Read.All` with admin consent, and publish Mozart and the
+    teammates' bots to the organization's app catalog (Graph installs apps
+    only from there). Mozart says in the new chat which teammates it couldn't
+    add, and answers for them. `@Mozart help` lists the commands.
   - The Teams page lists the linked channels and chats, with **Unlink**. Links
     are in `teams-links.json` in the data folder; the bots in `teams.json`.
 

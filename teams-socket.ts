@@ -376,6 +376,16 @@ export class TeamsSocket {
     return invoke ? { ...base, status, body: {}, ts: Date.now() } : { ...base, status, ts: Date.now() };
   }
 
+  /** A member of a conversation, as Teams knows them: their Microsoft Entra id is `aadObjectId`. */
+  async member(serviceUrl: string, conversationId: string, memberId: string): Promise<{ aadObjectId?: string; email?: string; userPrincipalName?: string; name?: string }> {
+    const r = await fetch(`${serviceUrl.replace(/\/+$/, "")}/v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(memberId)}`, {
+      headers: { authorization: `Bearer ${await this.token()}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!r.ok) throw new Error(`Teams answered ${r.status} ${(await r.text().catch(() => "")).slice(0, 200)}`.trim());
+    return r.json();
+  }
+
   /** Posts an activity (a message or typing) into a conversation. */
   async send(serviceUrl: string, conversationId: string, activity: Record<string, unknown>) {
     // Channel threads look like "19:…@thread.tacv2;messageid=…": encoded, like the Bot Framework SDK does.

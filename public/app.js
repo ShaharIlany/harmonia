@@ -1011,7 +1011,7 @@
     const el = $("teams-status");
     const all = S.teams || [];
     const on = all.filter((b) => b.enabled);
-    const name = (id) => (S.roster.find((t) => t.id === id) || {}).name || id;
+    const name = (id) => (id === "mozart" ? "Mozart" : (S.roster.find((t) => t.id === id) || {}).name || id);
     const names = (list) => list.map((b) => name(b.agentId)).join(", ");
     let cls, text;
     if (!on.length) [cls, text] = ["off", all.length ? "Teams bridge off" : "Teams bridge off · set up"];

@@ -8,6 +8,8 @@
   let creating = null; // teammate id while `teams app create` runs
   let importing = false; // the "use a bot you made" form is open
   let importingMozart = false; // the same, for Mozart
+  let admin = null; // GET /api/teams/admin: Mozart's Graph permissions and the bots in the org's catalog
+  let checkingAdmin = false;
 
   // The channels' coordinator has a Teams bot of its own (teams.ts MOZART_LOOK).
   const MOZART = { id: "mozart", name: "Mozart", avatar: "🎼", color: "#7c3aed", role: "Coordinator" };
@@ -63,15 +65,14 @@
   function mozartHtml() {
     const bot = botOf(MOZART.id);
     const steps = `<ol class="tm-plain">
-        <li>Add Mozart and the teammates' bots to a team (<b>Add to a team</b> on each app in Teams) or to a group chat. Mozart asks the team or chat for its permissions as it's added: reading messages there and creating channels.</li>
-        <li>Write in a channel or the group chat as usual. It's linked to a new channel here the first time you do, and Mozart picks who answers. <code>@Leo</code> still goes straight to Leo.</li>
-        <li><code>@Mozart new channel &lt;name&gt;</code> in one of the team's channels makes a new channel in that team and here. Every teammate whose bot is in the team is in it.</li>
+        <li>Add Mozart (and, if you like, the teammates' bots) to a group chat or a team, and write there as usual: it's linked to a new channel here, and Mozart picks who answers. <code>@Leo</code> still goes straight to Leo.</li>
+        <li><code>@Mozart new channel &lt;name&gt;</code> (in any chat with Mozart, 1:1 included) makes a new <b>group chat</b>: only its members see it, and nobody can join on their own. You're in it, plus anyone you @mention or write the email of. Mozart adds itself and every teammate's bot, and links it to a new channel here.</li>
       </ol>
-      <p class="hint">Only your messages wake the teammates. Other people's messages show here as context. A teammate answers with its own bot when that bot is in the team or chat; otherwise Mozart posts the answer under its name. What you type here goes to Teams through Mozart.</p>`;
-    if (bot) return `<section class="card"><h2>Channels and group chats</h2>${steps}</section>`;
+      <p class="hint">Only your messages wake the teammates. Other people's messages show here as context. A teammate answers with its own bot when that bot is in the chat; otherwise Mozart posts the answer under its name. What you type here goes to Teams through Mozart.</p>`;
+    if (bot) return `<section class="card"><h2>Channels and group chats</h2>${steps}${adminHtml()}</section>`;
     return `<section class="card">
       <h2>Channels and group chats</h2>
-      <p class="hint">For Teams channels and group chats, add <b>Mozart</b> 🎼, the coordinator. It reads every message there and picks the teammate who answers, as it does in this app. It needs the Teams CLI ready (step 1 below).</p>
+      <p class="hint">For group chats and channels, add <b>Mozart</b> 🎼, the coordinator. It reads every message there and picks the teammate who answers, as it does in this app. It needs the Teams CLI ready (step 1 below).</p>
       ${steps}
       <div class="row-btns">
         <button class="btn primary" data-create="${MOZART.id}" ${!cliOk() || creating ? "disabled" : ""}>${creating === MOZART.id ? "Creating…" : "Create Mozart's bot"}</button>
@@ -79,6 +80,40 @@
       </div>
       ${importingMozart ? importHtml(MOZART, true) : ""}
     </section>`;
+  }
+
+  /** The two things an admin does once so `new channel` works through the API alone. */
+  function adminHtml() {
+    const row = (ok, text) => `<div class="tm-row">${tick(ok)}<span>${text}</span></div>`;
+    if (!admin) return `<h3 class="tm-sub">For <code>new channel</code>: once, by a Microsoft 365 admin</h3><p class="tm-check">${checkingAdmin ? "Checking…" : ""}</p>`;
+    const bots = (S.teams || []).map((b) => b.agentId);
+    const catalogKnown = admin.granted.includes("AppCatalog.Read.All");
+    const inCatalog = bots.filter((id) => admin.catalog[id]);
+    const allPerms = !admin.missing.length;
+    const allCatalog = catalogKnown && inCatalog.length === bots.length;
+    return `<h3 class="tm-sub">For <code>new channel</code>: once, by a Microsoft 365 admin</h3>
+      <ol class="tm-plain">
+        <li>${allPerms ? "✓ " : ""}Give Mozart's app these Microsoft Graph <b>application</b> permissions, and grant admin consent: <a href="${esc(admin.permissionsLink)}" target="_blank" rel="noopener">Mozart's API permissions in Entra</a> → Add a permission → Microsoft Graph → Application permissions.
+          <div class="tm-rows">${["Chat.Create", "TeamsAppInstallation.ReadWriteAndConsentForChat.All", "AppCatalog.Read.All"].map((p) => row(admin.granted.includes(p), `<code>${p}</code>`)).join("")}</div>
+          <span class="hint">Then <b>Grant admin consent</b> on that page (or open the <a href="${esc(admin.consentLink)}" target="_blank" rel="noopener">admin consent link</a>).</span></li>
+        <li>${allCatalog ? "✓ " : ""}Publish Mozart and the teammates' bots to your organization's app catalog (Teams admin center → Teams apps → Manage apps → Upload new app, or each app's Developer Portal page → Publish → Publish to your org, then approve it). Graph can only install apps from the catalog.
+          ${catalogKnown ? `<div class="tm-rows">${bots.map((id) => row(Boolean(admin.catalog[id]), `${mate(id).avatar} ${esc(mate(id).name)}${admin.catalog[id] ? "" : " isn't in the catalog yet"}`)).join("")}</div>` : `<span class="hint">Shown here once <code>AppCatalog.Read.All</code> is granted.</span>`}</li>
+      </ol>
+      ${admin.error ? `<p class="error">${esc(admin.error)}</p>` : ""}
+      <div class="row-btns"><button class="btn" data-admin-check ${checkingAdmin ? "disabled" : ""}>${checkingAdmin ? "Checking…" : "Check again"}</button></div>`;
+  }
+
+  async function checkAdmin() {
+    if (!botOf(MOZART.id)) return;
+    checkingAdmin = true;
+    update();
+    try {
+      admin = await api("/api/teams/admin");
+    } catch (e) {
+      admin = { granted: [], missing: [], catalog: {}, consentLink: "", permissionsLink: "", error: e.message };
+    }
+    checkingAdmin = false;
+    update();
   }
 
   function linksHtml() {
@@ -315,6 +350,7 @@
     if (t.closest("[data-import-open]")) return (importing = true), update();
     if (t.closest("[data-import-mozart]")) return (importingMozart = true), update();
     if (t.closest("[data-import-close]")) return (importing = importingMozart = false), update();
+    if (t.closest("[data-admin-check]")) return checkAdmin();
     if (t.closest("[data-rsc]")) return act(`/api/teams/bots/${MOZART.id}/permissions`, {}, "Mozart's permissions are set. Add it to a team or chat again so they're granted.");
     const unlink = t.closest("[data-unlink]");
     if (unlink) {
@@ -346,6 +382,7 @@
     render() {
       view().innerHTML = page();
       checkCli();
+      checkAdmin();
     },
     update,
   };

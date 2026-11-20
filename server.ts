@@ -215,6 +215,7 @@ Bun.serve({
         const r = await inTerminal(p.endsWith("install") ? "npm install -g @microsoft/teams.cli" : "teams login");
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
       }
+      if (p === "/api/teams/admin" && !post) return json(await teams.adminStatus());
       if (p === "/api/teams/unlink" && post) {
         const err = teams.unlink(String(body.conversationId ?? ""));
         return err ? json({ error: err }, 404) : json({ bots: teams.status(), links: teams.linkViews() });

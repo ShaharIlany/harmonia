@@ -657,3 +657,5 @@ a.btn.primary { color: #fff; }
 .tm-plain { margin: 6px 0 10px; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
 .tm-plain code { font-size: 12px; }
 #tm-mozart .row-btns { margin-top: 12px; }
+.tm-sub { margin: 18px 0 6px; font-size: 14px; font-weight: 700; }
+.tm-plain .tm-rows { margin: 6px 0; }
