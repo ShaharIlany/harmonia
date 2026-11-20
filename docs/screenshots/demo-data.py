@@ -1,4 +1,4 @@
-# Builds a Team Chat data folder with made-up channels, for README screenshots. No real customers or tasks.
+# Builds a Harmonia data folder with made-up channels, for README screenshots. No real customers or tasks.
 import json, os, shutil, sys, uuid
 from datetime import datetime
 

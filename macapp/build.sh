@@ -1,12 +1,26 @@
 #!/bin/bash
-# Builds "Team Chat.app" into team-chat/build/. With --install it also copies it to ~/Applications and,
-# on the first install, sets up ~/Library/Application Support/Team Chat from the repo's data.
+# Builds "Harmonia.app" into build/. With --install it also copies it to ~/Applications and, on the first install,
+# sets up ~/Library/Application Support/Harmonia from the repo's data.
 #
-# Environment: TEAM_CHAT_VERSION (a release's version, set by the release workflow), TEAM_CHAT_REPO / TEAM_CHAT_BRANCH
-# (what updates follow).
+# --legacy also leaves "build/Team Chat.app": the same app under the name it had before the rename, with a copy of its
+# executable called "Team Chat". Team Chat's updater looks for exactly that, so installs from before the rename can
+# update to Harmonia; the app moves itself to Harmonia.app the first time it opens. Team Chat's updater, building from
+# source, passes TEAM_CHAT_REPO, which turns it on as well.
+#
+# Environment: HARMONIA_VERSION (a release's version, set by the release workflow), HARMONIA_REPO / HARMONIA_BRANCH
+# (what updates follow). The TEAM_CHAT_ names from before the rename still work.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-APP="build/Team Chat.app"
+APP="build/Harmonia.app"
+INSTALL="" LEGACY=""
+for arg in "$@"; do
+  case "$arg" in
+    --install) INSTALL=1 ;;
+    --legacy) LEGACY=1 ;;
+  esac
+done
+[ -n "${TEAM_CHAT_REPO:-}" ] && [ -z "${HARMONIA_REPO:-}" ] && LEGACY=1
+VERSION="${HARMONIA_VERSION:-${TEAM_CHAT_VERSION:-}}"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -15,19 +29,19 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # to follow.
 if git rev-parse --git-dir >/dev/null 2>&1; then
   COMMIT="$(git rev-parse HEAD)"
-  BRANCH="${TEAM_CHAT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
-  REPO="${TEAM_CHAT_REPO:-$(git remote get-url origin 2>/dev/null || true)}"
+  BRANCH="${HARMONIA_BRANCH:-${TEAM_CHAT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}}"
+  REPO="${HARMONIA_REPO:-${TEAM_CHAT_REPO:-$(git remote get-url origin 2>/dev/null || true)}}"
   DIRTY=$([ -n "$(git status --porcelain)" ] && echo true || echo false)
   printf '{"version":"%s","commit":"%s","branch":"%s","repo":"%s","dirty":%s,"arch":"%s","builtAt":"%s"}\n' \
-    "${TEAM_CHAT_VERSION:-}" "$COMMIT" "$BRANCH" "$REPO" "$DIRTY" "$(uname -m)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$VERSION" "$COMMIT" "$BRANCH" "$REPO" "$DIRTY" "$(uname -m)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "$APP/Contents/Resources/build.json"
 fi
 
 echo "› server"
-bun build --compile main.ts --outfile "$APP/Contents/Resources/team-chat-server" >/dev/null
+bun build --compile main.ts --outfile "$APP/Contents/Resources/harmonia-server" >/dev/null
 
 echo "› app shell"
-xcrun swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/Team Chat" macapp/main.swift \
+xcrun swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/Harmonia" macapp/main.swift \
   -framework Cocoa -framework WebKit -framework UserNotifications
 cp macapp/Info.plist "$APP/Contents/Info.plist"
 
@@ -58,9 +72,32 @@ echo "› sign (ad hoc)"
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1
 echo "Built $(pwd)/$APP"
 
-[ "${1:-}" = "--install" ] || exit 0
+if [ -n "$LEGACY" ]; then
+  OLD="build/Team Chat.app"
+  rm -rf "$OLD"
+  cp -cR "$APP" "$OLD" 2>/dev/null || ditto "$APP" "$OLD"
+  cp "$OLD/Contents/MacOS/Harmonia" "$OLD/Contents/MacOS/Team Chat"
+  codesign --force --deep --sign - "$OLD" >/dev/null 2>&1
+  echo "Built $(pwd)/$OLD (the same app, for Team Chat's updater)"
+fi
 
-SUPPORT="$HOME/Library/Application Support/Team Chat"
+[ -n "$INSTALL" ] || exit 0
+
+SUPPORT="$HOME/Library/Application Support/Harmonia"
+# Before the rename the data folder was "Team Chat". Move it (the app does the same on first launch, but the
+# settings below would make the new folder first). Mozart's Claude Code sessions are filed under its folder: copy them.
+OLD_SUPPORT="$HOME/Library/Application Support/Team Chat"
+if [ -f "$OLD_SUPPORT/channels.json" ] && [ ! -L "$OLD_SUPPORT" ] && [ ! -f "$SUPPORT/channels.json" ]; then
+  pgrep -qf "/Contents/MacOS/Team Chat" && { echo "Quit Team Chat first: its data folder moves to $SUPPORT."; exit 1; }
+  # A Harmonia folder without channels yet (made by a run from the repo) goes to the Trash.
+  if [ -e "$SUPPORT" ]; then mv "$SUPPORT" "$HOME/.Trash/Harmonia $(date +%Y%m%d-%H%M%S)"; fi
+  mv "$OLD_SUPPORT" "$SUPPORT" && ln -s Harmonia "$OLD_SUPPORT"
+  PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+  FROM="$PROJECTS/$(printf '%s' "$OLD_SUPPORT/mozart" | sed 's/[^a-zA-Z0-9]/-/g')"
+  TO="$PROJECTS/$(printf '%s' "$SUPPORT/mozart" | sed 's/[^a-zA-Z0-9]/-/g')"
+  if [ -d "$FROM" ] && [ ! -e "$TO" ]; then cp -R "$FROM" "$TO"; fi
+  echo "› moved $OLD_SUPPORT to $SUPPORT"
+fi
 mkdir -p "$SUPPORT"
 if [ ! -f "$SUPPORT/settings.json" ]; then
   printf '{\n  "teamAgentsDir": "%s",\n  "defaultCwd": "%s",\n  "clickupWorkspace": "",\n  "clickupTaskPrefix": ""\n}\n' "$HOME/TeamAgents" "$HOME" > "$SUPPORT/settings.json"
@@ -73,11 +110,11 @@ if [ ! -f "$SUPPORT/channels.json" ] && [ -f data/channels.json ]; then
   echo "› copied data/ to $SUPPORT"
 fi
 
-DEST="$HOME/Applications/Team Chat.app"
+DEST="$HOME/Applications/Harmonia.app"
 mkdir -p "$HOME/Applications"
-if [ -d "$DEST" ]; then
-  # Keep the old build in the Trash rather than deleting it.
-  mv "$DEST" "$HOME/.Trash/Team Chat $(date +%Y%m%d-%H%M%S).app"
-fi
+# Keep the old build in the Trash rather than deleting it; Team Chat too, the app's name before the rename.
+for old in "$DEST" "$HOME/Applications/Team Chat.app"; do
+  [ -d "$old" ] && mv "$old" "$HOME/.Trash/$(basename "$old" .app) $(date +%Y%m%d-%H%M%S).app"
+done
 cp -cR "$APP" "$DEST" 2>/dev/null || ditto "$APP" "$DEST"
 echo "Installed $DEST"

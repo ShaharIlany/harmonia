@@ -1,4 +1,4 @@
-// Team Chat.app: a window around the team chat. It starts the bundled server (Resources/team-chat-server)
+// Harmonia.app: a window around the team's chat. It starts the bundled server (Resources/harmonia-server)
 // on 127.0.0.1:4747, shows it in a WKWebView, and stops it on quit.
 import Cocoa
 import UserNotifications
@@ -6,7 +6,7 @@ import WebKit
 
 let port = 4747
 let base = URL(string: "http://127.0.0.1:\(port)")!
-let logDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Team Chat")
+let logDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Harmonia")
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate,
   WKScriptMessageHandler, UNUserNotificationCenterDelegate
@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
 
     DispatchQueue.global().async {
-      // A team chat server that's already up (from the repo) is reused rather than started twice.
+      // A Harmonia server that's already up (from the repo) is reused rather than started twice.
       if !self.serverAnswers() { self.startServer() }
       for _ in 0..<60 {
         if self.serverAnswers() {
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         Thread.sleep(forTimeInterval: 0.5)
       }
       DispatchQueue.main.async {
-        self.showMessage("The team chat server didn't start. Its log is in ~/Library/Logs/Team Chat/server.log.")
+        self.showMessage("The Harmonia server didn't start. Its log is in ~/Library/Logs/Harmonia/server.log.")
       }
     }
   }
@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   }
 
   func startServer() {
-    guard let exe = Bundle.main.url(forResource: "team-chat-server", withExtension: nil) else { return }
+    guard let exe = Bundle.main.url(forResource: "harmonia-server", withExtension: nil) else { return }
     try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
     let logURL = logDir.appendingPathComponent("server.log")
     FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
 
   func serverStopped() {
     guard !quitting else { return }
-    showMessage("The team chat server stopped. Its log is in ~/Library/Logs/Team Chat/server.log. Quit and reopen the app to start it again.")
+    showMessage("The Harmonia server stopped. Its log is in ~/Library/Logs/Harmonia/server.log. Quit and reopen the app to start it again.")
   }
 
   func serverAnswers() -> Bool { state() != nil }
@@ -154,12 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
       contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered, defer: false)
-    window.title = "Team Chat"
+    window.title = "Harmonia"
     window.minSize = NSSize(width: 420, height: 480)
     window.contentView = web
     window.delegate = self
     window.center()
-    window.setFrameAutosaveName("TeamChatMain")
+    window.setFrameAutosaveName("HarmoniaMain")
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
@@ -175,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     web.loadHTMLString(html, baseURL: nil)
   }
 
-  /// "(3) Team" → a 3 on the Dock icon.
+  /// "(3) Harmonia" → a 3 on the Dock icon.
   func updateBadge(_ title: String) {
     let count = title.range(of: #"^\((\d+)\)"#, options: .regularExpression).map { String(title[$0].dropFirst().dropLast()) }
     NSApp.dockTile.badgeLabel = count
@@ -245,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     }
   }
 
-  // Links to anything but the team chat open in a browser.
+  // Links to anything but the app's own pages open in a browser.
   func webView(
     _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
@@ -289,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.name == "notify", let body = message.body as? [String: Any] else { return }
     let content = UNMutableNotificationContent()
-    content.title = body["title"] as? String ?? "Team Chat"
+    content.title = body["title"] as? String ?? "Harmonia"
     content.body = body["body"] as? String ?? ""
     content.sound = .default
     content.threadIdentifier = body["channel"] as? String ?? ""
@@ -315,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     done()
   }
 
-  // Shown even while Team Chat is in front: the page only asks when you're in another channel.
+  // Shown even while Harmonia is in front: the page only asks when you're in another channel.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
     withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void
@@ -339,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   /// The page checks (updates.ts) and says what it found.
   @objc func checkForUpdates() {
     window.makeKeyAndOrderFront(nil)
-    web.evaluateJavaScript("window.teamChatCheckUpdates && window.teamChatCheckUpdates()")
+    web.evaluateJavaScript("window.harmoniaCheckUpdates && window.harmoniaCheckUpdates()")
   }
 
   func buildMenu() {
@@ -356,15 +356,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
       i.keyEquivalentModifierMask = mods
       return i
     }
-    add("Team Chat", [
-      item("About Team Chat", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+    add("Harmonia", [
+      item("About Harmonia", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
       item("Check for Updates…", #selector(checkForUpdates)),
       .separator(),
-      item("Hide Team Chat", #selector(NSApplication.hide(_:)), "h"),
+      item("Hide Harmonia", #selector(NSApplication.hide(_:)), "h"),
       item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
       item("Show All", #selector(NSApplication.unhideAllApplications(_:))),
       .separator(),
-      item("Quit Team Chat", #selector(NSApplication.terminate(_:)), "q"),
+      item("Quit Harmonia", #selector(NSApplication.terminate(_:)), "q"),
     ])
     add("Edit", [
       item("Undo", Selector(("undo:")), "z"),
@@ -389,6 +389,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
   }
 }
 
+// MARK: Coming from Team Chat
+
+/// Harmonia was called Team Chat, and Team Chat's own updater installs the first Harmonia where Team Chat was, as
+/// "Team Chat.app" (the release ships a copy under that name for it). Move it to Harmonia.app next to it and open it
+/// from there. If the move fails, it simply runs from the old name.
+func moveOutOfOldName() {
+  let me = Bundle.main.bundleURL
+  guard me.lastPathComponent == "Team Chat.app" else { return }
+  let fm = FileManager.default
+  let target = me.deletingLastPathComponent().appendingPathComponent("Harmonia.app")
+  let running = NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.standardizedFileURL == target.standardizedFileURL }
+  if !running {
+    do {
+      // A Harmonia.app already there (installed by hand) is older than this one, which Team Chat just downloaded.
+      if fm.fileExists(atPath: target.path) { try fm.trashItem(at: target, resultingItemURL: nil) }
+      try fm.moveItem(at: me, to: target)
+    } catch { return }
+  }
+  let open = Process()
+  open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+  open.arguments = running ? [target.path] : ["-n", target.path]
+  try? open.run()
+  open.waitUntilExit()
+  exit(0)
+}
+
+/// The page's storage (pinned and muted channels, unread counts), the window's place and the server log were
+/// Team Chat's. Copy them over once, before the web view starts.
+func carryOverFromTeamChat() {
+  let fm = FileManager.default
+  let lib = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+  let oldWeb = lib.appendingPathComponent("WebKit/local.teamchat.app")
+  let newWeb = lib.appendingPathComponent("WebKit/\(Bundle.main.bundleIdentifier ?? "local.harmonia.app")")
+  if fm.fileExists(atPath: oldWeb.path) && !fm.fileExists(atPath: newWeb.path) { try? fm.copyItem(at: oldWeb, to: newWeb) }
+  let oldLogs = lib.appendingPathComponent("Logs/Team Chat")
+  if fm.fileExists(atPath: oldLogs.path) && !fm.fileExists(atPath: logDir.path) { try? fm.moveItem(at: oldLogs, to: logDir) }
+  let frame = "NSWindow Frame HarmoniaMain"
+  if UserDefaults.standard.string(forKey: frame) == nil,
+    let old = UserDefaults(suiteName: "local.teamchat.app")?.string(forKey: "NSWindow Frame TeamChatMain")
+  {
+    UserDefaults.standard.set(old, forKey: frame)
+  }
+}
+
+moveOutOfOldName()
+carryOverFromTeamChat()
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

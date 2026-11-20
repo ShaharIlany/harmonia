@@ -1,7 +1,7 @@
 // The chat sessions' team tools: start_job, check_jobs, stop_job and request_tool, as a stdio MCP server.
-// Claude Code starts it for each chat turn; every call goes back to the team chat server for that turn.
-const URL_ = process.env.TEAM_CHAT_URL!;
-const TURN = process.env.TEAM_CHAT_TURN!;
+// Claude Code starts it for each chat turn; every call goes back to the Harmonia server for that turn.
+const URL_ = process.env.HARMONIA_URL!;
+const TURN = process.env.HARMONIA_TURN!;
 
 const TOOLS = [
   {
@@ -57,7 +57,7 @@ async function call(name: string, args: unknown): Promise<string> {
     body: JSON.stringify(args ?? {}),
   });
   const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `The team chat answered ${res.status}.`);
+  if (!res.ok) throw new Error(data.error ?? `Harmonia answered ${res.status}.`);
   return String(data.text);
 }
 

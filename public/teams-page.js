@@ -162,7 +162,7 @@
           ${tick(cliOk())}
           <div class="tm-body">
             <h3>Get Microsoft's Teams CLI ready</h3>
-            <p class="hint">Team Chat uses Microsoft's <code>teams</code> command to register bots in your Microsoft 365 tenant. It needs Node.js 22.12 or later.</p>
+            <p class="hint">Harmonia uses Microsoft's <code>teams</code> command to register bots in your Microsoft 365 tenant. It needs Node.js 22.12 or later.</p>
             ${cliHtml()}
           </div>
         </li>
@@ -244,7 +244,7 @@
     <div class="ag-scroll">
       <section class="card">
         <h2>How it works</h2>
-        <p class="hint">Each teammate you connect becomes a bot in Teams. Your 1:1 chat with one mirrors a channel here, so they answer from their own session, with the same tools, memory and jobs. With <b>Mozart</b>, Teams channels and group chats link to channels here too. Only you can wake the teammates: their answers can hold your mail and calendar. The connection goes out from this Mac (Teams Socket Mode), so nothing listens on the internet. It works while Team Chat is running.</p>
+        <p class="hint">Each teammate you connect becomes a bot in Teams. Your 1:1 chat with one mirrors a channel here, so they answer from their own session, with the same tools, memory and jobs. With <b>Mozart</b>, Teams channels and group chats link to channels here too. Only you can wake the teammates: their answers can hold your mail and calendar. The connection goes out from this Mac (Teams Socket Mode), so nothing listens on the internet. It works while Harmonia is running.</p>
       </section>
       <div id="tm-bots">${botsHtml()}</div>
       <div id="tm-mozart">${mozartHtml()}</div>
@@ -366,7 +366,7 @@
     const remove = t.closest("[data-remove]");
     if (remove) {
       const name = mate(remove.dataset.remove).name;
-      if (!confirm(`Remove ${name}'s bot from Team Chat? Its secret leaves your Keychain. The app stays in Teams and the Developer Portal until you delete it there.`)) return;
+      if (!confirm(`Remove ${name}'s bot from Harmonia? Its secret leaves your Keychain. The app stays in Teams and the Developer Portal until you delete it there.`)) return;
       return act(`/api/teams/bots/${remove.dataset.remove}/remove`, {}, `${name}'s bot is removed.`);
     }
   });

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { USER_NAME } from "./roster";
+import { env } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
 
 export type Denial = { tool: string; rule: string; summary: string };
@@ -72,7 +73,7 @@ const childEnv = () => {
 
 /** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
 export async function quickAnswer(system: string, prompt: string, cwd: string): Promise<string> {
-  if (process.env.TEAM_CHAT_STUB) return "(stub) I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
+  if (env("STUB")) return "(stub) I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
       "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),
@@ -94,7 +95,7 @@ export async function quickAnswer(system: string, prompt: string, cwd: string): 
 
 /** A one-word Haiku run with no tools and no saved session, just to read the current usage. */
 export async function probeUsage(cwd: string) {
-  if (process.env.TEAM_CHAT_STUB) {
+  if (env("STUB")) {
     const now = Date.now() / 1000;
     return readUsage({ unifiedWindows: { five_hour: { utilization: 0.12, resetsAt: now + 3 * 3600, status: "allowed" }, seven_day: { utilization: 0.31, resetsAt: now + 4 * 86400, status: "allowed" } } });
   }
@@ -130,7 +131,7 @@ function ruleFor(tool: string, input: Record<string, any> = {}): string {
 }
 
 export function runAgent(o: RunOptions): Run {
-  if (process.env.TEAM_CHAT_STUB) return stubRun(o);
+  if (env("STUB")) return stubRun(o);
 
   const sessionId = o.sessionId;
   // A chat turn runs as an inline agent: the chat prompt, and the teammate's own tools (minus file edits) plus the
@@ -243,7 +244,7 @@ export function runAgent(o: RunOptions): Run {
   return { done, stop: () => proc.kill() };
 }
 
-/** TEAM_CHAT_STUB=1: canned replies, for trying the UI without spending a run. */
+/** HARMONIA_STUB=1: canned replies, for trying the UI without spending a run. */
 function stubRun(o: RunOptions): Run {
   let stopped = false;
   const lastLine = o.prompt.trim().split("\n").filter((l) => l.startsWith("[")).pop() ?? "";

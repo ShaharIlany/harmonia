@@ -1,66 +1,78 @@
-# Team Chat brand
+# Harmonia brand
 
-**The mark ("Table"):** your message in the middle, with your six teammates sitting around it. A coral speech bubble
-with a ring of six dots, one per teammate, each in that teammate's colour.
+**The mark ("Lyre"):** *harmonia* first meant fitting things together, then tuning a lyre's strings to each other.
+The mark is a lyre with six strings, one per teammate, each in that teammate's colour. The frame is graphite on light
+backgrounds and white on dark ones; the strings are the only colour. The app used to be called Team Chat; its old
+brand is in `team-chat/`.
 
-![Team Chat](lockup.svg)
+![Harmonia](lockup.svg)
 
 ## Files
 
 | File | Use |
 |---|---|
-| `mark.svg` | The mark, full colour. 48 px and up. |
-| `mark-small.svg` | Small cut: bigger dots and bubble so the gaps stay open. Below 48 px (favicon, sidebar header). |
-| `mark-black.svg`, `mark-white.svg`, `mark-coral.svg` | One colour: print, stamps, single-colour surfaces. |
+| `mark.svg` | The mark, full colour: graphite frame, six coloured strings. On light backgrounds, 48 px and up. |
+| `mark-reversed.svg` | The same with a white frame, for dark backgrounds. |
+| `mark-small.svg`, `mark-small-reversed.svg` | Small cut: a heavier frame and wider strings, so the colour still reads. Below 48 px. |
+| `favicon.svg` | The small cut with a frame that follows the browser: graphite in light mode, white in dark mode. |
+| `mark-black.svg`, `mark-white.svg`, `mark-ink.svg` | One colour: print, stamps, single-colour surfaces. |
 | `lockup.svg`, `lockup-white.svg` | Mark and wordmark side by side, for light and dark backgrounds. |
+| `lockup-stacked.svg` | Mark above the wordmark, for square spaces. |
 | `wordmark.svg`, `wordmark-white.svg` | Wordmark alone. |
 | `app-icon.svg`, `app-icon-small.svg` | The macOS icon (1024 canvas), and its 16/32 px cut. |
-| `board.html` | Final presentation board with mockups. `round-1/` holds the four first-round concepts. |
+| `board.html` | Final presentation board with mockups. `round-2/` holds the three concepts it was picked from (Bar, Lyre, Chord). |
 | `make-brand.py` | Writes every SVG above. Change the numbers there, then run `python3 make-brand.py`. |
+| `outline-wordmark.swift`, `wordmark-poppins.json` | The wordmark's outlines, taken from Poppins (see Type). |
 
 The app icon itself is drawn by `macapp/make-icon.swift` from the same numbers. `macapp/build.sh` rebuilds the
-`.icns` whenever that script changes. If you change the mark, change both.
+`.icns` whenever that script changes. The favicon, the sidebar mark (`mark-small-reversed`) and the sidebar wordmark
+are inline in `public/index.html`. If you change the mark, change all three.
 
 ## Colour
 
 | Name | HEX | RGB | Where |
 |---|---|---|---|
-| Coral | `#E0583A` | 224 88 58 | The bubble. Brand colour. |
-| Coral, text | `#C4462B` | 196 70 43 | Accent and active channel in light mode (4.9:1 with white). |
-| Coral, dark | `#EB6B4D` | 235 107 77 | Accent in dark mode (5.4:1 on the dark background). |
-| Warm ink | `#2A211E` | 42 33 30 | The band at the top of the chat list, icon tile, wordmark on light. |
-| Ink, dark | `#1C1715` | 28 23 21 | That band in dark mode. |
+| Graphite | `#202328` | 32 35 40 | The frame on light, the wordmark, the band at the top of the chat list, buttons in light mode. |
+| Graphite, dark | `#141518` | 20 21 24 | Panels in dark mode, the bottom of the icon tile. |
+| Mist | `#E8E9EC` | 232 233 236 | Buttons and accents in dark mode (with graphite text). |
+| White | `#FFFFFF` | 255 255 255 | The frame and wordmark on dark. |
 
-The six dots, clockwise from the top: `#EAB308`, `#22C55E`, `#06B6D4`, `#3B82F6`, `#A855F7`, `#EF4444` (the
-starter teammates' colours from `team.json`). Red sits at the upper left, away from the coral bubble's tail. The
-logo keeps these fixed even if you change a teammate's colour in the app.
+The six strings, left to right in roster order: Dali `#EAB308`, Leo `#3B82F6`, Elliot `#22C55E`, Sherlock
+`#A855F7`, Murphy `#EF4444`, Emily `#06B6D4` (the starter teammates' colours from `team.json`). The logo keeps these
+fixed even if you change a teammate's colour in the app. There's no brand accent colour on purpose: the teammates are
+the colour. Where seven colours are too many (print, embroidery, a stamp), use a one-colour version.
 
 ## Type
 
-- **Wordmark:** custom monoline letters (stroke 22 on a 256-high canvas, round caps, bowls built on the same
-  circles as the dots). It's drawn with strokes. They scale with the SVG, but expand them to outlines before
-  sending the file to a cutter or embroiderer.
-- **In the app:** the sidebar header sets "Team Chat" live in `ui-rounded` (SF Pro Rounded on a Mac), weight 800,
-  next to `mark-small`. Body text stays the system font.
+- **Wordmark:** "Harmonia" in [Poppins](https://fonts.google.com/specimen/Poppins) Medium, outlined into paths
+  (`outline-wordmark.swift` → `wordmark-poppins.json`), so no file needs the font. Poppins is under the SIL Open Font
+  License, which allows logo use. Its stem is about the lyre's 16-unit line, so mark and name have the same weight.
+- **In the app:** the sidebar header shows the outlined wordmark next to `mark-small-reversed`. Body text stays the
+  system font.
+
+## Lines
+
+The frame and yoke are 16 units on the 256 canvas, the sound box 20, the strings 5. The small cut uses 24 for the frame
+and 9 for the strings.
 
 ## Space and size
 
-- **Clear space:** at least one dot's diameter (42 units on the 256 canvas) on every side of the mark or lockup.
-- **Minimum size:** the mark at 16 px (use `mark-small.svg` below 48 px); the lockup at 120 px wide.
-- **Backgrounds:** white, light greys, warm ink and near-black. On a coral or other saturated background, use the
-  one-colour white version.
+- **Clear space:** at least two frame strokes (32 units on the 256 canvas) on every side of the mark or lockup.
+- **Minimum size:** the mark at 16 px (use the small cut below 48 px); the lockup at 120 px wide.
+- **Backgrounds:** white and light greys take the graphite frame; graphite and near-black take the white one. On a
+  saturated colour, use the one-colour white or black version.
 
 ## Don't
 
-- Don't recolour single dots, reorder them, or add a seventh.
-- Don't rotate the mark or flip the bubble's tail to the right.
-- Don't set the wordmark in another font, or squeeze it.
+- Don't recolour, reorder, add or drop strings. Six strings, in roster order.
+- Don't put a graphite frame on a dark background, or a white one on a light background.
+- Don't rotate or flip the mark, or straighten the horns.
+- Don't set the wordmark live in another font, or squeeze it.
 - Don't add gradients, shadows or outlines to the mark. (The app icon's tile has a soft gradient; the mark on it
   doesn't.)
-- Don't put the full-colour mark on coral or on a busy photo.
 
 ## Notes
 
-- The mark is original. It was drawn for Team Chat and checked against the big chat apps, but no trademark search
-  has been done.
-- 16 px test: the bubble and the ring of dots still read; the tail merges with the bubble. Fine for a favicon.
+- The mark is original, drawn for Harmonia. No trademark search has been done.
+- 16 px test: the horns, the yoke and the sound box still read, and the strings become one band of colour. Fine for a
+  favicon; the small cut keeps that band from turning grey.

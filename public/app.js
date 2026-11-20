@@ -48,15 +48,24 @@
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
   };
+  // Before the app was renamed, these keys started with "team-chat:". Move them over once.
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith("team-chat:")) continue;
+      const renamed = "harmonia:" + k.slice("team-chat:".length);
+      if (localStorage.getItem(renamed) === null) localStorage.setItem(renamed, localStorage.getItem(k));
+      localStorage.removeItem(k);
+    }
+  } catch {}
   // Pinned and muted channels, and unread counts, are this Mac's choices: kept in the page's storage.
   const storedSet = (k) => {
     const set = new Set(JSON.parse(store.get(k) || "[]"));
     return { has: (id) => set.has(id), toggle: (id) => (set.has(id) ? set.delete(id) : set.add(id), store.set(k, JSON.stringify([...set]))) };
   };
-  const pinned = storedSet("team-chat:pinned");
-  const muted = storedSet("team-chat:muted");
-  S.unread = JSON.parse(store.get("team-chat:unread") || "{}");
-  const saveUnread = () => store.set("team-chat:unread", JSON.stringify(S.unread));
+  const pinned = storedSet("harmonia:pinned");
+  const muted = storedSet("harmonia:muted");
+  S.unread = JSON.parse(store.get("harmonia:unread") || "{}");
+  const saveUnread = () => store.set("harmonia:unread", JSON.stringify(S.unread));
   // The chat list's time: 14:05 today, then Yesterday, the weekday, the date.
   const listTime = (ts) => {
     const d = new Date(ts), now = new Date();
@@ -100,7 +109,7 @@
     { id: "archived", label: "Archived" },
   ];
   const statusLabel = (id) => (STATUSES.find((x) => x.id === (id || "")) || {}).label || "";
-  let showArchived = store.get("team-chat:archived-open") === "1";
+  let showArchived = store.get("harmonia:archived-open") === "1";
   /** The chat list's second line: who said what last, or who's typing right now. */
   function previewHtml(c) {
     const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
@@ -174,7 +183,7 @@
   $("channels").addEventListener("click", (e) => {
     if (e.target.closest("[data-archived-toggle]")) {
       showArchived = !showArchived;
-      store.set("team-chat:archived-open", showArchived ? "1" : "0");
+      store.set("harmonia:archived-open", showArchived ? "1" : "0");
       return renderSidebar();
     }
     const b = e.target.closest("[data-ch]");
@@ -356,12 +365,12 @@
     }
   });
   // The app's "Check for Updates…" menu item calls this.
-  window.teamChatCheckUpdates = async () => {
+  window.harmoniaCheckUpdates = async () => {
     try {
       const u = await api("/api/update/check", {});
       renderUpdate(u);
       if (u.state === "off") toast(u.detail || "Updates are off.");
-      else if (u.state === "idle") toast(u.detail ? `${u.detail} (running ${u.version ? `version ${u.version}` : short(u.current)})` : `Team Chat is up to date (${u.version ? `version ${u.version}` : short(u.current)}).`);
+      else if (u.state === "idle") toast(u.detail ? `${u.detail} (running ${u.version ? `version ${u.version}` : short(u.current)})` : `Harmonia is up to date (${u.version ? `version ${u.version}` : short(u.current)}).`);
       else if (u.state === "failed") toast(`Couldn't check for updates: ${u.detail}`);
     } catch (err) {
       toast(err.message);
@@ -781,7 +790,7 @@
     return `<li><button class="s-row" data-open-session="${s.agentId}" ${s.sessionId ? `title="Open ${esc(t.name)}'s session in the Claude app"` : "disabled"}>
       <span class="s-av" style="--c:${t.color}">${t.avatar}</span>
       <span class="s-main">
-        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> Team chat</span>
+        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> Harmonia chat</span>
         <span class="s-sub">${status}${waiting}</span>
         ${stats}
       </span>
@@ -854,7 +863,7 @@
   function setSessionsOpen(open, remember = true) {
     $("app").classList.toggle("sessions-closed", !open);
     $("toggle-sessions").setAttribute("aria-pressed", String(open));
-    if (remember) store.set("team-chat:sessions", open ? "1" : "0");
+    if (remember) store.set("harmonia:sessions", open ? "1" : "0");
   }
   $("toggle-sessions").addEventListener("click", () => setSessionsOpen($("app").classList.contains("sessions-closed")));
 
@@ -876,7 +885,7 @@
     S.current = id;
     S.unread[id] = 0;
     saveUnread();
-    store.set("team-chat:channel", id);
+    store.set("harmonia:channel", id);
     showView("channel");
     const c = currentChannel();
     $("input").placeholder = `Message #${c.name}`;
@@ -1116,7 +1125,7 @@
   function updateTitle() {
     // Muted channels keep their count in the list, but not on the Dock.
     const n = Object.entries(S.unread).reduce((a, [id, k]) => a + (muted.has(id) || !S.channels.some((c) => c.id === id) ? 0 : k), 0);
-    document.title = n ? `(${n}) Team Chat` : "Team Chat";
+    document.title = n ? `(${n}) Harmonia` : "Harmonia";
   }
 
   // ---------- Composer ----------
@@ -1284,13 +1293,13 @@
   // ---------- Live updates ----------
   // ---------- Notifications ----------
   // Everything a teammate says to you (replies, questions, errors, permission cards) and finished jobs, whenever
-  // you're not looking at that channel. Not the 5-minute job status updates. In Team Chat.app these become macOS
+  // you're not looking at that channel. Not the 5-minute job status updates. In Harmonia.app these become macOS
   // notifications (the app sets window.__teamAppActive); in a browser they're web notifications.
-  let notifyLevel = store.get("team-chat:notify") || "all";
+  let notifyLevel = store.get("harmonia:notify") || "all";
   $("notify-level").value = notifyLevel;
   $("notify-level").addEventListener("change", (e) => {
     notifyLevel = e.target.value;
-    store.set("team-chat:notify", notifyLevel);
+    store.set("harmonia:notify", notifyLevel);
     if (notifyLevel !== "off" && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
   });
 
@@ -1347,7 +1356,7 @@
         appendMessage(m);
         renderSessions();
       }
-      // Unread unless you're looking at it: in another channel, or Team Chat isn't the app in front.
+      // Unread unless you're looking at it: in another channel, or Harmonia isn't the app in front.
       if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !lookingAt(e.channelId)) {
         S.unread[e.channelId] = (S.unread[e.channelId] || 0) + 1;
         saveUnread();
@@ -1464,9 +1473,9 @@
     for (const [cid, list] of Object.entries(st.activity)) S.activity[cid] = Object.fromEntries(list.map((a) => [a.agentId, a.status]));
     $("stub-badge").hidden = !st.stub;
     // Your last choice wins; with none, open it when there's room for it beside the chat.
-    const saved_ = store.get("team-chat:sessions");
+    const saved_ = store.get("harmonia:sessions");
     setSessionsOpen(saved_ ? saved_ === "1" : innerWidth > 1100, false);
-    const saved = store.get("team-chat:channel");
+    const saved = store.get("harmonia:channel");
     const live = S.channels.filter((c) => c.status !== "archived");
     await openChannel(S.channels.some((c) => c.id === saved) ? saved : (live[0] || S.channels[0]).id);
     refreshCli();

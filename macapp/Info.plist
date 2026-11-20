@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>Team Chat</string>
+  <string>Harmonia</string>
   <key>CFBundleDisplayName</key>
-  <string>Team Chat</string>
+  <string>Harmonia</string>
   <key>CFBundleIdentifier</key>
-  <string>local.teamchat.app</string>
+  <string>local.harmonia.app</string>
   <key>CFBundleExecutable</key>
-  <string>Team Chat</string>
+  <string>Harmonia</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>

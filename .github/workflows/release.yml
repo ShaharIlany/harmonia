@@ -1,8 +1,10 @@
-# Builds Team Chat.app for every version tag (git tag v1.2.0 && git push origin v1.2.0) and publishes it as a GitHub
+# Builds Harmonia.app for every version tag (git tag v1.2.0 && git push origin v1.2.0) and publishes it as a GitHub
 # release. Installed apps update from the latest release (updates.ts), and install.sh installs it.
 #
 # Assets:
-#   Team-Chat-arm64.zip (+ .sha256)  the app (stable name: releases/latest/download/… works)
+#   Harmonia-arm64.zip (+ .sha256)   the app (stable name: releases/latest/download/… works)
+#   Team-Chat-arm64.zip (+ .sha256)  the same app as "Team Chat.app", for installs from before the rename: their
+#                                    updater looks for that name. Drop it once no Team Chat installs are left.
 name: Release
 
 on:
@@ -37,13 +39,15 @@ jobs:
 
       - name: Build the app
         run: |
-          TEAM_CHAT_VERSION="$VERSION" TEAM_CHAT_BRANCH=main \
-            TEAM_CHAT_REPO="https://github.com/${GITHUB_REPOSITORY}.git" bash macapp/build.sh
+          HARMONIA_VERSION="$VERSION" HARMONIA_BRANCH=main \
+            HARMONIA_REPO="https://github.com/${GITHUB_REPOSITORY}.git" bash macapp/build.sh --legacy
+          ditto -c -k --sequesterRsrc --keepParent build/Harmonia.app Harmonia-arm64.zip
           ditto -c -k --sequesterRsrc --keepParent "build/Team Chat.app" Team-Chat-arm64.zip
-          shasum -a 256 Team-Chat-arm64.zip > Team-Chat-arm64.zip.sha256
-          cat "build/Team Chat.app/Contents/Resources/build.json"
+          for z in Harmonia-arm64.zip Team-Chat-arm64.zip; do shasum -a 256 "$z" > "$z.sha256"; done
+          cat build/Harmonia.app/Contents/Resources/build.json
 
       - name: Publish the release
         run: |
-          gh release create "$GITHUB_REF_NAME" Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
-            --verify-tag --latest --title "Team Chat $VERSION" --generate-notes
+          gh release create "$GITHUB_REF_NAME" Harmonia-arm64.zip Harmonia-arm64.zip.sha256 \
+            Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
+            --verify-tag --latest --title "Harmonia $VERSION" --generate-notes

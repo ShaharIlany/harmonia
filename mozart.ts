@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import mozartRulesFile from "./mozart-rules.md" with { type: "file" };
 import { MOZART_DIR } from "./paths";
+import { env } from "./env";
 import { ROSTER, TRIAGE, USER_NAME, nameOf, teammate } from "./roster";
 import { runAgent } from "./runner";
 import { saveChannels, type Channel, type Message, type MozartSession } from "./store";
@@ -86,7 +87,7 @@ export async function decide(o: { ch: Channel; all: Message[]; msg: Message; lin
     const f = fallback(all, msg, o.waitingOn);
     return { ...f, why: `${f.why} (${why})`, by: "rule" };
   };
-  if (process.env.TEAM_CHAT_STUB) return { ...fallback(all, msg, o.waitingOn), by: "rule" };
+  if (env("STUB")) return { ...fallback(all, msg, o.waitingOn), by: "rule" };
 
   let i = all.indexOf(msg);
   if (i < 0) return rules("message gone");

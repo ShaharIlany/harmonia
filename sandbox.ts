@@ -1,6 +1,6 @@
 // Keeps teammates out of the folders macOS protects (Desktop, Documents, Music, Photos, iCloud Drive…). Every
 // `claude` the app starts runs inside a macOS sandbox profile that allows everything except those folders, so a wide
-// search (find ~, grep -r ~/Library) gets "Operation not permitted" instead of a permission prompt for Team Chat.
+// search (find ~, grep -r ~/Library) gets "Operation not permitted" instead of a permission prompt for Harmonia.
 //
 // Allowed anyway: folders listed in settings.json "protectedAllow" (read on every run, no restart needed), and the
 // channel's own folder when it's inside one. "protectedGuard": false turns it off.
@@ -80,4 +80,4 @@ export const PROTECTED_NOTE =
   "Folders macOS protects (Desktop, Documents, Downloads, Music, Pictures, Movies, iCloud Drive, cloud drives, Mail, " +
   "Messages, other apps' data, /Volumes) are blocked for you and answer \"Operation not permitted\". Don't search them " +
   "or your home folder as a whole. If a task needs one, say which folder and ask the user to add it to " +
-  "\"protectedAllow\" in Team Chat's settings.json. Chrome needs --no-sandbox here (Playwright does it by default).";
+  "\"protectedAllow\" in Harmonia's settings.json. Chrome needs --no-sandbox here (Playwright does it by default).";

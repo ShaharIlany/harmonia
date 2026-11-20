@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { COMPILED, DATA, SETTINGS } from "./paths";
+import { env } from "./env";
 
 export type UpdateStatus = {
   state: "off" | "idle" | "checking" | "available" | "building" | "ready" | "waiting" | "installing" | "failed";
@@ -29,7 +30,7 @@ export type UpdateStatus = {
 };
 
 const RESOURCES = dirname(process.execPath);
-const APP = dirname(dirname(RESOURCES)); // …/Team Chat.app
+const APP = dirname(dirname(RESOURCES)); // …/Harmonia.app
 const SOURCE = join(DATA, "source");
 const LOG = join(DATA, "update.log");
 const CHECK_EVERY = 30 * 60_000;
@@ -49,11 +50,11 @@ const auto: boolean = SETTINGS.autoUpdate ?? true;
 const from: "release" | "source" = SETTINGS.updateFrom === "source" ? "source" : "release";
 /** "owner/name" from a GitHub URL or the setting itself. */
 const slug = repo.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1] ?? (/^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : "");
-const API = process.env.TEAM_CHAT_RELEASES_API ?? "https://api.github.com";
-const APP_ASSET = "Team-Chat-arm64.zip";
+const API = env("RELEASES_API") ?? "https://api.github.com";
+const APP_ASSET = "Harmonia-arm64.zip";
 const DOWNLOAD = join(DATA, "download");
 /** Where the next build waits until it's installed: the clone's build, or the unpacked release. */
-const fresh = () => (from === "release" ? join(DOWNLOAD, "Team Chat.app") : join(SOURCE, "build", "Team Chat.app"));
+const fresh = () => (from === "release" ? join(DOWNLOAD, "Harmonia.app") : join(SOURCE, "build", "Harmonia.app"));
 
 let status: UpdateStatus = { state: "off", from, auto, current: build?.commit, version: build?.version || undefined };
 let onStatus: (s: UpdateStatus) => void = () => {};
@@ -92,7 +93,7 @@ const git = (...args: string[]) => sh(["git", "-C", SOURCE, ...args]);
 export function startUpdates(o: { notify: (s: UpdateStatus) => void; busy: () => number }) {
   onStatus = o.notify;
   busyCount = o.busy;
-  if (process.env.TEAM_CHAT_STUB) return;
+  if (env("STUB")) return;
   if (!build) return set({ state: "off", detail: COMPILED ? "This build has no build.json." : "Running from source: update with git." });
   if (!repo) return set({ state: "off", detail: "The build has no git remote. Set updateRepo in settings.json." });
   if (from === "release" && !slug) return set({ state: "off", detail: `Releases come from GitHub, and ${repo} isn't a GitHub repo. Set updateRepo, or "updateFrom": "source".` });
@@ -141,16 +142,16 @@ async function buildLatest() {
   set({ state: "building", detail: "checking out" });
   await git("checkout", "--quiet", "--force", "--detach", latest);
   await git("clean", "-fdq", "-e", "build/");
-  rmSync(join(SOURCE, "build", "Team Chat.app"), { recursive: true, force: true });
+  rmSync(join(SOURCE, "build", "Harmonia.app"), { recursive: true, force: true });
   set({ state: "building", detail: "building the app" });
   log(`building ${latest}`);
-  await sh(["/bin/bash", "macapp/build.sh"], SOURCE, { TEAM_CHAT_REPO: repo, TEAM_CHAT_BRANCH: branch }).catch(
+  await sh(["/bin/bash", "macapp/build.sh"], SOURCE, { HARMONIA_REPO: repo, HARMONIA_BRANCH: branch }).catch(
     (e) => {
       failedBuild = latest;
       throw e;
     },
   );
-  const built = JSON.parse(readFileSync(join(SOURCE, "build", "Team Chat.app", "Contents", "Resources", "build.json"), "utf8"));
+  const built = JSON.parse(readFileSync(join(SOURCE, "build", "Harmonia.app", "Contents", "Resources", "build.json"), "utf8"));
   if (built.commit !== latest) throw new Error(`built ${built.commit}, expected ${latest}`);
   log(`built ${latest}`);
   set({ state: "ready", detail: undefined });
@@ -193,9 +194,9 @@ async function install() {
   set({ state: "installing", detail: "restarting" });
   const next = fresh();
   const prevDir = join(DATA, "previous");
-  const prev = join(prevDir, "Team Chat.app");
+  const prev = join(prevDir, "Harmonia.app");
   try {
-    if (!existsSync(join(next, "Contents", "MacOS", "Team Chat"))) throw new Error("the new build isn't there");
+    if (!existsSync(join(next, "Contents", "MacOS", "Harmonia"))) throw new Error("the new build isn't there");
     rmSync(prevDir, { recursive: true, force: true });
     mkdirSync(prevDir, { recursive: true });
     renameSync(APP, prev);
@@ -229,7 +230,7 @@ const newer = (a: string, b?: string) => {
 };
 
 async function github(path: string): Promise<any> {
-  const r = await fetch(`${API}/repos/${slug}${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" } });
+  const r = await fetch(`${API}/repos/${slug}${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "harmonia-updater" } });
   if (r.status === 404) return undefined;
   if (!r.ok) throw new Error(`GitHub answered ${r.status} for ${path}`);
   return r.json();

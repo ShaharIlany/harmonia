@@ -1,14 +1,14 @@
 {
- "brand": "Team Chat",
- "tagline": "A group chat with six AI teammates",
- "brief": "A Mac app where you work with six Claude Code teammates in channels, like a group chat that gets things done. Warm and human, not robotic or corporate, and distinct from the big chat apps. The mark works as the macOS app icon from 16 to 1024 px, in the Dock, as the favicon, in the sidebar header and in the README, on light and dark.",
+ "brand": "Harmonia",
+ "tagline": "Six Claude Code teammates, in tune",
+ "brief": "Team Chat, renamed Harmonia: a Mac app where you work with six Claude Code teammates in channels, like a group chat that gets things done, with Mozart picking who answers. Harmonia is the Greek goddess of harmony and the everyday Hebrew word for it; the word first meant fitting things together, then tuning a lyre's strings to each other. The mark has to work as the macOS app icon from 16 to 1024 px, in the Dock, as the favicon, in the sidebar header and in the README, on light and dark, and stay clear of the speech bubbles, sparkles and node graphs every AI tool uses.",
  "adjectives": [
+  "in tune",
   "warm",
-  "human",
-  "together",
+  "crafted",
   "quietly capable"
  ],
- "criteria": "Reads at 16 px, works in one colour, says 'you and a team, talking'.",
+ "criteria": "Reads at 16 px, works in one colour, says 'six voices tuned to each other'.",
  "mockups": [
   "app-icon",
   "favicon-tab",
@@ -22,33 +22,33 @@
   "Teammates",
   "Sessions"
  ],
- "brand_color": "#E0583A",
- "tile_color": "#2A211E",
+ "brand_color": "#202328",
+ "tile_color": "#202328",
  "greyscale": false,
  "final": true,
  "designer": "Claude Code",
  "round": 2,
  "concepts": [
   {
-   "name": "Table",
+   "name": "Lyre",
    "symbol": "mark.svg",
    "lockup": "lockup.svg",
-   "symbol_on_tile": "mark.svg",
-   "symbol_on_dark": "mark.svg",
+   "symbol_on_tile": "mark-reversed.svg",
+   "symbol_on_dark": "mark-reversed.svg",
    "lockup_on_dark": "lockup-white.svg",
-   "idea": "Your message in the middle, six teammates sitting around it.",
+   "idea": "Harmonia first meant tuning a lyre's strings to each other: six strings, one per teammate.",
    "rationale": [
-    "Says what the app is: you plus six teammates",
-    "The teammates' own colours ring the coral bubble",
-    "Small cut with bigger dots keeps 16 px legible",
-    "Monoline rounded wordmark echoes the round dots"
+    "The name's own story, not another chat bubble",
+    "Each string is a starter teammate's colour; nothing else has colour",
+    "Small cut with a heavier frame keeps 16 px legible",
+    "Thin graphite frame, same weight as the Poppins Medium wordmark"
    ]
   }
  ],
- "recommendation": "Final direction: Table, in coral and warm ink.",
+ "recommendation": "Final direction: Lyre, a thin graphite frame (white on dark) with the six teammates' colours as strings, and a Poppins wordmark.",
  "next_steps": [
   "App icon from macapp/make-icon.swift",
-  "Favicon and sidebar header in public/",
-  "Palette in public/style.css"
+  "Favicon, sidebar mark and wordmark in public/index.html",
+  "Graphite palette in public/style.css"
  ]
 }

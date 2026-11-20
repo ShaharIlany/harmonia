@@ -3,7 +3,7 @@
 // 1:1 chats: your private Teams chat with a teammate's bot mirrors the channel #teams-<id>. What you write there is
 // posted as you, addressed to that teammate; what happens in the channel goes back to Teams.
 //
-// Teams channels and group chats: each one is linked to a Team Chat channel. With the Mozart bot in it (it reads
+// Teams channels and group chats: each one is linked to a Harmonia channel. With the Mozart bot in it (it reads
 // every message, by resource-specific consent), everything you write there lands in the linked channel as your
 // message, and the channel's Mozart decides who answers, as it does in the app. Other people's messages land too, as
 // context, but never wake a teammate: the teammates work for you and can read your mail. Each teammate answers with
@@ -40,7 +40,9 @@ import { TeamsSocket, botTokens, type Activity, type SocketState } from "./teams
 
 const FILE = join(DATA, "teams.json");
 const LINKS_FILE = join(DATA, "teams-links.json");
-const KEYCHAIN_SERVICE = "Team Chat Teams bot";
+const KEYCHAIN_SERVICE = "Harmonia Teams bot";
+/** Where bots made before the app was renamed keep their secrets. */
+const OLD_KEYCHAIN_SERVICE = "Team Chat Teams bot";
 const TYPING_EVERY = 3_000; // Teams clears a bot's typing indicator after a few seconds
 const SEND_RETRIES = [2_000, 5_000, 15_000];
 const MEMBERS_EVERY = 10 * 60_000; // how often a linked conversation's installed bots are looked up again
@@ -68,7 +70,7 @@ export type BotRecord = {
   teamsAppId: string;
   tenantId: string;
   ownerAadId?: string; // the only Microsoft Entra user who wakes teammates (set on the first message when unknown)
-  channelId?: string; // teammates: the Team Chat channel their 1:1 chat mirrors
+  channelId?: string; // teammates: the Harmonia channel their 1:1 chat mirrors
   conversationId?: string; // your 1:1 chat with it, once Teams told us about it
   serviceUrl?: string;
   installedIn?: string[]; // teams (their id) and group chats it's in
@@ -78,11 +80,11 @@ export type BotRecord = {
   createdAt: number;
 };
 
-/** A Teams channel or group chat linked to a Team Chat channel. */
+/** A Teams channel or group chat linked to a Harmonia channel. */
 export type Link = {
   conversationId: string; // the channel ("19:…@thread.tacv2") or group chat ("19:…@thread.v2"), without ";messageid="
   kind: "channel" | "groupChat";
-  channelId: string; // the Team Chat channel
+  channelId: string; // the Harmonia channel
   serviceUrl: string;
   tenantId: string;
   teamId?: string; // channel: its team's id (the conversation id of the team's General channel)
@@ -362,6 +364,7 @@ export class TeamsBridge {
     this.live.get(agentId)?.stop();
     this.live.delete(agentId);
     await keychain(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", r.botId]);
+    await keychain(["delete-generic-password", "-s", OLD_KEYCHAIN_SERVICE, "-a", r.botId]);
     delete this.records[agentId];
     this.save();
     this.changed();
@@ -378,7 +381,7 @@ export class TeamsBridge {
   }
 
   private async connect(r: BotRecord) {
-    const secret = await keychain(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", r.botId, "-w"]);
+    const secret = await botSecret(r.botId);
     const bot = new LiveBot(r, secret.code === 0 ? secret.out : "", this, this.deps);
     this.live.get(r.agentId)?.stop();
     this.live.set(r.agentId, bot);
@@ -440,7 +443,7 @@ export class TeamsBridge {
     return Boolean(this.live.get(agentId)?.ready && this.records[agentId]?.installedIn?.includes(memberKey(link)));
   }
 
-  // ---------- Teams channels and group chats → Team Chat ----------
+  // ---------- Teams channels and group chats → Harmonia ----------
 
   /** A message (or install) in a Teams channel or group chat, from any bot. */
   async shared(bot: LiveBot, a: Activity) {
@@ -456,7 +459,7 @@ export class TeamsBridge {
       // Its hello, unless it's a chat Mozart just made (that gets a welcome of its own).
       if (bot.agentId === MOZART && a.type === "installationUpdate" && a.action === "add" && !this.links[baseId(conv.id)]) {
         const where = a.channelData?.team ? "this team's channels" : "this chat";
-        bot.reply(a, `Hi, I'm Mozart 🎼. I connect ${where} to Team Chat: when ${USER_NAME} writes here, I pick the teammate who answers. ${a.channelData?.team ? "**@Mozart new channel <name>** makes a new channel in this team." : "**@Mozart new channel <name>** makes a new channel in your team."}`);
+        bot.reply(a, `Hi, I'm Mozart 🎼. I connect ${where} to Harmonia: when ${USER_NAME} writes here, I pick the teammate who answers. ${a.channelData?.team ? "**@Mozart new channel <name>** makes a new channel in this team." : "**@Mozart new channel <name>** makes a new channel in your team."}`);
       }
       return;
     }
@@ -493,15 +496,15 @@ export class TeamsBridge {
     if (!ch) {
       delete this.links[base];
       this.saveLinks();
-      return yours ? bot.reply(a, "Its Team Chat channel is gone. Write again to link this conversation to a new one.") : undefined;
+      return yours ? bot.reply(a, "Its Harmonia channel is gone. Write again to link this conversation to a new one.") : undefined;
     }
     if (!text) return yours ? bot.reply(a, "I can only read text for now.") : undefined;
     if (!yours) return this.deps.guest(ch, a.from?.name ?? "Someone", text, sender);
-    if (ch.status === "archived") return bot.reply(a, `#${ch.name} is archived in Team Chat. Unarchive it there and write again.`);
+    if (ch.status === "archived") return bot.reply(a, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`);
     this.deps.post(ch, text);
   }
 
-  /** A new Team Chat channel for a Teams channel or group chat you wrote in. */
+  /** A new Harmonia channel for a Teams channel or group chat you wrote in. */
   private autoLink(a: Activity): Link {
     const conv = a.conversation!;
     const team = a.channelData?.team;
@@ -546,8 +549,8 @@ export class TeamsBridge {
       return bot.reply(
         a,
         [
-          "**Mozart** 🎼 links Teams to Team Chat. In a linked group chat or channel, write as usual and I pick who answers (or @mention a teammate).",
-          "- **@Mozart new channel <name>**: a new channel in the team, linked to a new Team Chat channel. Everyone in the team sees it.",
+          "**Mozart** 🎼 links Teams to Harmonia. In a linked group chat or channel, write as usual and I pick who answers (or @mention a teammate).",
+          "- **@Mozart new channel <name>**: a new channel in the team, linked to a new Harmonia channel. Everyone in the team sees it.",
           "- **@Mozart new group chat <name>**: a members-only group chat with you and the teammates instead. @mention people (or write their email) to add them too. Needs an admin's approval once.",
           "- **@Mozart help**: this.",
         ].join("\n"),
@@ -564,7 +567,7 @@ export class TeamsBridge {
     if (err) bot.reply(a, `Couldn't create the channel: ${err}`);
   }
 
-  /** `new channel`: a standard channel in the team (Graph, Mozart's Channel.Create.Group consent) and a Team Chat channel linked to it. */
+  /** `new channel`: a standard channel in the team (Graph, Mozart's Channel.Create.Group consent) and a Harmonia channel linked to it. */
   private async newChannel(team: KnownTeam, wanted: string, a: Activity): Promise<string | undefined> {
     const mozart = this.mozartBot();
     if (!mozart) return "Mozart isn't connected.";
@@ -575,7 +578,7 @@ export class TeamsBridge {
     try {
       made = await mozart.graph("POST", `/teams/${team.groupId}/channels`, {
         displayName,
-        description: "Linked to Team Chat: teammates answer here.",
+        description: "Linked to Harmonia: teammates answer here.",
         membershipType: "standard",
       });
     } catch (err: any) {
@@ -604,7 +607,7 @@ export class TeamsBridge {
     const missing = ROSTER.filter((t) => !inTeam.some((r) => r.agentId === t.id));
     const who = (list: { agentId: string }[]) => list.map((r) => `${teammate(r.agentId)?.avatar ?? ""} ${nameOf(r.agentId)}`.trim()).join(", ");
     const lines = [
-      `This channel is **#${ch.name}** in Team Chat. Write here and I'll pick the teammate who answers, or @mention one.`,
+      `This channel is **#${ch.name}** in Harmonia. Write here and I'll pick the teammate who answers, or @mention one.`,
       inTeam.length ? `In this team: ${who(inTeam)}.` : "",
       missing.length
         ? `Not in this team yet: ${missing
@@ -617,7 +620,7 @@ export class TeamsBridge {
     ].filter(Boolean);
     await mozart.send({ type: "message", text: lines.join("\n\n"), textFormat: "markdown" }, { serviceUrl: link.serviceUrl, conversationId: link.conversationId });
     this.deps.note(ch, `Created from Microsoft Teams: ${team.name ? `${team.name} › ` : ""}${displayName}, linked to this channel.`);
-    mozart.reply(a, `Created **${displayName}**${made.webUrl ? ` ([open](${made.webUrl}))` : ""}, linked to #${ch.name} in Team Chat.`);
+    mozart.reply(a, `Created **${displayName}**${made.webUrl ? ` ([open](${made.webUrl}))` : ""}, linked to #${ch.name} in Harmonia.`);
     this.changed();
     this.deps.log("teams.channel_created", { team: team.id, conversation: link.conversationId, channelId: ch.id });
   }
@@ -644,7 +647,7 @@ export class TeamsBridge {
 
   /**
    * `new channel`: a members-only Teams group chat (you, the people named, Mozart and the teammates' bots, all through
-   * Graph) linked to a new Team Chat channel.
+   * Graph) linked to a new Harmonia channel.
    */
   private async newChat(wanted: string, a: Activity): Promise<string | undefined> {
     const mozart = this.mozartBot();
@@ -655,7 +658,7 @@ export class TeamsBridge {
     if (!topic) return "Give it a name: @Mozart new channel <name>.";
     const roles = await mozart.graphRoles(true).catch(() => [] as string[]);
     const missing = MOZART_GRAPH.slice(0, 2).filter((r) => !roles.includes(r));
-    if (missing.length) return `Mozart's app needs an admin's approval for ${missing.join(" and ")} first (Team Chat → Microsoft Teams → Channels and group chats).`;
+    if (missing.length) return `Mozart's app needs an admin's approval for ${missing.join(" and ")} first (Harmonia → Microsoft Teams → Channels and group chats).`;
     const people = await this.people(a);
     if (people.unknown.length) return `I couldn't tell who ${people.unknown.join(", ")} ${people.unknown.length > 1 ? "are" : "is"} in Microsoft 365. Write their email instead.`;
 
@@ -688,7 +691,7 @@ export class TeamsBridge {
     const noBot = ROSTER.filter((t) => !this.records[t.id]).map((t) => t.name);
     const inIt = Object.values(this.records).filter((r) => r.agentId !== MOZART && r.installedIn?.includes(link.conversationId)).map((r) => `${teammate(r.agentId)?.avatar ?? ""} ${nameOf(r.agentId)}`.trim());
     const lines = [
-      `This chat is **#${ch.name}** in Team Chat. Only its members see it. Write here and I'll pick the teammate who answers, or @mention one.`,
+      `This chat is **#${ch.name}** in Harmonia. Only its members see it. Write here and I'll pick the teammate who answers, or @mention one.`,
       inIt.length ? `Here: ${inIt.join(", ")}.` : "",
       noBot.length ? `No Teams bot yet: ${noBot.join(", ")}. I answer for them.` : "",
     ].filter(Boolean);
@@ -698,7 +701,7 @@ export class TeamsBridge {
     if (failed.length) this.deps.note(ch, `Couldn't add to the Teams chat: ${failed.join("; ")}.`);
     mozart.reply(
       a,
-      `Created the group chat **${topic}**${chat.webUrl ? ` ([open](${chat.webUrl}))` : ""}, linked to #${ch.name} in Team Chat.${failed.length ? `\n\nCouldn't add: ${failed.join("; ")}.` : ""}`,
+      `Created the group chat **${topic}**${chat.webUrl ? ` ([open](${chat.webUrl}))` : ""}, linked to #${ch.name} in Harmonia.${failed.length ? `\n\nCouldn't add: ${failed.join("; ")}.` : ""}`,
     );
     this.deps.log("teams.chat_created", { conversation: link.conversationId, channelId: ch.id, failed: failed.length });
   }
@@ -758,7 +761,7 @@ export class TeamsBridge {
     return { granted: MOZART_GRAPH.filter((p) => roles.includes(p)), missing: MOZART_GRAPH.filter((p) => !roles.includes(p)), catalog, ...links, error };
   }
 
-  // ---------- Team Chat → linked Teams channels and group chats ----------
+  // ---------- Harmonia → linked Teams channels and group chats ----------
 
   /** Mozart's bot, when it's connected: it speaks for anyone without a bot of their own in a linked conversation. */
   private mozartBot() {
@@ -787,7 +790,7 @@ export class TeamsBridge {
     const m = e.message;
     if (m.meta?.via === "teams" || m.author === "guest") return;
     const mozart = this.mozartBot();
-    if (m.author === "user") return void mozart?.send({ type: "message", text: `**${USER_NAME}** (in Team Chat): ${m.text}`, textFormat: "markdown" }, target);
+    if (m.author === "user") return void mozart?.send({ type: "message", text: `**${USER_NAME}** (in Harmonia): ${m.text}`, textFormat: "markdown" }, target);
     if (m.author === "system") return void mozart?.send({ type: "message", text: `_${m.text}_`, textFormat: "markdown" }, target);
     if (!teammate(m.author)) return;
     const own = this.installedIn(m.author, link) ? this.live.get(m.author) : undefined;
@@ -902,7 +905,7 @@ class LiveBot {
     return made;
   }
 
-  // ---------- Teams → Team Chat ----------
+  // ---------- Teams → Harmonia ----------
 
   private async onActivity(a: Activity) {
     const conv = a.conversation;
@@ -924,8 +927,8 @@ class LiveBot {
         this.send({
           type: "message",
           text: this.mirrors
-            ? `Hi ${USER_NAME} 👋 It's ${this.name}. Write to me here and I'll answer from Team Chat.`
-            : `Hi ${USER_NAME} 👋 I'm Mozart 🎼. Add me to a team or group chat and I'll link it to Team Chat. Write **help** for what I can do.`,
+            ? `Hi ${USER_NAME} 👋 It's ${this.name}. Write to me here and I'll answer from Harmonia.`
+            : `Hi ${USER_NAME} 👋 I'm Mozart 🎼. Add me to a team or group chat and I'll link it to Harmonia. Write **help** for what I can do.`,
         });
       return;
     }
@@ -942,7 +945,7 @@ class LiveBot {
       return cmd ? this.bridge.command(this, a, cmd) : this.reply(a, "Write **help** for what I can do. To talk to the teammates, write in a linked channel or group chat, or to a teammate directly.");
     }
     const ch = this.channel();
-    if (!ch) return this.reply(a, `#teams-${this.agentId} is archived in Team Chat. Unarchive it and write again.`);
+    if (!ch) return this.reply(a, `#teams-${this.agentId} is archived in Harmonia. Unarchive it and write again.`);
     this.typeOnce(); // right away; the channel's activity keeps it up while they work
     // Starting with an @name talks to that teammate; anything else is for this bot's teammate.
     this.deps.post(ch, text.startsWith("@") ? text : `@${this.name} ${text}`);
@@ -965,14 +968,14 @@ class LiveBot {
     this.send({ type: "message", text, textFormat: "markdown" }, { serviceUrl: a.serviceUrl, conversationId: a.conversation.id });
   }
 
-  // ---------- Team Chat → your 1:1 chat ----------
+  // ---------- Harmonia → your 1:1 chat ----------
 
   onEvent(e: Event) {
     if (!this.mirrors || !("channelId" in e) || e.channelId !== this.record.channelId) return;
     if (e.type === "message") {
       const m = e.message;
       // Your words typed in the app go to Teams too, so the chat there reads whole.
-      const text = m.author === "user" ? (m.meta?.via === "teams" ? undefined : `**You** (in Team Chat): ${m.text}`) : relayText(m, this.agentId);
+      const text = m.author === "user" ? (m.meta?.via === "teams" ? undefined : `**You** (in Harmonia): ${m.text}`) : relayText(m, this.agentId);
       if (text) this.send({ type: "message", text, textFormat: "markdown" });
     } else if (e.type === "update" && e.message.author === "user") {
       // A teammate's emoji-only answer lands as a reaction on your message; it goes to Teams as a message.
@@ -1074,7 +1077,7 @@ export function chatTopic(name: string): string {
   return name.replace(/:/g, " ").replace(/\s+/g, " ").trim().slice(0, 250).trim();
 }
 
-/** What a Team Chat message looks like in Teams, or undefined when it stays in the app. `self`: the bot that sends it. */
+/** What a Harmonia message looks like in Teams, or undefined when it stays in the app. `self`: the bot that sends it. */
 export function relayText(m: Message, self: string): string | undefined {
   if (m.author === "user" || m.author === "guest") return undefined;
   if (m.author === "system") return `_${m.text}_`;
@@ -1088,9 +1091,9 @@ export function relayText(m: Message, self: string): string | undefined {
     case "error":
       return `⚠️ ${prefix}${m.text}`;
     case "permission":
-      return `🔐 ${name} is waiting for ${USER_NAME}'s OK in Team Chat: ${m.meta?.permission?.summary ?? m.text}`;
+      return `🔐 ${name} is waiting for ${USER_NAME}'s OK in Harmonia: ${m.meta?.permission?.summary ?? m.text}`;
     case "tools":
-      return `🧰 ${name} asks for more tools in Team Chat: ${m.meta?.toolRequest?.reason ?? m.text}`;
+      return `🧰 ${name} asks for more tools in Harmonia: ${m.meta?.toolRequest?.reason ?? m.text}`;
     default:
       return undefined; // job status updates stay in the app
   }
@@ -1160,3 +1163,11 @@ const keychain = async (args: string[]) => {
   const r = await run(["security", ...args], 15_000);
   return { ...r, out: r.out.trim() };
 };
+/** A bot's secret. One made before the rename is under the old service name: it's copied to the new one on first use. */
+async function botSecret(botId: string) {
+  const r = await keychain(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", botId, "-w"]);
+  if (r.code === 0) return r;
+  const old = await keychain(["find-generic-password", "-s", OLD_KEYCHAIN_SERVICE, "-a", botId, "-w"]);
+  if (old.code === 0) await keychain(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", botId, "-w", old.out]);
+  return old.code === 0 ? old : r;
+}

@@ -1,72 +1,57 @@
 #!/usr/bin/env python3
-"""Writes the Team Chat brand SVG masters into this folder. No dependencies: python3 make-brand.py
+"""Writes the Harmonia brand SVG masters into this folder. No dependencies: python3 make-brand.py
 
-The mark ("Table"): your message bubble in the middle, the six teammates around it.
-Canvas 256 x 256. Bubble r=50 at (128,128), tail toward 125 deg. Six dots r=21 on a ring r=100, every 60 deg from the top.
-The small cut (16-32 px) uses bigger dots (r=27) and a bigger bubble (r=56) so the gaps stay open.
+The mark ("Lyre"): harmonia first meant tuning a lyre's strings to each other. Six strings, one per teammate, in the
+starter teammates' colours; the frame is graphite on light backgrounds and white on dark ones. Nothing else has colour.
+Canvas 256 x 256. Two horn arms (stroke 16, about Poppins Medium's stem) rise from a sound box (x 58-198, y 194-214) and
+curl out at the top; a yoke across them at y 84; six strings (5 wide) from the yoke to the box, centred 94 to 162.
+The small cut (16-32 px) has a heavier frame (24) and wider strings (9), so the colour still reads.
+The wordmark is Poppins Medium, outlined into wordmark-poppins.json by outline-wordmark.swift.
 macapp/make-icon.swift draws the app icon from the same numbers.
 """
-import math, os
+import json, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-INK, CORAL, WHITE = "#2A211E", "#E0583A", "#FFFFFF"
-# Teammate colours, clockwise from the top. Red sits away from the coral bubble's tail.
-DOTS = ["#EAB308", "#22C55E", "#06B6D4", "#3B82F6", "#A855F7", "#EF4444"]
-ANGLES = [-90, -30, 30, 90, 150, 210]
-
-def P(cx, cy, r, deg):
-    a = math.radians(deg)
-    return cx + r * math.cos(a), cy + r * math.sin(a)
+INK, WHITE = "#202328", "#FFFFFF"  # graphite
+# The starter teammates' colours, left to right in roster order: Dali, Leo, Elliot, Sherlock, Murphy, Emily.
+TEAM = ["#EAB308", "#3B82F6", "#22C55E", "#A855F7", "#EF4444", "#06B6D4"]
 
 def f(*p): return " ".join(f"{v:.2f}".rstrip("0").rstrip(".") for v in p)
 
-def circle(cx, cy, r):
-    return f"M{f(cx + r, cy)} A{f(r, r)} 0 1 1 {f(cx - r, cy)} A{f(r, r)} 0 1 1 {f(cx + r, cy)} Z"
+ARM = "M80 196 C62 164 56 120 66 84 C72 64 64 48 50 42"  # the left arm; the right one is its mirror
+def mirror(d):
+    toks, out, i = re.findall(r"[A-Za-z]|-?\d+(?:\.\d+)?", d), [], 0
+    while i < len(toks):
+        if toks[i].isalpha(): out.append(toks[i]); i += 1
+        else: out.append(f(256 - float(toks[i]), float(toks[i + 1]))); i += 2
+    return " ".join(out)
 
-def bubble(cx, cy, r, tail=125, spread=24, tip_r=1.76):
-    """A circle with a tail: the tail's two edges leave the circle at tail +/- spread and meet at the tip."""
-    a1, a2 = P(cx, cy, r, tail - spread), P(cx, cy, r, tail + spread)
-    tip = P(cx, cy, r * tip_r, tail + 4)
-    return f"M{f(*a2)} L{f(*tip)} L{f(*a1)} A{f(r, r)} 0 1 0 {f(*a2)} Z"
+def mark(frame=INK, strings=TEAM, small=False, tx=0, ty=0, s=1.0):
+    """The lyre. `strings`: a list of six colours, or one colour for all."""
+    cols = strings if isinstance(strings, list) else [strings] * 6
+    sw, s_w, x0, x1 = (24, 9, 89, 167) if small else (16, 5, 94, 162)
+    yoke_y, box = 84, (58, 194, 20)
+    out = []
+    for k, c in enumerate(cols):
+        x = x0 + k * (x1 - x0) / 5
+        out.append(f'<rect x="{f(x - s_w / 2)}" y="{yoke_y}" width="{s_w}" height="{box[1] - yoke_y + 2}" rx="{f(s_w / 2)}" fill="{c}"/>')
+    out.append(f'<path fill="none" stroke="{frame}" stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round" '
+               f'd="{ARM} {mirror(ARM)} M54 {yoke_y} H202"/>')
+    out.append(f'<rect x="{box[0]}" y="{box[1]}" width="{256 - 2 * box[0]}" height="{box[2]}" rx="{box[2] / 2}" fill="{frame}"/>')
+    body = "".join(out)
+    return f'<g transform="translate({f(tx, ty)}) scale({f(s)})">{body}</g>' if (tx or ty or s != 1) else body
 
-def mark(cx=128, cy=128, s=1.0, small=False, bubble_fill=CORAL, dot_fills=DOTS):
-    br, dr, ring = (56, 27, 98) if small else (50, 21, 100)
-    out = [f'<path fill="{bubble_fill}" d="{bubble(cx, cy, br * s)}"/>']
-    for a, c in zip(ANGLES, dot_fills if isinstance(dot_fills, list) else [dot_fills] * 6):
-        x, y = P(cx, cy, ring * s, a)
-        out.append(f'<path fill="{c}" d="{circle(x, y, dr * s)}"/>')
-    return "".join(out)
-
-# Wordmark "Team Chat": monoline, round caps, stroke 22, built on circles r=31 (x-height 84, cap height 128).
-SW = 22
+# Wordmark: "Harmonia" in Poppins Medium (Google Fonts, SIL Open Font License), outlined so no file needs the font.
+# Cap height 106 on the 256 canvas, baseline at 180. To redo it: swift outline-wordmark.swift > wordmark-poppins.json
+WORDMARK = json.load(open(os.path.join(HERE, "wordmark-poppins.json")))
 def wordmark(x0, colour):
-    base, xc = 177, 146  # stroke centre line of the baseline, bowl centre
-    def ring(cx): return f"M{f(cx + 31, xc)} A31 31 0 1 1 {f(cx - 31, xc)} A31 31 0 1 1 {f(cx + 31, xc)}"
-    def a(cx): return ring(cx) + f" M{f(cx + 31, 115)} V{base}"
-    d = []
-    x = x0
-    d.append(f"M{f(x + 11, 71)} H{f(x + 91)} M{f(x + 51, 71)} V{base}")                     # T
-    cx = x + 132
-    e_end = P(cx, xc, 31, 42)
-    d.append(f"M{f(cx - 31, xc)} H{f(cx + 31)} A31 31 0 1 0 {f(*e_end)}")                    # e
-    cx += 100; d.append(a(cx))                                                              # a
-    m = cx + 69
-    d.append(f"M{f(m, base)} V137 A22 22 0 0 1 {f(m + 44)} 137 V{base} M{f(m + 44)} 137 A22 22 0 0 1 {f(m + 88)} 137 V{base}")  # m
-    ccx = m + 88 + 11 + 44 + 64
-    c1, c2 = P(ccx, 124, 53, -42), P(ccx, 124, 53, 42)
-    d.append(f"M{f(*c1)} A53 53 0 1 0 {f(*c2)}")                                            # C
-    h = c1[0] + 11 + 16 + 11 + 2
-    d.append(f"M{f(h, 71)} V{base} M{f(h)} 137 A22 22 0 0 1 {f(h + 44)} 137 V{base}")       # h
-    cx = h + 44 + 11 + 16 + 42; d.append(a(cx))                                             # a
-    t = cx + 31 + 11 + 14 + 31
-    d.append(f"M{f(t, 82)} V{f(base - 18)} A18 18 0 0 0 {f(t + 18, base)} M{f(t - 20, 115)} H{f(t + 22)}")  # t
-    right = t + 22 + 11
-    path = (f'<path fill="none" stroke="{colour}" stroke-width="{SW}" stroke-linecap="round" '
-            f'stroke-linejoin="round" d="{" ".join(d)}"/>')
-    return path, right
+    """The outlined wordmark with its left edge at x0. Returns the path and its right edge."""
+    dx = x0 - WORDMARK["left"]
+    return (f'<path fill="{colour}" transform="translate({f(dx)} 0)" d="{WORDMARK["d"]}"/>',
+            x0 + WORDMARK["right"] - WORDMARK["left"])
 
 def svg(body, w, title, h=256):
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {f(w)} {h}" width="{f(w)}" height="{h}" '
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {f(w)} {f(h)}" width="{f(w)}" height="{f(h)}" '
             f'role="img"><title>{title}</title>{body}</svg>\n')
 
 def write(name, text):
@@ -74,25 +59,40 @@ def write(name, text):
     print("wrote", name)
 
 def app_icon(small=False):
-    # macOS grid on a 1024 canvas: an 824 rounded square inset 100, radius 185, the mark at scale 2.2.
-    # The 16 and 32 px cut fills more of the canvas (inset 40, radius 220) with the small mark at scale 3.
-    inset, radius, scale = (40, 220, 3.0) if small else (100, 185, 2.2)
+    # macOS grid on a 1024 canvas: an 824 rounded square inset 100, radius 185, the mark at scale 2.9.
+    # The 16 and 32 px cut fills more of the canvas (inset 40, radius 220) with the small mark at scale 3.5.
+    inset, radius, scale = (40, 220, 3.5) if small else (100, 185, 2.9)
     side = 1024 - 2 * inset
+    off = 512 - 128 * scale
     g = (f'<defs><linearGradient id="tile" x1="0" y1="{inset}" x2="0" y2="{1024 - inset}" gradientUnits="userSpaceOnUse">'
-         '<stop offset="0" stop-color="#3A2D28"/><stop offset="1" stop-color="#211A17"/></linearGradient></defs>'
+         '<stop offset="0" stop-color="#2E3036"/><stop offset="1" stop-color="#141518"/></linearGradient></defs>'
          f'<rect x="{inset}" y="{inset}" width="{side}" height="{side}" rx="{radius}" fill="url(#tile)"/>')
-    return svg(g + mark(512, 512, scale, small=small), 1024, "Team Chat app icon", 1024)
+    return svg(g + mark(WHITE, small=small, tx=off, ty=off, s=scale), 1024, "Harmonia app icon", 1024)
+
+def favicon():
+    """The small cut whose frame follows the browser: graphite in light mode, white in dark mode."""
+    body = mark(frame="FRAME", small=True).replace('stroke="FRAME"', 'class="fs"').replace('fill="FRAME"', 'class="ff"')
+    style = (f"<style>.fs{{stroke:{INK}}}.ff{{fill:{INK}}}"
+             f"@media (prefers-color-scheme:dark){{.fs{{stroke:{WHITE}}}.ff{{fill:{WHITE}}}}}</style>")
+    return svg(style + body, 256, "Harmonia")
 
 if __name__ == "__main__":
-    write("mark.svg", svg(mark(), 256, "Team Chat"))
-    write("mark-small.svg", svg(mark(small=True), 256, "Team Chat (small sizes)"))
-    write("mark-black.svg", svg(mark(bubble_fill="#000000", dot_fills="#000000"), 256, "Team Chat"))
-    write("mark-white.svg", svg(mark(bubble_fill=WHITE, dot_fills=WHITE), 256, "Team Chat"))
-    write("mark-coral.svg", svg(mark(bubble_fill=CORAL, dot_fills=CORAL), 256, "Team Chat"))
+    write("mark.svg", svg(mark(), 256, "Harmonia"))
+    write("mark-reversed.svg", svg(mark(WHITE), 256, "Harmonia (on dark)"))
+    write("mark-small.svg", svg(mark(small=True), 256, "Harmonia (small sizes)"))
+    write("mark-small-reversed.svg", svg(mark(WHITE, small=True), 256, "Harmonia (small sizes, on dark)"))
+    write("favicon.svg", favicon())
+    write("mark-black.svg", svg(mark("#000000", "#000000"), 256, "Harmonia"))
+    write("mark-white.svg", svg(mark(WHITE, WHITE), 256, "Harmonia"))
+    write("mark-ink.svg", svg(mark(INK, INK), 256, "Harmonia"))
     for name, col in (("", INK), ("-white", WHITE)):
-        wm, right = wordmark(292, col)
-        write(f"lockup{name}.svg", svg(mark() + wm, right + 8, "Team Chat"))
-        wm0, right0 = wordmark(0, col)
-        write(f"wordmark{name}.svg", svg(f'<g transform="translate(-11 0)">{wm0}</g>', right0 - 11 + 8 - 11, "Team Chat"))
+        wm, right = wordmark(288, col)
+        write(f"lockup{name}.svg", svg(mark(col) + wm, right + 8, "Harmonia"))
+        wm0, right0 = wordmark(8, col)
+        write(f"wordmark{name}.svg", svg(wm0, right0 + 8, "Harmonia"))
+    # Stacked: the mark above the wordmark, centred.
+    wm, right = wordmark(0, INK)
+    w = right
+    write("lockup-stacked.svg", svg(mark(tx=(w - 256) / 2, ty=0) + f'<g transform="translate(0 236)">{wm}</g>', w, "Harmonia", 256 + 236 - 40))
     write("app-icon.svg", app_icon())
     write("app-icon-small.svg", app_icon(small=True))

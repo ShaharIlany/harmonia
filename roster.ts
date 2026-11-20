@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { TEAM_DEFAULTS, TEAM_FILE } from "./paths";
+import { env } from "./env";
 
 export type Teammate = {
   id: string;
@@ -36,7 +37,7 @@ export const ROSTER: Teammate[] = JSON.parse(readFileSync(FILE, "utf8")).map((t:
 export const TRIAGE = "emily";
 
 const login = userInfo().username;
-export const USER_NAME = process.env.TEAM_CHAT_USER ?? login.charAt(0).toUpperCase() + login.slice(1);
+export const USER_NAME = env("USER") ?? login.charAt(0).toUpperCase() + login.slice(1);
 
 export const teammate = (id: string) => ROSTER.find((t) => t.id === id);
 export const nameOf = (author: string) => (author === "user" ? USER_NAME : teammate(author)?.name ?? author);

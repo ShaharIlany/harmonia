@@ -1,9 +1,9 @@
 {
-  "name": "team-chat",
+  "name": "harmonia",
   "private": true,
   "scripts": {
     "start": "bun server.ts",
-    "stub": "TEAM_CHAT_STUB=1 PORT=4748 TEAM_CHAT_DATA=./data-stub bun server.ts"
+    "stub": "HARMONIA_STUB=1 PORT=4748 HARMONIA_DATA=./data-stub bun server.ts"
   },
   "type": "module"
 }

@@ -1,7 +1,7 @@
-# Team chat
+<h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-white.svg"><img alt="Harmonia" src="docs/brand/lockup.svg" height="56"></picture></h1>
 
 A local group chat, laid out like WhatsApp, with the six teammates in `~/.claude/agents`
-(Dali, Leo, Elliot, Sherlock, Murphy, Emily).
+(Dali, Leo, Elliot, Sherlock, Murphy, Emily). It used to be called Team Chat.
 
 ![A channel: Leo lays out options, Elliot's job card, Sherlock's review and Murphy asking for a new tool](docs/screenshots/channel.png)
 
@@ -27,7 +27,7 @@ and `docs/screenshots/capture.mjs` takes them.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShaharIlany/team-chat/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ShaharIlany/harmonia/main/install.sh | bash
 ```
 
 You need an Apple Silicon Mac and the
@@ -39,8 +39,19 @@ leaving any file you already have alone. From then on the app updates itself
 from new releases. Run the script again any time to reinstall.
 
 To build it yourself instead (an Intel Mac, or to follow a branch):
-`TEAM_CHAT_FROM_SOURCE=1` before `bash`. That needs Xcode's command line tools
+`HARMONIA_FROM_SOURCE=1` before `bash`. That needs Xcode's command line tools
 (`xcode-select --install`) and [Bun](https://bun.sh).
+
+### Coming from Team Chat
+
+Team Chat updates itself to Harmonia like to any other release, and running
+the install script does the same. The app moves to `Harmonia.app`, its data
+folder to `~/Library/Application Support/Harmonia` (the old folder's name
+stays behind as a link to it), and Mozart's sessions, the Teams bots'
+secrets, your pinned and muted channels and the window's place come along.
+Two things to do by hand: allow notifications again when macOS asks (they're
+per app, and the app's id changed), and put Harmonia back in the Dock if
+Team Chat was kept there.
 
 ## Releases
 
@@ -52,24 +63,26 @@ Silicon runner):
 git tag v1.2.0 && git push origin v1.2.0
 ```
 
-It builds the app with `build.sh` and publishes `Team-Chat-arm64.zip` (about
-20 MB) with its `.sha256`. Pushing to `main` alone ships nothing.
+It builds the app with `build.sh` and publishes `Harmonia-arm64.zip` (about
+20 MB) with its `.sha256`, and the same app as `Team-Chat-arm64.zip`: installs
+from before the rename look for that name. Pushing to `main` alone ships
+nothing.
 
-## Team Chat.app
+## Harmonia.app
 
 From a checkout:
 
 ```bash
-macapp/build.sh --install   # builds build/Team Chat.app and copies it to ~/Applications
+macapp/build.sh --install   # builds build/Harmonia.app and copies it to ~/Applications
 ```
 
 The app is a native window (`macapp/main.swift`, WKWebView) around the server,
 compiled with `bun build --compile main.ts` into
-`Contents/Resources/team-chat-server`. The page, the prompt templates and the
+`Contents/Resources/harmonia-server`. The page, the prompt templates and the
 default `team.json` are embedded. The same binary runs the chat sessions' job
-tools (`team-chat-server --job-tools`).
+tools (`harmonia-server --job-tools`).
 
-- **Data:** `~/Library/Application Support/Team Chat` (channels, messages, chat
+- **Data:** `~/Library/Application Support/Harmonia` (channels, messages, chat
   sessions, `team.json`). `settings.json` there holds `teamAgentsDir`
   (default `~/TeamAgents`), `defaultCwd` (default `~`), and for ClickUp
   `clickupWorkspace` and `clickupTaskPrefix` (say `ABC` for task ids like
@@ -77,7 +90,7 @@ tools (`team-chat-server --job-tools`).
 - **Server:** started on 127.0.0.1:4747 with your login shell's PATH, so jobs
   find git, bun and your other tools. If something already answers on 4747 (say
   `bun server.ts`), the app shows that instead of starting a second one. Log:
-  `~/Library/Logs/Team Chat/server.log` (View → Show Server Log).
+  `~/Library/Logs/Harmonia/server.log` (View → Show Server Log).
 - **Window:** closing it keeps the team running; click the Dock icon to bring it
   back. Quit (⌘Q) stops the server, and asks first if a teammate or job is still
   working. The Dock badge counts teammates' messages that came while you weren't
@@ -102,7 +115,7 @@ tools (`team-chat-server --job-tools`).
   (A helper that outlives the app can't do it: macOS ends everything an app
   started when it quits.) The chat list's footer shows an update while it's
   pending, with **Restart to update** to install it as soon as nobody's
-  working. Team Chat → Check for Updates… checks now. A build without a
+  working. Harmonia → Check for Updates… checks now. A build without a
   version (made from source) counts as older than any release.
   `settings.json`: `updateRepo` (`owner/name`), `autoUpdate: false` to only
   show updates, and `"updateFrom": "source"` to follow a branch's commits
@@ -115,7 +128,7 @@ tools (`team-chat-server --job-tools`).
   Trash. (A build from source updates itself to the next release, unless
   `updateFrom` is `source`.)
 
-To run from source instead: `TEAM_CHAT_DATA="$HOME/Library/Application Support/Team Chat" bun team-chat/server.ts`
+To run from source instead: `HARMONIA_DATA="$HOME/Library/Application Support/Harmonia" bun server.ts`
 or `bun run stub` to try the UI.
 
 No dependencies, no API key: everything runs on the `claude` CLI sign-in.
@@ -126,7 +139,7 @@ Every teammate has two kinds of Claude Code session:
 
 - **One chat session**, in the **TeamAgents** project (`~/TeamAgents`, `teamAgentsDir`
   or `TEAM_AGENTS_DIR`). It's the same session for every channel, titled
-  `[Name] Team chat`. It answers in the chat, asks you questions, and decides
+  `[Name] Harmonia chat`. It answers in the chat, asks you questions, and decides
   per request whether to do it itself or start a job. It runs as an inline
   agent (`--agents`) with the agent's own tool allowlist minus file edits
   (`Edit`, `Write`, `NotebookEdit`), so quick lookups (an email, a meeting, a
@@ -196,7 +209,7 @@ Jobs and memories stay.
   iCloud Drive, `~/Library/CloudStorage`, Mail, Messages, Safari, Calendars,
   Contacts, Notes, Reminders, other apps' data (`~/Library/Containers`) and
   `/Volumes`. A teammate gets "Operation not permitted" there, so it never
-  triggers a permission prompt for Team Chat. It can move things into the
+  triggers a permission prompt for Harmonia. It can move things into the
   Trash but not look inside. Allowed anyway: the channel's own folder, and
   anything in `settings.json` `"protectedAllow": ["~/Downloads"]` (read on
   every turn, no restart). `"protectedGuard": false` turns the sandbox off.
@@ -220,7 +233,7 @@ Jobs and memories stay.
   its turn; if not, it answers `(no reply)` and nothing is posted (chat-rules.md,
   "Is it your turn?"). After 8 agent turns without you, the chat pauses.
 - **Job status updates:** every 5 minutes while a job runs
-  (`TEAM_CHAT_STATUS_MINUTES`), its teammate posts what's happening, what's
+  (`HARMONIA_STATUS_MINUTES`), its teammate posts what's happening, what's
   done and what the job is waiting for. A one-shot Haiku call (`quickAnswer`
   in `runner.ts`, no tools, no saved session) writes it from the job's last 30
   steps: its narration, tool calls and results. The chat session isn't
@@ -284,7 +297,7 @@ Jobs and memories stay.
   create a bot (`teams app create --messaging-mode socket`, for your
   organization only, the secret in your Keychain), add it in Teams, and write.
   The bots connect out over Teams Socket Mode (a preview feature), so nothing
-  listens on the internet; it works while Team Chat runs. The light is green
+  listens on the internet; it works while Harmonia runs. The light is green
   when every bot is connected.
   - **1:1 chats:** your Teams chat with a teammate's bot mirrors the channel
     `#teams-<id>`: your messages go there addressed to that teammate, and
@@ -299,7 +312,7 @@ Jobs and memories stay.
     `@Leo` goes straight to Leo. A teammate answers with its own bot when
     it's in that chat or team (typing included), else Mozart posts the answer
     under its name. What you type in the app goes to Teams through Mozart
-    ("**Alex** (in Team Chat): …"). In a channel, every answer is a new
+    ("**Alex** (in Harmonia): …"). In a channel, every answer is a new
     post, not a reply in your thread.
   - **Only you wake the teammates.** Other people's messages in a linked
     chat or channel show here as "Bob · in Teams" and the teammates and
@@ -309,7 +322,7 @@ Jobs and memories stay.
     team's channels creates a standard channel in that team (Microsoft Graph,
     with Mozart's `Channel.Create.Group` consent, which you grant by adding
     Mozart to the team: no admin) and links it to a new channel here.
-    Everyone in the team sees it, so for the Team Chat feel make a private
+    Everyone in the team sees it, so for the Harmonia feel make a private
     team with only you in it. Teammates' bots added to the team are in every
     standard channel. (Not private channels: bots can't post in them.)
   - **New members-only chats from Teams:** `@Mozart new group chat <name>`
@@ -356,9 +369,9 @@ Jobs and memories stay.
 | `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
 
-`TEAM_CHAT_STUB=1` (`bun run stub`) gives canned replies, with no Claude runs,
-to try the UI. `TEAM_CHAT_DATA` moves the data folder, `PORT` the port, and
-`TEAM_CHAT_CWD` the default working folder for new channels.
+`HARMONIA_STUB=1` (`bun run stub`) gives canned replies, with no Claude runs,
+to try the UI. `HARMONIA_DATA` moves the data folder, `PORT` the port, and
+`HARMONIA_CWD` the default working folder for new channels.
 
 ## Brand
 

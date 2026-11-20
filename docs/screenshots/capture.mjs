@@ -1,4 +1,4 @@
-// README screenshots: run the demo server (TEAM_CHAT_STUB=1 PORT=4749 TEAM_CHAT_DATA=<demo-data.py output> bun server.ts), then node capture.mjs docs/screenshots
+// README screenshots: run the demo server (HARMONIA_STUB=1 PORT=4749 HARMONIA_DATA=<demo-data.py output> bun server.ts), then node capture.mjs docs/screenshots
 import { createRequire } from "node:module";
 const require = createRequire(process.env.PLAYWRIGHT_FROM ?? import.meta.url); // a folder whose node_modules has playwright
 const { chromium } = require("playwright");

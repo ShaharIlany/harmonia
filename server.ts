@@ -11,6 +11,7 @@ import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate 
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
 import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
+import { env } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 import { MOZART, TeamsBridge, type TeamsEvent } from "./teams";
@@ -96,7 +97,7 @@ const state = () => ({
   teams: teams.status(),
   teamsLinks: teams.linkViews(),
   defaultCwd: DEFAULT_CWD,
-  stub: !!process.env.TEAM_CHAT_STUB,
+  stub: !!env("STUB"),
   channels: allChannels(),
   previews: Object.fromEntries(allChannels().map((c) => [c.id, preview(c.id)])),
   activity: Object.fromEntries(allChannels().map((c) => [c.id, team.activityFor(c.id)])),
@@ -225,7 +226,7 @@ Bun.serve({
         const [, id, action] = tb;
         if (!teammate(id) && id !== MOZART) return json({ error: "No such teammate." }, 404);
         if (action === "permissions" && id !== MOZART) return json({ error: "Only Mozart has permissions to set." }, 400);
-        if (process.env.TEAM_CHAT_STUB && (action === "create" || action === "import")) return json({ error: "Not in the stub: it would make a real bot." }, 409);
+        if (env("STUB") && (action === "create" || action === "import")) return json({ error: "Not in the stub: it would make a real bot." }, 409);
         let err: string | undefined;
         try {
           if (action === "create") err = await teams.create(id, { color: String(body.color ?? ""), outline: String(body.outline ?? "") });
@@ -392,4 +393,4 @@ Bun.serve({
   },
 });
 
-console.log(`Team chat on http://localhost:${PORT}${process.env.TEAM_CHAT_STUB ? " (stub teammates)" : ""}`);
+console.log(`Harmonia on http://localhost:${PORT}${env("STUB") ? " (stub teammates)" : ""}`);
