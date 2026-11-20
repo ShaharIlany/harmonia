@@ -12,25 +12,13 @@ async function page(scheme) {
   const p = await ctx.newPage();
   await p.goto(URL);
   await p.waitForSelector(".msg");
-  // The demo runs the stub server: hide its badge and show the router as it is in the app.
+  // The demo runs the stub server: hide its badge.
   await p.addStyleTag({ content: "#stub-badge{display:none!important} .m-side{transition:none!important}" });
-  await p.evaluate(() => {
-    const el = document.getElementById("laya");
-    el.hidden = false;
-    el.className = "laya-status ready";
-    el.textContent = "🧭 Router: Laya ready";
-  });
   return p;
 }
 const open = async (p, name) => {
   await p.click(`#channels [data-ch^="${name}-"]`);
   await p.waitForTimeout(300);
-  await p.evaluate(() => {
-    const el = document.getElementById("laya");
-    el.hidden = false;
-    el.className = "laya-status ready";
-    el.textContent = "🧭 Router: Laya ready";
-  });
 };
 const shot = async (p, file) => {
   await p.mouse.move(1, 1);

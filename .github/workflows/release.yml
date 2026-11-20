@@ -2,9 +2,7 @@
 # release. Installed apps update from the latest release (updates.ts), and install.sh installs it.
 #
 # Assets:
-#   Team-Chat-arm64.zip (+ .sha256)  the app, without Laya's Python (stable name: releases/latest/download/… works)
-#   laya-<ver>-py<py>-arm64.tar.gz   Laya's Python, in a release of its own (tag laya-<ver>-py<py>, a prerelease, so it's
-#                                    never "latest"). Built only when macapp/laya.sh's stamp has no release yet.
+#   Team-Chat-arm64.zip (+ .sha256)  the app (stable name: releases/latest/download/… works)
 name: Release
 
 on:
@@ -20,7 +18,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15 # Apple Silicon; the app and Laya's Python are arm64
+    runs-on: macos-15 # Apple Silicon; the app is arm64
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
@@ -35,37 +33,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tags look like v1.2.3, not $GITHUB_REF_NAME"; exit 1; }
-          STAMP="$(bash macapp/laya.sh --stamp)"
-          LAYA_TAG="laya-${STAMP/\//-py}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "LAYA_TAG=$LAYA_TAG" >> "$GITHUB_ENV"
-          echo "LAYA_ASSET=$LAYA_TAG-arm64.tar.gz" >> "$GITHUB_ENV"
-
-      - name: Does Laya's Python have a release?
-        id: laya
-        run: |
-          if gh release view "$LAYA_TAG" --json assets --jq '.assets[].name' | grep -qx "$LAYA_ASSET"; then
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "missing=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - uses: astral-sh/setup-uv@v6
-        if: steps.laya.outputs.missing == 'true'
-
-      - name: Build and publish Laya's Python
-        if: steps.laya.outputs.missing == 'true'
-        run: |
-          bash macapp/laya.sh
-          tar -C build/laya -czf "$LAYA_ASSET" .
-          shasum -a 256 "$LAYA_ASSET" > "$LAYA_ASSET.sha256"
-          gh release view "$LAYA_TAG" >/dev/null 2>&1 || gh release create "$LAYA_TAG" --target "$GITHUB_SHA" --prerelease --latest=false \
-            --title "Laya runtime ${LAYA_TAG#laya-}" --notes "Laya's Python for Team Chat (macapp/laya.sh). The app downloads it when it needs it."
-          gh release upload "$LAYA_TAG" "$LAYA_ASSET" "$LAYA_ASSET.sha256" --clobber
 
       - name: Build the app
         run: |
-          TEAM_CHAT_VERSION="$VERSION" TEAM_CHAT_WITHOUT_LAYA=1 TEAM_CHAT_BRANCH=main \
+          TEAM_CHAT_VERSION="$VERSION" TEAM_CHAT_BRANCH=main \
             TEAM_CHAT_REPO="https://github.com/${GITHUB_REPOSITORY}.git" bash macapp/build.sh
           ditto -c -k --sequesterRsrc --keepParent "build/Team Chat.app" Team-Chat-arm64.zip
           shasum -a 256 Team-Chat-arm64.zip > Team-Chat-arm64.zip.sha256

@@ -5,8 +5,7 @@
 //
 // Two sources (settings.json "updateFrom"):
 //   "release" (default)  the repo's latest GitHub release (.github/workflows/release.yml builds one per version tag):
-//                        download the zip, check its SHA-256, add Laya's Python (copied from this app, or downloaded
-//                        from its own release when the release needs another one), sign it ad hoc.
+//                        download the zip, check its SHA-256, sign it ad hoc.
 //   "source"             the branch's latest commit: fetched into a clone of its own (the data folder's `source/`)
 //                        and built there with the same build.sh. Needs git, bun and Xcode's command line tools.
 //
@@ -37,7 +36,7 @@ const CHECK_EVERY = 30 * 60_000;
 /** Auto-install waits until you haven't sent anything for this long. */
 const QUIET = 10 * 60_000;
 
-type Build = { version?: string; commit: string; repo: string; branch: string; builtAt: string; dirty?: boolean; laya?: string };
+type Build = { version?: string; commit: string; repo: string; branch: string; builtAt: string; dirty?: boolean };
 const build: Build | undefined = (() => {
   if (!COMPILED) return;
   try {
@@ -145,8 +144,7 @@ async function buildLatest() {
   rmSync(join(SOURCE, "build", "Team Chat.app"), { recursive: true, force: true });
   set({ state: "building", detail: "building the app" });
   log(`building ${latest}`);
-  // Laya's Python (~800 MB) is cloned from this app instead of reinstalled, when the version matches.
-  await sh(["/bin/bash", "macapp/build.sh"], SOURCE, { TEAM_CHAT_LAYA_SEED: join(RESOURCES, "laya"), TEAM_CHAT_REPO: repo, TEAM_CHAT_BRANCH: branch }).catch(
+  await sh(["/bin/bash", "macapp/build.sh"], SOURCE, { TEAM_CHAT_REPO: repo, TEAM_CHAT_BRANCH: branch }).catch(
     (e) => {
       failedBuild = latest;
       throw e;
@@ -202,7 +200,7 @@ async function install() {
     mkdirSync(prevDir, { recursive: true });
     renameSync(APP, prev);
     try {
-      // A clone on APFS: instant, and no extra space for Laya's ~800 MB.
+      // A clone on APFS: instant, and no extra space.
       await sh(["cp", "-cR", next, APP]).catch(() => sh(["ditto", next, APP]));
     } catch (e) {
       rmSync(APP, { recursive: true, force: true });
@@ -277,7 +275,7 @@ async function download(assets: Asset[], name: string, to: string) {
   if (!/^[0-9a-f]{64}$/.test(expected) || actual !== expected) throw new Error(`${name} doesn't match its checksum`);
 }
 
-/** Gets the latest release ready next to the running app: unpacked, with Laya's Python, signed. Nothing is replaced yet. */
+/** Gets the latest release ready next to the running app: unpacked and signed. Nothing is replaced yet. */
 async function getRelease(rel?: Release) {
   try {
     rel ??= await github(`/releases/tags/${status.latest}`);
@@ -294,29 +292,7 @@ async function getRelease(rel?: Release) {
     const next = fresh();
     const got: Build = JSON.parse(readFileSync(join(next, "Contents", "Resources", "build.json"), "utf8"));
     if (got.version !== v) throw new Error(`the download is version ${got.version}, not ${v}`);
-    // Laya's Python (~800 MB) isn't in the zip. Copy ours when the stamp matches; else get the one the release needs.
-    const laya = join(next, "Contents", "Resources", "laya");
-    const mine = join(RESOURCES, "laya");
-    const stamp = (() => {
-      try {
-        return readFileSync(join(mine, "version"), "utf8").trim();
-      } catch {}
-    })();
-    if (got.laya && stamp === got.laya) {
-      for (const part of ["python", "site-packages", "version"]) await sh(["cp", "-cR", join(mine, part), join(laya, part)]).catch(() => sh(["ditto", join(mine, part), join(laya, part)]));
-    } else if (got.laya) {
-      const tag = `laya-${got.laya.replace("/", "-py")}`;
-      const name = `${tag}-arm64.tar.gz`;
-      set({ state: "building", detail: `downloading the router's runtime (${got.laya}, ~300 MB)` });
-      const lr: Release | undefined = await github(`/releases/tags/${tag}`);
-      if (!lr) throw new Error(`there's no release ${tag} with the router's runtime`);
-      const tgz = join(DOWNLOAD, name);
-      await download(lr.assets, name, tgz);
-      await sh(["tar", "-xzf", tgz, "-C", laya]);
-      rmSync(tgz);
-    }
-    // Files the app downloads itself aren't quarantined; clear it anyway, then sign the whole app again (ad hoc),
-    // since Laya's files were added after the release was signed.
+    // Files the app downloads itself aren't quarantined; clear it anyway, then sign the whole app again (ad hoc).
     await sh(["xattr", "-dr", "com.apple.quarantine", next]).catch(() => {});
     await sh(["codesign", "--force", "--deep", "--sign", "-", next]);
     log(`downloaded ${rel.tag_name}`);

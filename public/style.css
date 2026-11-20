@@ -544,7 +544,7 @@ dialog .hint b { color: var(--text); }
 .notify-pick select { flex: 1; min-width: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; padding: 2px 0; outline: none; }
 .notify-pick select:hover, .notify-pick select:focus { color: var(--text); }
 
-/* The router's pick under your message */
+/* Mozart's pick under a message */
 .routed { margin: 3px 4px 0; font-size: 11.5px; color: var(--muted); cursor: help; }
 
 /* ClickUp task pill */
@@ -591,15 +591,12 @@ a.task-link:hover { color: #9d8cff; }
 .perm .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .perm-reason { margin-bottom: 10px; }
 
-/* Router status (Laya) in the sidebar footer */
+/* Update status in the sidebar footer */
 .update-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); padding: 2px 0; }
 .update-status[hidden] { display: none; }
 .cli > .update-status { flex-direction: row; gap: 6px; } /* not the column every other .cli row is */
 .update-status .up-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .update-status.failed .up-text { color: #ff6b8b; }
-.laya-status { font-size: 12px; color: var(--muted); opacity: 0.85; padding: 2px 0 4px; }
-.laya-status[hidden] { display: none; }
-.laya-status.failed { color: #ff6b8b; }
 
 /* Reactions under a bubble, read ticks in its corner */
 .reactions { display: flex; gap: 4px; margin: -6px 8px 0; position: relative; z-index: 1; }
@@ -655,3 +652,8 @@ a.btn.primary { color: #fff; }
 .tm-check { margin: 0; font-size: 13px; color: var(--muted); }
 .tm-import { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .tm-import label { margin-bottom: 10px; }
+
+/* Microsoft Teams page: Mozart's how-to list */
+.tm-plain { margin: 6px 0 10px; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
+.tm-plain code { font-size: 12px; }
+#tm-mozart .row-btns { margin-top: 12px; }

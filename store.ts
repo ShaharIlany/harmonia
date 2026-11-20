@@ -5,10 +5,12 @@ import { DATA } from "./paths";
 export type Message = {
   id: string;
   ts: number;
-  author: string; // "user" | teammate id | "system"
+  author: string; // "user" | teammate id | "system" | "guest" (someone else in a linked Teams chat: context, never wakes anyone)
   text: string;
   kind?: "text" | "permission" | "error" | "job" | "status" | "tools";
   meta?: {
+    guest?: { name: string; aadId?: string }; // author "guest": who wrote it in Teams
+    via?: "teams"; // written in Microsoft Teams (so the bridge doesn't send it back there)
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
@@ -21,7 +23,7 @@ export type Message = {
     cost?: number;
     tokens?: number;
     cached?: number; // share of the turn's input read from the prompt cache (0–1)
-    routedTo?: string[]; // user messages: the teammates the router picked
+    routedTo?: string[]; // the teammates Mozart (or a rule) woke after this message; [] = nobody
     feedbackFor?: string; // user messages: feedback for this teammate on the replyTo message (it amends its rules)
     routeWhy?: string;
     jobId?: string; // kind "job": the card for that job
@@ -73,6 +75,17 @@ export type Channel = {
   archivedAt?: number; // older builds: same as status "archived"
   jobs: Job[];
   nextJob: number;
+  mozart?: MozartSession; // the channel's coordinator (mozart.ts)
+};
+
+/** A channel's Mozart: its own Haiku session, which reads the channel and decides who answers each message. */
+export type MozartSession = {
+  sessionId: string;
+  createdAt: number;
+  seen: number; // message count when it last read the channel
+  turns: number;
+  context?: number; // tokens in its conversation after the last turn
+  cost: number;
 };
 
 /** A teammate's chat session in the TeamAgents project, shared by every channel. */

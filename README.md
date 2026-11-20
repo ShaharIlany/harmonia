@@ -9,10 +9,10 @@ Each teammate is a Claude Code agent. They talk in channels, hand work to each
 other with @mentions, and start Claude Code jobs for real work. You approve
 their permissions and new tools from cards in the chat.
 
-| Replies and the local router | Right-click menus | A teammate's settings |
+| Replies and Mozart | Right-click menus | A teammate's settings |
 | --- | --- | --- |
-| ![Replying to Murphy; the earlier message was routed to Murphy by Laya](docs/screenshots/reply-and-router.png) | ![A message's menu: reactions, reply, copy, message the teammate, their settings](docs/screenshots/menus.png) | ![Leo's profile: name, role, routing keywords, avatar, chat model and effort](docs/screenshots/teammate-settings.png) |
-| A reply wakes only the teammate you reply to. A message that names nobody goes to whoever you're talking with, or Laya (a local model, inside the app) picks. | Right-click a message, a channel or a teammate. | Name, role, routing keywords, avatar, colour, and the chat session's model and effort. |
+| ![Replying to Murphy; the earlier message was routed to Murphy by Mozart](docs/screenshots/reply-and-router.png) | ![A message's menu: reactions, reply, copy, message the teammate, their settings](docs/screenshots/menus.png) | ![Leo's profile: name, role, routing keywords, avatar, chat model and effort](docs/screenshots/teammate-settings.png) |
+| A reply wakes only the teammate you reply to. A message that names nobody goes to whoever the channel's Mozart picks. | Right-click a message, a channel or a teammate. | Name, role, routing keywords, avatar, colour, and the chat session's model and effort. |
 
 <details>
 <summary>Dark mode</summary>
@@ -40,8 +40,7 @@ from new releases. Run the script again any time to reinstall.
 
 To build it yourself instead (an Intel Mac, or to follow a branch):
 `TEAM_CHAT_FROM_SOURCE=1` before `bash`. That needs Xcode's command line tools
-(`xcode-select --install`), [Bun](https://bun.sh) and
-[uv](https://docs.astral.sh/uv/).
+(`xcode-select --install`) and [Bun](https://bun.sh).
 
 ## Releases
 
@@ -54,10 +53,7 @@ git tag v1.2.0 && git push origin v1.2.0
 ```
 
 It builds the app with `build.sh` and publishes `Team-Chat-arm64.zip` (about
-20 MB) with its `.sha256`. Laya's Python (~800 MB) isn't in it: it has a
-release of its own, `laya-<version>-py<python>` (a prerelease, so never the
-latest), built only when the stamp in `macapp/laya.sh` has none yet. Pushing to
-`main` alone ships nothing.
+20 MB) with its `.sha256`. Pushing to `main` alone ships nothing.
 
 ## Team Chat.app
 
@@ -99,9 +95,7 @@ tools (`team-chat-server --job-tools`).
 - **Updates over the air:** every 30 minutes the app asks GitHub for the
   repo's latest release (`updates.ts`; the repo is in `build.json`, written by
   `build.sh`). When it's newer than the running version, the app downloads the
-  zip in the background, checks its SHA-256, unpacks it, adds Laya's Python
-  (cloned from itself when the release needs the same one, else downloaded
-  from its release) and signs it ad hoc. It swaps the new build in when no
+  zip in the background, checks its SHA-256, unpacks it and signs it ad hoc. It swaps the new build in when no
   teammate or job is working and you haven't sent anything for 10 minutes: the
   server moves the running build to `previous/` in the data folder, puts the
   new one in its place and exits, and the app reopens itself on the new build.
@@ -174,26 +168,28 @@ Jobs and memories stay.
 
 ## How it behaves
 
-- **Who answers:** `@Name` anywhere, or `Name, …` at the start, goes straight
-  to that teammate, and so does a reply to a teammate's message. Anything else
-  goes through the **router** (`router.ts`), which runs on this Mac with no
-  Claude call: a teammate waiting on your answer gets it; else the teammate who
-  spoke in the last 4 messages (a short "yes" belongs to them); else **Laya**
-  (`laya.ts`, `laya-router.py`), a local decision model, picks by each
-  teammate's role and *routing keywords* (teammate page → Profile). Its pick
-  shows under your message: "🧭 Laya picked Elliot · 84% sure" when Laya
-  decided, "→ Elliot · continuing with Elliot" when a rule did. While Laya loads
-  (~10 s after start) or if it's down, Emily gets the message. The sidebar
-  footer shows Laya's state; its log is `laya.log` in the data folder.
-- **Laya inside the app:** `macapp/build.sh` builds `build/laya` once: a
-  relocatable uv-managed CPython 3.14 plus `laya==0.4.35` and its packages
-  (~800 MB, `--target site-packages`), and copies it with `laya-router.py`
-  into `Contents/Resources/laya`. The server starts it as a child process
-  (stdin/stdout JSON lines, no network port), with both checkpoints (English
-  for English text, multilingual for other languages) on the Apple GPU, and restarts it
-  if it crashes. The model files (~1.4 GB) live in
-  `~/Library/Application Support/Team Chat/laya/hf` (HF_HOME) and download on
-  first start. `bun server.ts` in the repo uses the same `build/laya`.
+- **Who answers: Mozart.** `@Name` anywhere, or `Name, …` at the start, goes
+  straight to that teammate, and so does a reply to a teammate's message.
+  Anything else, the channel's **Mozart** decides (`mozart.ts`,
+  `mozart-rules.md`): one teammate, several, or nobody. Each channel has its
+  own Mozart, a Claude Code session on Haiku 5.5 with no tools, so it knows
+  the channel's conversation: who asked you what, who you're talking with,
+  whose work a new topic is (by each teammate's role and *routing keywords*,
+  teammate page → Profile). Each decision appends only the new lines, so the
+  rest comes from the prompt cache; it takes about 2 seconds. Nothing shows
+  while it thinks: the teammate it picks starts typing. Its pick shows under
+  the message: "🎼 Mozart → Elliot · Elliot's code fix". Its sessions run in
+  `mozart/` in the data folder, titled `[Mozart] #channel`, and start over
+  when one grows past 60k tokens. If a decision fails or takes over 45 s, a
+  rule decides instead: a teammate waiting on your answer gets it, else the
+  teammate you were just talking with, else Emily ("→ Emily · nobody in the
+  conversation (Mozart failed)").
+- **After a teammate's message, too.** A teammate's `@Name` wakes that
+  teammate (a handoff), unless it's in the same sentence as a question to you,
+  and a question to you waits for you. Otherwise Mozart reads the reply and
+  decides whether anyone follows up: usually nobody, but "Murphy, can you try
+  to break it?" without the `@` wakes Murphy. A note shows only when it wakes
+  someone.
 - **Protected folders:** every `claude` the app starts runs in a macOS
   sandbox (`sandbox.ts`, `sandbox-exec`) that blocks the folders macOS asks
   permission for: Desktop, Documents, Downloads, Music, Pictures, Movies,
@@ -219,7 +215,8 @@ Jobs and memories stay.
   comes back in the chat like any job's.
 - **Handoffs:** a teammate's `@Name` wakes that teammate, unless it's in the
   same sentence as a question to you. Teammates write a name without `@` when
-  they don't need that person yet. A woken teammate first checks it's really
+  they don't need that person yet (Mozart still decides whether they're
+  needed now). A woken teammate first checks it's really
   its turn; if not, it answers `(no reply)` and nothing is posted (chat-rules.md,
   "Is it your turn?"). After 8 agent turns without you, the chat pauses.
 - **Job status updates:** every 5 minutes while a job runs
@@ -240,7 +237,7 @@ Jobs and memories stay.
 - **Reply to a message:** hover a message → ↩ beside it, or Reply in its menu. The composer shows what
   you're answering (Esc cancels), and the posted message quotes it (click the
   quote to jump there). A reply to a teammate's message wakes that teammate
-  directly, with no router; an @mention in the reply wins instead. The
+  directly, without Mozart; an @mention in the reply wins instead. The
   teammate's turn shows `Alex (replying to Leo's message "…"): text`.
 - **Tool requests:** a teammate that lacks a tool calls `request_tool` (a
   team tool, like `start_job`). `tool-catalog.ts` resolves the names (built-ins
@@ -281,17 +278,41 @@ Jobs and memories stay.
 - **Safety:** the server listens on 127.0.0.1 only, and accepts API calls and
   the WebSocket only from its own page. Teammates draft emails and posts but
   don't send them without your OK.
-- **Microsoft Teams:** any teammate can also be a Teams contact. Click the
+- **Microsoft Teams:** the teammates, and Mozart, can be Teams bots. Click the
   **Teams bridge** light at the bottom left for a step-by-step page: get
   Microsoft's Teams CLI (`npm install -g @microsoft/teams.cli`, `teams login`),
-  create the teammate's bot (`teams app create --messaging-mode socket`, for
-  your organization only, the secret in your Keychain), add it in Teams, and
-  write to them. Your 1:1 Teams chat mirrors the channel `#teams-<id>`: your
-  messages go there addressed to that teammate, and their answers, job starts,
-  errors and anything waiting for your OK come back to Teams, with typing while
-  they work. The bot connects out over Teams Socket Mode (a preview feature),
-  so nothing listens on the internet, and it only talks to you, one-to-one.
-  The light is green when every bot is connected.
+  create a bot (`teams app create --messaging-mode socket`, for your
+  organization only, the secret in your Keychain), add it in Teams, and write.
+  The bots connect out over Teams Socket Mode (a preview feature), so nothing
+  listens on the internet; it works while Team Chat runs. The light is green
+  when every bot is connected.
+  - **1:1 chats:** your Teams chat with a teammate's bot mirrors the channel
+    `#teams-<id>`: your messages go there addressed to that teammate, and
+    their answers, job starts, errors and anything waiting for your OK come
+    back to Teams, with typing while they work.
+  - **Channels and group chats:** add the **Mozart** bot (the Teams page
+    creates it and sets its resource-specific consent with `teams app rsc
+    set`: reading messages in the team or chat, creating channels, seeing
+    which apps are installed) and the teammates' bots to a team or a group
+    chat. The first time you write there, it's linked to a new channel here.
+    Your messages land as yours and Mozart picks who answers, as in the app;
+    `@Leo` goes straight to Leo. A teammate answers with its own bot when
+    it's in that team or chat (typing included), else Mozart posts the answer
+    under its name. What you type in the app goes to Teams through Mozart
+    ("**Alex** (in Team Chat): …"). Answers go to the thread your last
+    message was in.
+  - **Only you wake the teammates.** Other people's messages in a linked
+    channel or chat show here as "Bob · in Teams" and the teammates and
+    Mozart read them as context, but they never wake anyone: the teammates can
+    read your mail and calendar. Only you can run Mozart's commands.
+  - **New channels from Teams:** `@Mozart new channel <name>` in one of a
+    team's channels creates a standard channel in that team (Microsoft Graph,
+    with Mozart's `Channel.Create.Group` consent) and a linked channel here.
+    Every teammate whose bot is in the team is in it; Mozart's welcome message
+    says who isn't yet, with links to add them. `@Mozart help` lists the
+    commands.
+  - The Teams page lists the linked channels and chats, with **Unlink**. Links
+    are in `teams-links.json` in the data folder; the bots in `teams.json`.
 
 ## Files
 
@@ -300,7 +321,7 @@ Jobs and memories stay.
 | `team.json` | Default roster (copied into the data folder, which holds the live one) |
 | `paths.ts` | Data folder, TeamAgents folder, default channel folder, embedded-file detection |
 | `main.ts` | Entry point of the compiled server (`--job-tools` runs the job tools) |
-| `macapp/` | The Swift app shell, Info.plist, icon script, `build.sh`, and `laya.sh` (Laya's Python) |
+| `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
 | `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
 | `install.sh` | Installs the latest release (or builds from source) |
 | `roster.ts` | Loads and validates `team.json`, @mention parsing |
@@ -308,8 +329,7 @@ Jobs and memories stay.
 | `job-rules.md` | Appended to every job's system prompt |
 | `feedback-rules.md` | The prompt of a feedback job (a teammate amending its rules) |
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
-| `router.ts` | Picks who answers a message that names nobody (conversation rules, then Laya) |
-| `laya.ts`, `laya-router.py` | Laya, the local decision model, as a child process of the server |
+| `mozart.ts`, `mozart-rules.md` | Mozart, each channel's coordinator: decides who answers each message (Haiku), with fallback rules |
 | `updates.ts` | Over-the-air updates: check for a release (or commits), get it in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
@@ -317,7 +337,7 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `teams.ts` | Teammates as Microsoft Teams bots: setup through the Teams CLI, the Keychain, mirroring a channel to your Teams chat |
+| `teams.ts` | Teammates and Mozart as Microsoft Teams bots: setup through the Teams CLI, the Keychain, 1:1 mirrors, linked channels and group chats, `new channel` |
 | `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
 

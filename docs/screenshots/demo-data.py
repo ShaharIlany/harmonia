@@ -58,9 +58,9 @@ job = {"id": "j1", "kind": "job", "agentId": "elliot", "sessionId": str(uuid.uui
        "report": "Added `theme.css` tokens, `theme-init.js` in `<head>`, and the Appearance toggle. 14 files changed, 212 tests pass."}
 channel("dark-mode", "inProgress", dark, [job], task="APP-142")
 
-# --- #csv-export: a new topic that names nobody → Laya picks Murphy ---
+# --- #csv-export: a new topic that names nobody → Mozart picks Murphy ---
 channel("csv-export", "waiting", [
-    msg("user", 10, 5, "The CSV export drops the last row when a list has more than 500 notes", routedTo=["murphy"], routeWhy="Laya, 87% sure"),
+    msg("user", 10, 5, "The CSV export drops the last row when a list has more than 500 notes", routedTo=["murphy"], routeWhy="Mozart: Murphy reproduces bugs"),
     msg("murphy", 10, 9, """Reproduced. With 501 notes the file has 500 rows; with 1,000 it has 999. The export pages by 500 and skips the last item of every page after the first.
 
 Steps: create 501 notes → Export → CSV → count the rows.
@@ -70,7 +70,7 @@ Steps: create 501 notes → Export → CSV → count the rows.
 
 # --- #morning-brief: Emily ---
 channel("morning-brief", "later", [
-    msg("user", 8, 55, "Good morning, Emily", routedTo=["emily"], routeWhy="Laya, 91% sure"),
+    msg("user", 8, 55, "Good morning, Emily", routedTo=["emily"], routeWhy="Mozart: greeting"),
     msg("emily", 8, 56, """Morning. Today:
 
 - **10:30** Design review (45 min)

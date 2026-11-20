@@ -35,8 +35,17 @@ export type Activity = {
   serviceUrl?: string;
   from?: { id: string; name?: string; aadObjectId?: string };
   recipient?: { id: string; name?: string };
-  conversation?: { id: string; conversationType?: string; tenantId?: string };
+  conversation?: { id: string; conversationType?: string; tenantId?: string; name?: string; isGroup?: boolean };
   membersAdded?: { id: string }[];
+  membersRemoved?: { id: string }[];
+  entities?: { type: string; mentioned?: { id: string; name?: string }; text?: string }[];
+  /** Teams' extras: the team and channel a channel message is in. */
+  channelData?: {
+    team?: { id: string; name?: string; aadGroupId?: string };
+    channel?: { id: string; name?: string };
+    tenant?: { id: string };
+    eventType?: string; // conversationUpdate: "teamMemberAdded", "channelCreated", …
+  };
 };
 
 export type SocketState = { state: "connecting" | "ready" | "failed" | "stopped"; detail?: string };
@@ -46,8 +55,8 @@ type Log = (event: string, fields?: Record<string, unknown>) => void;
 /** Retrying can't fix it: wrong credentials, or the bot isn't allowed to use Socket Mode. */
 export class AuthError extends Error {}
 
-/** An app-only Bot Framework token, cached until a minute before it expires. */
-export function botTokens(c: BotCredentials) {
+/** An app-only token (Bot Framework by default; Microsoft Graph for creating channels), cached until a minute before it expires. */
+export function botTokens(c: BotCredentials, scope = "https://api.botframework.com/.default") {
   let cached: { token: string; until: number } | undefined;
   let pending: Promise<string> | undefined;
   return (): Promise<string> => {
@@ -55,7 +64,7 @@ export function botTokens(c: BotCredentials) {
     pending ??= (async () => {
       const r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(c.tenantId)}/oauth2/v2.0/token`, {
         method: "POST",
-        body: new URLSearchParams({ grant_type: "client_credentials", client_id: c.clientId, client_secret: c.secret, scope: "https://api.botframework.com/.default" }),
+        body: new URLSearchParams({ grant_type: "client_credentials", client_id: c.clientId, client_secret: c.secret, scope }),
         signal: AbortSignal.timeout(15_000),
       });
       const j: any = await r.json().catch(() => ({}));
@@ -369,7 +378,8 @@ export class TeamsSocket {
 
   /** Posts an activity (a message or typing) into a conversation. */
   async send(serviceUrl: string, conversationId: string, activity: Record<string, unknown>) {
-    const r = await fetch(`${serviceUrl.replace(/\/+$/, "")}/v3/conversations/${conversationId}/activities`, {
+    // Channel threads look like "19:…@thread.tacv2;messageid=…": encoded, like the Bot Framework SDK does.
+    const r = await fetch(`${serviceUrl.replace(/\/+$/, "")}/v3/conversations/${encodeURIComponent(conversationId)}/activities`, {
       method: "POST",
       headers: { authorization: `Bearer ${await this.token()}`, "content-type": "application/json" },
       body: JSON.stringify(activity),

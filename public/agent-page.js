@@ -55,7 +55,7 @@
             <label>Role<input name="role" value="${esc(a.role)}" maxlength="40"></label>
           </div>
           <label class="field">Routing keywords<input name="routing" value="${esc(a.routing || "")}" maxlength="160" placeholder="calendar, meetings, email drafts">
-            <span class="hint">When your message names nobody and starts a new topic, the router (Laya, on this Mac) picks the teammate whose role and keywords fit best. Keep it to a few short words.</span></label>
+            <span class="hint">When a message names nobody, the channel's Mozart picks who answers, by role and these keywords. Keep it to a few short words.</span></label>
           <div class="field">
             <span class="label">Avatar</span>
             <div class="avatar-pick">

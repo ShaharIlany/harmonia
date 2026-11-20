@@ -7,9 +7,13 @@
   let picked = null; // the teammate the steps are for
   let creating = null; // teammate id while `teams app create` runs
   let importing = false; // the "use a bot you made" form is open
+  let importingMozart = false; // the same, for Mozart
+
+  // The channels' coordinator has a Teams bot of its own (teams.ts MOZART_LOOK).
+  const MOZART = { id: "mozart", name: "Mozart", avatar: "🎼", color: "#7c3aed", role: "Coordinator" };
 
   const view = () => $("teams-view");
-  const mate = (id) => S.roster.find((t) => t.id === id) || { id, name: id, avatar: "🤖", color: "#888" };
+  const mate = (id) => (id === MOZART.id ? MOZART : S.roster.find((t) => t.id === id) || { id, name: id, avatar: "🤖", color: "#888" });
   const botOf = (id) => (S.teams || []).find((b) => b.agentId === id);
   const channelName = (b) => (S.channels.find((c) => c.id === b.channelId) || {}).name;
 
@@ -36,19 +40,68 @@
     const t = mate(b.agentId);
     const [cls, label] = STATE[b.state] || ["off", b.state];
     const ch = channelName(b);
+    const mozart = b.agentId === MOZART.id;
     return `<li class="tm-bot">
       <span class="tm-av" style="--c:${esc(t.color)}">${t.avatar}</span>
       <div class="tm-bot-main">
         <div class="tm-bot-top"><b>${esc(t.name)}</b> <span class="pill ${cls}">${label}</span>
-          ${b.enabled && !b.paired ? `<span class="pill warn" title="Add ${esc(t.name)} in Teams, or write to ${esc(t.name)} there if you already did">Waiting for your Teams chat</span>` : ""}</div>
-        <div class="hint">${b.detail && b.state !== "ready" ? `${esc(b.detail)} · ` : ""}${ch ? `Mirrors <a href="#" data-channel="${esc(b.channelId)}">#${esc(ch)}</a> · ` : ""}<a href="${esc(b.portalLink)}" target="_blank" rel="noopener">Developer Portal</a></div>
+          ${b.rscError ? `<span class="pill bad" title="${esc(b.rscError)}">Permissions not set</span>` : ""}
+          ${b.enabled && !b.paired && !mozart ? `<span class="pill warn" title="Add ${esc(t.name)} in Teams, or write to ${esc(t.name)} there if you already did">Waiting for your Teams chat</span>` : ""}</div>
+        <div class="hint">${b.detail && b.state !== "ready" ? `${esc(b.detail)} · ` : ""}${mozart ? "Links channels and group chats · " : ""}${ch && !mozart ? `Mirrors <a href="#" data-channel="${esc(b.channelId)}">#${esc(ch)}</a> · ` : ""}<a href="${esc(b.portalLink)}" target="_blank" rel="noopener">Developer Portal</a></div>
       </div>
       <div class="row-btns">
-        ${b.enabled ? `<a class="btn" href="${esc(b.installLink)}" target="_blank" rel="noopener">Open in Teams</a>` : ""}
+        ${b.enabled ? `<a class="btn" href="${esc(b.installLink)}" target="_blank" rel="noopener">${mozart ? "Add to a team or chat" : "Open in Teams"}</a>` : ""}
+        ${b.rscError ? `<button class="btn" data-rsc>Set permissions</button>` : ""}
         <button class="btn" data-toggle="${esc(b.agentId)}">${b.enabled ? "Turn off" : "Turn on"}</button>
         <button class="btn danger" data-remove="${esc(b.agentId)}">Remove</button>
       </div>
     </li>`;
+  }
+
+  // ---------- Mozart: Teams channels and group chats ----------
+
+  function mozartHtml() {
+    const bot = botOf(MOZART.id);
+    const steps = `<ol class="tm-plain">
+        <li>Add Mozart and the teammates' bots to a team (<b>Add to a team</b> on each app in Teams) or to a group chat. Mozart asks the team or chat for its permissions as it's added: reading messages there and creating channels.</li>
+        <li>Write in a channel or the group chat as usual. It's linked to a new channel here the first time you do, and Mozart picks who answers. <code>@Leo</code> still goes straight to Leo.</li>
+        <li><code>@Mozart new channel &lt;name&gt;</code> in one of the team's channels makes a new channel in that team and here. Every teammate whose bot is in the team is in it.</li>
+      </ol>
+      <p class="hint">Only your messages wake the teammates. Other people's messages show here as context. A teammate answers with its own bot when that bot is in the team or chat; otherwise Mozart posts the answer under its name. What you type here goes to Teams through Mozart.</p>`;
+    if (bot) return `<section class="card"><h2>Channels and group chats</h2>${steps}</section>`;
+    return `<section class="card">
+      <h2>Channels and group chats</h2>
+      <p class="hint">For Teams channels and group chats, add <b>Mozart</b> 🎼, the coordinator. It reads every message there and picks the teammate who answers, as it does in this app. It needs the Teams CLI ready (step 1 below).</p>
+      ${steps}
+      <div class="row-btns">
+        <button class="btn primary" data-create="${MOZART.id}" ${!cliOk() || creating ? "disabled" : ""}>${creating === MOZART.id ? "Creating…" : "Create Mozart's bot"}</button>
+        <button class="btn" data-import-mozart ${creating ? "disabled" : ""}>Use a bot I made</button>
+      </div>
+      ${importingMozart ? importHtml(MOZART, true) : ""}
+    </section>`;
+  }
+
+  function linksHtml() {
+    const links = S.teamsLinks || [];
+    if (!links.length) return "";
+    return `<section class="card">
+      <h2>Linked in Teams</h2>
+      <ul class="tm-bots">${links
+        .map((l) => {
+          const ch = S.channels.find((c) => c.id === l.channelId);
+          const where = l.kind === "channel" ? `${l.team ? `${esc(l.team)} › ` : ""}${esc(l.name || "channel")}` : `Group chat${l.name ? `: ${esc(l.name)}` : ""}`;
+          const bots = (l.bots || []).filter((id) => id !== MOZART.id).map((id) => mate(id).avatar).join(" ");
+          return `<li class="tm-bot">
+            <span class="tm-av" style="--c:#5b5fc7">${l.kind === "channel" ? "#" : "👥"}</span>
+            <div class="tm-bot-main">
+              <div class="tm-bot-top"><b>${where}</b></div>
+              <div class="hint">${ch ? `↔ <a href="#" data-channel="${esc(ch.id)}">#${esc(ch.name)}</a>` : "its channel is gone"}${bots ? ` · bots there: ${bots}` : ""}</div>
+            </div>
+            <div class="row-btns"><button class="btn" data-unlink="${esc(l.conversationId)}">Unlink</button></div>
+          </li>`;
+        })
+        .join("")}</ul>
+    </section>`;
   }
 
   // ---------- Connect a teammate: the steps ----------
@@ -126,11 +179,13 @@
     <div class="row-btns"><button class="btn" data-cli="check" ${checking ? "disabled" : ""}>${checking ? "Checking…" : "Check again"}</button></div>`;
   }
 
-  function importHtml(t) {
+  function importHtml(t, withAppId) {
     return `<form class="tm-import" data-import="${esc(t.id)}" autocomplete="off">
+      ${withAppId ? `<label>Teams app id<input name="teamsAppId" placeholder="from teams app create, or the Developer Portal" spellcheck="false" required>
+        <span class="hint">Needed to set Mozart's permissions.</span></label>` : ""}
       <label>Credentials file<input name="path" placeholder="~/my-bot/.env" spellcheck="false" required>
         <span class="hint">A file <code>teams app create --messaging-mode socket --env &lt;file&gt;</code> wrote, with CLIENT_ID, CLIENT_SECRET and TENANT_ID. The secret moves to your Keychain; the file stays where it is.</span></label>
-      <div class="row-btns"><button class="btn primary">Use this bot for ${esc(t.name)}</button><button type="button" class="btn" data-import-close>Cancel</button></div>
+      <div class="row-btns"><button class="btn primary">Use this bot for ${esc(t.name)}</button><button type="button" class="btn" data-import-close="${esc(t.id)}">Cancel</button></div>
     </form>`;
   }
 
@@ -153,9 +208,11 @@
     <div class="ag-scroll">
       <section class="card">
         <h2>How it works</h2>
-        <p class="hint">Each teammate you connect becomes a contact in Teams. Your chat with them there mirrors a channel here, so they answer from their own session, with the same tools, memory and jobs. Only you can talk to them, and only one-to-one: their answers can hold your mail and calendar. The connection goes out from this Mac (Teams Socket Mode), so nothing listens on the internet. It works while Team Chat is running.</p>
+        <p class="hint">Each teammate you connect becomes a bot in Teams. Your 1:1 chat with one mirrors a channel here, so they answer from their own session, with the same tools, memory and jobs. With <b>Mozart</b>, Teams channels and group chats link to channels here too. Only you can wake the teammates: their answers can hold your mail and calendar. The connection goes out from this Mac (Teams Socket Mode), so nothing listens on the internet. It works while Team Chat is running.</p>
       </section>
       <div id="tm-bots">${botsHtml()}</div>
+      <div id="tm-mozart">${mozartHtml()}</div>
+      <div id="tm-links">${linksHtml()}</div>
       <div id="tm-steps">${stepsHtml()}</div>
     </div>`;
   }
@@ -163,11 +220,17 @@
   /** Redraws the live parts (keeps a half-typed import path). */
   function update() {
     if (S.view !== "teams") return;
+    // Keeps half-typed import fields across redraws.
+    const typed = [...view().querySelectorAll(".tm-import input")].map((i) => [i.closest("form").dataset.import + ":" + i.name, i.value]);
     $("tm-bots").innerHTML = botsHtml();
-    const path = view().querySelector(".tm-import input")?.value;
+    $("tm-mozart").innerHTML = mozartHtml();
+    $("tm-links").innerHTML = linksHtml();
     $("tm-steps").innerHTML = stepsHtml();
-    const input = view().querySelector(".tm-import input");
-    if (input && path) input.value = path;
+    for (const [key, value] of typed) {
+      const [form, name] = key.split(":");
+      const input = view().querySelector(`.tm-import[data-import="${form}"] input[name="${name}"]`);
+      if (input && value) input.value = value;
+    }
   }
 
   async function checkCli() {
@@ -210,7 +273,9 @@
 
   async function act(path, body, done) {
     try {
-      S.teams = (await api(path, body)).bots;
+      const r = await api(path, body);
+      S.teams = r.bots;
+      if (r.links) S.teamsLinks = r.links;
       if (done) toast(done);
     } catch (e) {
       toast(e.message);
@@ -243,12 +308,19 @@
       const id = create.dataset.create;
       creating = id;
       update();
-      await act(`/api/teams/bots/${id}/create`, icons(mate(id)), `${mate(id).name}'s bot is ready. Add it in Teams next.`);
+      await act(`/api/teams/bots/${id}/create`, icons(mate(id)), id === MOZART.id ? "Mozart's bot is ready. Add it to a team or group chat next." : `${mate(id).name}'s bot is ready. Add it in Teams next.`);
       creating = null;
       return update();
     }
     if (t.closest("[data-import-open]")) return (importing = true), update();
-    if (t.closest("[data-import-close]")) return (importing = false), update();
+    if (t.closest("[data-import-mozart]")) return (importingMozart = true), update();
+    if (t.closest("[data-import-close]")) return (importing = importingMozart = false), update();
+    if (t.closest("[data-rsc]")) return act(`/api/teams/bots/${MOZART.id}/permissions`, {}, "Mozart's permissions are set. Add it to a team or chat again so they're granted.");
+    const unlink = t.closest("[data-unlink]");
+    if (unlink) {
+      if (!confirm("Unlink this Teams conversation? Both sides keep their messages. If you write there again, it links to a new channel here.")) return;
+      return act("/api/teams/unlink", { conversationId: unlink.dataset.unlink }, "Unlinked.");
+    }
     const toggle = t.closest("[data-toggle]");
     if (toggle) {
       const b = botOf(toggle.dataset.toggle);
@@ -266,8 +338,8 @@
     const form = e.target.closest("[data-import]");
     if (!form) return;
     e.preventDefault();
-    importing = false;
-    await act(`/api/teams/bots/${form.dataset.import}/import`, { path: form.path.value }, "Bot added. Add it in Teams next.");
+    importing = importingMozart = false;
+    await act(`/api/teams/bots/${form.dataset.import}/import`, { path: form.path.value, teamsAppId: form.teamsAppId ? form.teamsAppId.value : undefined }, "Bot added. Add it in Teams next.");
   });
 
   window.TeamsPage = {

@@ -10,7 +10,7 @@ export type Teammate = {
   color: string;
   chatModel: string; // the model of the teammate's chat session
   chatEffort: string;
-  routing: string; // a few keywords for the router (Laya): what to send this teammate when nobody is named
+  routing: string; // a few keywords for Mozart (mozart.ts): what to send this teammate when nobody is named
 };
 
 /** Chat-session models, with $ per million tokens (input, output, cache read) for the settings page's estimate. */

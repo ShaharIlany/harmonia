@@ -7,7 +7,7 @@ import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS,
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
-import { route } from "./router";
+import { decide } from "./mozart";
 import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
 import {
   addMessage,
@@ -124,6 +124,7 @@ function line(m: Message): string {
   }
   if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
   if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
+  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in Teams): ${m.text}`;
   const re = m.meta?.replyTo;
   const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
   return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}`;
@@ -227,38 +228,59 @@ export class Team {
 
   // ---------- From the user ----------
 
-  private routing = new Map<string, Promise<unknown>>(); // channel id → its router turns, one at a time
+  private coordinating = new Map<string, Promise<unknown>>(); // channel id → its Mozart decisions, one at a time
 
-  userMessage(ch: Channel, text: string, replyToId?: string) {
+  /**
+   * A message from you: typed here, or in a linked Microsoft Teams chat (`via: "teams"`). An @mention, "Name, …" or
+   * a reply to a teammate's message goes straight to that teammate; anything else, the channel's Mozart decides.
+   */
+  userMessage(ch: Channel, text: string, replyToId?: string, opts: { via?: "teams" } = {}) {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
     const replyTo = target && { id: target.id, author: target.author, text: replyText(target).slice(0, 300) };
-    const msg = this.post(ch, { author: "user", text, ...(replyTo && { meta: { replyTo } }) });
+    const meta = { ...(replyTo && { replyTo }), ...(opts.via && { via: opts.via }) };
+    const msg = this.post(ch, { author: "user", text, ...(Object.keys(meta).length && { meta }) });
     const named = mentions(text).filter((id) => id !== "user");
-    // A reply to a teammate's message goes to that teammate (no router), unless the reply names someone.
+    // A reply to a teammate's message goes to that teammate (no Mozart), unless the reply names someone.
     const atStart = addressedAtStart(text) ?? (target && teammate(target.author) ? target.author : undefined);
     const waitingOn = ch.waitingOn;
     ch.waitingOn = undefined;
     saveChannels();
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
-    // Named teammates go straight there. Anything else: the channel's router decides who answers.
     if (named.length || atStart) {
       for (const id of named.length ? named : [atStart!]) this.wake(ch, id);
       return;
     }
-    const prev = this.routing.get(ch.id) ?? Promise.resolve();
+    this.coordinate(ch, msg, waitingOn);
+  }
+
+  /**
+   * Someone else's message in a linked Teams chat. It's context for the teammates and Mozart (they read it with the
+   * rest of the channel), but it never wakes anyone: the teammates work for you.
+   */
+  guestMessage(ch: Channel, name: string, text: string, aadId?: string) {
+    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(aadId && { aadId }) }, via: "teams" } });
+  }
+
+  /** The channel's Mozart decides who answers `msg`, after any decision still running there. Nothing shows meanwhile. */
+  private coordinate(ch: Channel, msg: Message, waitingOn?: string) {
+    const prev = this.coordinating.get(ch.id) ?? Promise.resolve();
     const next = prev.then(async () => {
-      this.setActivity(ch, "router", "choosing who answers");
-      const r = await route({ all: messages.get(ch.id) ?? [], msg, waitingOn }).catch(() => ({
-        to: [waitingOn ?? TRIAGE],
-        why: "the router failed",
+      if (ch.status === "archived") return;
+      const d = await decide({ ch, all: messages.get(ch.id) ?? [], msg, line, waitingOn }).catch((e) => ({
+        to: msg.author === "user" ? [waitingOn ?? TRIAGE] : [],
+        why: `Mozart failed: ${String(e).slice(0, 80)}`,
+        by: "rule" as const,
       }));
-      this.setActivity(ch, "router", null);
-      msg.meta = { ...msg.meta, routedTo: r.to, routeWhy: r.why };
-      saveMessages(ch.id);
-      this.emit({ type: "update", channelId: ch.id, message: msg });
-      for (const id of r.to) this.wake(ch, id);
+      // A teammate's message that nobody needs to answer keeps no note: that's the usual case.
+      if (msg.author === "user" || d.to.length) {
+        msg.meta = { ...msg.meta, routedTo: d.to, routeWhy: d.by === "mozart" ? `Mozart: ${d.why}` : d.why };
+        saveMessages(ch.id);
+        this.emit({ type: "update", channelId: ch.id, message: msg });
+      }
+      for (const id of d.to) this.wake(ch, id);
     });
-    this.routing.set(ch.id, next);
+    this.coordinating.set(ch.id, next);
+    next.finally(() => this.coordinating.get(ch.id) === next && this.coordinating.delete(ch.id));
   }
 
   decide(ch: Channel, messageId: string, decision: "once" | "always" | "denied") {
@@ -534,22 +556,30 @@ export class Team {
     if (!r.isError && EMOJI_ONLY.test(r.text.trim())) return target ? this.react(ch, target, agentId, r.text.trim()) : undefined;
     const cached = r.inputTotal ? r.cacheRead! / r.inputTotal : undefined;
     if (r.isError) this.post(ch, { author: agentId, kind: "error", text: r.text || "The run failed." });
-    else if (r.text) this.postBubbles(ch, agentId, bubbles(r.text), { cost: r.cost, tokens: r.tokens, cached });
-
-    if (!r.isError) {
+    else if (r.text) {
+      const parts = bubbles(r.text);
+      const { first, after } = this.postBubbles(ch, agentId, parts, { cost: r.cost, tokens: r.tokens, cached });
+      const asksUser = mentions(r.text).includes("user");
       // A question to the user makes the user's next plain message go to this teammate.
-      if (mentions(r.text).includes("user")) ch.waitingOn = agentId;
-      // Handoffs go out either way, unless the mention is part of the question to the user.
-      for (const id of handoffs(r.text)) if (id !== agentId) this.wake(ch, id);
+      if (asksUser) ch.waitingOn = agentId;
+      // Handoffs (@Name) go straight out, unless the mention is part of the question to the user. Otherwise the
+      // channel's Mozart decides whether anyone follows up, once all the bubbles are out. A question to the user
+      // waits for the user.
+      const to = handoffs(r.text).filter((id) => id !== agentId);
+      for (const id of to) this.wake(ch, id);
+      if (first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
   }
 
-  /** The first bubble goes out now; each next one after a short "typing" pause, timed to its length. */
-  private postBubbles(ch: Channel, agentId: string, parts: string[], meta: Message["meta"]) {
-    if (!parts.length) return;
-    this.post(ch, { author: agentId, text: parts[0], meta });
+  /**
+   * The first bubble goes out now; each next one after a short "typing" pause, timed to its length. Returns the first
+   * bubble and when the last one is out (ms from now).
+   */
+  private postBubbles(ch: Channel, agentId: string, parts: string[], meta: Message["meta"]): { first?: Message; after: number } {
+    if (!parts.length) return { after: 0 };
+    const first = this.post(ch, { author: agentId, text: parts[0], meta });
     let at = 0;
     for (const part of parts.slice(1)) {
       setTimeout(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing"), at + 100);
@@ -559,6 +589,7 @@ export class Team {
         this.post(ch, { author: agentId, text: part });
       }, at);
     }
+    return { first, after: at + 50 };
   }
 
   /** A teammate's emoji on a message. One reaction per teammate per message; a new one replaces it. */

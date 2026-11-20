@@ -235,7 +235,9 @@
     if (m.author === "system") return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}</span></div>`;
     const t = byId(m.author);
     const isUser = m.author === "user";
-    const name = isUser ? S.user : t ? t.name : m.author;
+    // Someone else in a linked Microsoft Teams chat: shown, read by the teammates, but never wakes them.
+    const guest = m.author === "guest" ? (m.meta && m.meta.guest) || { name: "Someone" } : null;
+    const name = isUser ? S.user : t ? t.name : guest ? guest.name : m.author;
     // A run of messages from one person within a few minutes, on one day, shares one name and one bubble tail.
     const cont = prev && prev.author === m.author && m.ts - prev.ts < 5 * 60e3 && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
 
@@ -286,29 +288,28 @@
         <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button>${t ? `
         <button class="m-btn" data-feedback="${m.id}" title="Feedback for ${esc(name)}: ${esc(name)} updates its rules" aria-label="Feedback for ${esc(name)}">✎</button>` : ""}</div>`;
     return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
-      ${isUser ? "" : cont ? `<span class="m-av"></span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
+      ${isUser ? "" : cont ? `<span class="m-av"></span>` : guest ? `<span class="m-av" title="${esc(name)}, in Microsoft Teams" style="--c:#888">👤</span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
       <div class="m-col">
         <div class="bubble ${wide ? "wide" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
           <button class="m-more" data-msg-menu="${m.id}" aria-label="Message menu" title="More">⌄</button>
-          ${!isUser && !cont ? `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>` : ""}
+          ${!isUser && !cont ? (guest ? `<div class="b-name"><span>${esc(name)}</span><span class="b-role">in Teams</span></div>` : `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>`) : ""}
           ${body}${foot}
         </div>
         ${m.meta && m.meta.reactions && m.meta.reactions.length ? reactionsHtml(m.id, m.meta.reactions) : ""}
-        ${isUser && m.meta && m.meta.routedTo ? routedHtml(m.meta) : ""}
+        ${m.meta && m.meta.routedTo ? routedHtml(m.meta) : ""}
       </div>
       ${side}
     </div>`;
   }
 
-  /** The line under your message: who the router picked, and whether Laya (the local model) or a rule decided. */
+  /** The line under a message: who the channel's Mozart (or, when it couldn't answer, a rule) woke after it. */
   function routedHtml(meta) {
     const who = meta.routedTo.map((id) => byId(id)).filter(Boolean).map((x) => `${x.avatar} ${esc(x.name)}`).join(", ");
     const why = meta.routeWhy || "";
-    const laya = /^Laya,/.test(why);
-    const text = laya ? `🧭 Laya picked ${who} · ${esc(why.replace(/^Laya, /, ""))}` : `→ ${who}${why ? ` · ${esc(why)}` : ""}`;
-    const tip = laya
-      ? "Laya, the local model, chose who answers this."
-      : /^nobody named/.test(why) ? "Laya couldn't decide, so it went to the teammate who takes unaddressed messages." : "A rule chose who answers this (not Laya): the conversation was already with them.";
+    const mozart = /^Mozart: /.test(why);
+    const reason = esc(why.replace(/^Mozart: /, ""));
+    const text = mozart ? (who ? `🎼 Mozart → ${who}${reason ? ` · ${reason}` : ""}` : `🎼 Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
+    const tip = mozart ? "This channel's Mozart decided who answers." : "Mozart couldn't answer, so a simple rule chose: whoever you're talking with, else the teammate who takes new topics.";
     return `<div class="routed" title="${tip}">${text}</div>`;
   }
 
@@ -319,18 +320,8 @@
       `${d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })} ${fmtTime(m.ts)}`,
       m.meta && m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`,
       m.meta && m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% cached`,
+      m.meta && m.meta.via === "teams" && "from Microsoft Teams",
     ].filter(Boolean).join(" · ");
-  }
-
-  // ---------- Router status (Laya, the local model that picks who answers) ----------
-  function renderLaya(s) {
-    const el = $("laya");
-    if (!s) return (el.hidden = true);
-    el.hidden = false;
-    const text = { ready: "Router: Laya ready", starting: "Router: Laya loading…", failed: "Router: Laya off, Emily answers", off: "Router: Laya off" }[s.state] || s.state;
-    el.className = `laya-status ${s.state}`;
-    el.textContent = `🧭 ${text}`;
-    el.title = s.state === "ready" ? `Laya runs locally (${s.detail}). Messages that name nobody go to the teammate you're talking with, or Laya picks.` : s.detail || "";
   }
 
   // ---------- Updates (over the air, from git; updates.ts) ----------
@@ -406,7 +397,7 @@
   }
 
   // ---------- Replies ----------
-  const authorName = (id) => (id === "user" ? S.user : byId(id)?.name || id);
+  const authorName = (id) => (id === "user" ? S.user : id === "guest" ? "Someone in Teams" : byId(id)?.name || id);
   const snippet = (text) => {
     const s = plain(text || "").replace(/\s+/g, " ").trim();
     return s.length > 140 ? s.slice(0, 139) + "…" : s;
@@ -755,8 +746,6 @@
     // A typing bubble per teammate, like WhatsApp; what they're actually doing is in the tooltip and the sessions panel.
     $("typing").innerHTML = Object.entries(act)
       .map(([id, status]) => {
-        if (id === "router")
-          return `<div class="typing-row"><span class="t-av">🧭</span><span class="t-bubble"><span class="dots"><i></i><i></i><i></i></span></span><span class="t-txt">Laya is choosing who answers</span></div>`;
         const t = byId(id);
         if (!t) return "";
         const busyElsewhere = status && /^busy in /.test(status);
@@ -987,12 +976,13 @@
   function renderSubtitle() {
     const c = currentChannel();
     if (!c) return;
-    const typing = Object.keys(S.activity[c.id] || {}).filter((id) => id !== "router").map(byId).filter(Boolean);
+    const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
     const el = $("ch-folder");
-    el.classList.toggle("typing-now", typing.length > 0 || !!(S.activity[c.id] || {}).router);
+    el.classList.toggle("typing-now", typing.length > 0);
+    const link = (S.teamsLinks || []).find((l) => l.channelId === c.id);
     el.textContent = typing.length
       ? `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
-      : (S.activity[c.id] || {}).router ? "choosing who answers…" : c.cwd.replace(/^\/Users\/[^/]+/, "~");
+      : `${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to Teams${link.name ? `: ${link.name}` : ""}` : ""}`;
     el.title = c.cwd;
   }
 
@@ -1402,10 +1392,10 @@
       if (S.view !== "channel") window.AgentPage.refreshSession?.();
     } else if (e.type === "teams") {
       S.teams = e.teams;
+      S.teamsLinks = e.links || [];
       renderTeamsStatus();
+      renderSubtitle();
       window.TeamsPage.update();
-    } else if (e.type === "laya") {
-      renderLaya(e.laya);
     } else if (e.type === "appUpdate") {
       renderUpdate(e.update);
     } else if (e.type === "usage") {
@@ -1459,7 +1449,6 @@
     window.TEAM_TASK_PREFIX = st.clickupTaskPrefix || "";
     $("task-input").placeholder = `${window.TEAM_TASK_PREFIX || "ABC"}-123`;
     S.usage = st.usage || null;
-    renderLaya(st.laya);
     renderUpdate(st.update);
     renderUsage();
     S.chatModels = st.chatModels;
@@ -1469,6 +1458,7 @@
     S.defaultCwd = st.defaultCwd;
     setRoster(st.roster);
     S.teams = st.teams || [];
+    S.teamsLinks = st.teamsLinks || [];
     renderTeamsStatus();
     S.activity = {};
     for (const [cid, list] of Object.entries(st.activity)) S.activity[cid] = Object.fromEntries(list.map((a) => [a.agentId, a.status]));

@@ -117,20 +117,8 @@ ditto -x -k "$TMP/app.zip" "$TMP"
 NEW="$TMP/Team Chat.app"
 BUILD="$NEW/Contents/Resources/build.json"
 VERSION="$(plutil -extract version raw -o - "$BUILD")"
-STAMP="$(plutil -extract laya raw -o - "$BUILD")"
 echo "  version $VERSION"
 
-# Laya's Python isn't in the zip: reuse the installed app's when it's the one this release needs, else download it.
-LAYA="$NEW/Contents/Resources/laya"
-if [ "$(cat "$APP/Contents/Resources/laya/version" 2>/dev/null)" = "$STAMP" ]; then
-  step "The router's runtime: reusing the installed one ($STAMP)"
-  for part in python site-packages version; do cp -cR "$APP/Contents/Resources/laya/$part" "$LAYA/$part" 2>/dev/null || ditto "$APP/Contents/Resources/laya/$part" "$LAYA/$part"; done
-else
-  TAG="laya-${STAMP/\//-py}"
-  step "Downloading the router's runtime ($STAMP, ~300 MB)"
-  fetch "$DL/download/$TAG/$TAG-arm64.tar.gz" "$TMP/laya.tar.gz"
-  tar -xzf "$TMP/laya.tar.gz" -C "$LAYA"
-fi
 xattr -dr com.apple.quarantine "$NEW" 2>/dev/null || true
 codesign --force --deep --sign - "$NEW" >/dev/null 2>&1
 

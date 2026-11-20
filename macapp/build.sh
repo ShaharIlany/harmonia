@@ -2,25 +2,24 @@
 # Builds "Team Chat.app" into team-chat/build/. With --install it also copies it to ~/Applications and,
 # on the first install, sets up ~/Library/Application Support/Team Chat from the repo's data.
 #
-# Environment: TEAM_CHAT_VERSION (a release's version, set by the release workflow), TEAM_CHAT_WITHOUT_LAYA=1 (leave
-# Laya's Python out: releases ship it as its own download), TEAM_CHAT_REPO / TEAM_CHAT_BRANCH (what updates follow).
+# Environment: TEAM_CHAT_VERSION (a release's version, set by the release workflow), TEAM_CHAT_REPO / TEAM_CHAT_BRANCH
+# (what updates follow).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 APP="build/Team Chat.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-LAYA_STAMP="$(bash macapp/laya.sh --stamp)"
 
 # What this build is, for over-the-air updates (updates.ts): its version (releases) or commit, the repo and branch
-# to follow, and the Laya runtime it needs.
+# to follow.
 if git rev-parse --git-dir >/dev/null 2>&1; then
   COMMIT="$(git rev-parse HEAD)"
   BRANCH="${TEAM_CHAT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
   REPO="${TEAM_CHAT_REPO:-$(git remote get-url origin 2>/dev/null || true)}"
   DIRTY=$([ -n "$(git status --porcelain)" ] && echo true || echo false)
-  printf '{"version":"%s","commit":"%s","branch":"%s","repo":"%s","dirty":%s,"laya":"%s","arch":"%s","builtAt":"%s"}\n' \
-    "${TEAM_CHAT_VERSION:-}" "$COMMIT" "$BRANCH" "$REPO" "$DIRTY" "$LAYA_STAMP" "$(uname -m)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  printf '{"version":"%s","commit":"%s","branch":"%s","repo":"%s","dirty":%s,"arch":"%s","builtAt":"%s"}\n' \
+    "${TEAM_CHAT_VERSION:-}" "$COMMIT" "$BRANCH" "$REPO" "$DIRTY" "$(uname -m)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "$APP/Contents/Resources/build.json"
 fi
 
@@ -50,13 +49,6 @@ if [ ! -f build/AppIcon.icns ] || [ "$(cat build/AppIcon.stamp 2>/dev/null)" != 
 fi
 cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-# The router's local model (Laya): its Python runtime (macapp/laya.sh), and the script that drives it.
-if [ -z "${TEAM_CHAT_WITHOUT_LAYA:-}" ]; then
-  bash macapp/laya.sh
-  cp -cR build/laya "$APP/Contents/Resources/laya" 2>/dev/null || ditto build/laya "$APP/Contents/Resources/laya"
-fi
-mkdir -p "$APP/Contents/Resources/laya"
-cp laya-router.py "$APP/Contents/Resources/laya/laya-router.py"
 
 # The starter teammates, for install.sh when it installs a release (there's no clone of the repo then).
 mkdir -p "$APP/Contents/Resources/starter-agents"

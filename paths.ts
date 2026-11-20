@@ -1,7 +1,7 @@
 // Where things live, both for `bun server.ts` in the repo and for the compiled server inside Team Chat.app.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import teamDefaults from "./team.json" with { type: "file" };
 
 /** True inside the compiled binary, where the sources live in Bun's embedded file system. */
@@ -46,15 +46,13 @@ export const TEAM_DEFAULTS: Record<string, any>[] = JSON.parse(readFileSync(team
 export const jobToolsCommand = (): string[] =>
   COMPILED ? [process.execPath, "--job-tools"] : [process.execPath, join(import.meta.dir, "job-tools.ts")];
 
-/**
- * The router's local model (Laya): a Python runtime and laya's packages built by macapp/build.sh into build/laya,
- * and copied into the app's Resources. The model files download once into Application Support.
- */
-const LAYA_DIR = process.env.TEAM_CHAT_LAYA_DIR ?? (COMPILED ? join(dirname(process.execPath), "laya") : join(import.meta.dir, "build/laya"));
-export const LAYA = {
-  python: join(LAYA_DIR, "python/bin/python3"),
-  packages: join(LAYA_DIR, "site-packages"),
-  script: COMPILED ? join(LAYA_DIR, "laya-router.py") : join(import.meta.dir, "laya-router.py"),
-  models: join(homedir(), "Library/Application Support/Team Chat/laya/hf"),
-  log: join(DATA, "laya.log"),
-};
+/** Where the channels' Mozart sessions run (Claude Code files them under this folder, apart from the teammates'). */
+export const MOZART_DIR = join(DATA, "mozart");
+mkdirSync(MOZART_DIR, { recursive: true });
+
+// Laya (the old local router) is gone: drop its model cache (~1.4 GB) and log once.
+for (const old of [join(homedir(), "Library/Application Support/Team Chat/laya"), join(DATA, "laya.log")]) {
+  try {
+    if (existsSync(old)) rmSync(old, { recursive: true, force: true });
+  } catch {}
+}

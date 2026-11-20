@@ -11,10 +11,9 @@ import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate 
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
 import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
-import { layaStatus, startLaya, stopLaya, type LayaStatus } from "./laya";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
-import { TeamsBridge, type TeamsEvent } from "./teams";
+import { MOZART, TeamsBridge, type TeamsEvent } from "./teams";
 
 const PORT = Number(process.env.PORT ?? 4747);
 // The page's files, embedded in the compiled app.
@@ -33,7 +32,7 @@ const ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]
 
 const sockets = new Set<ServerWebSocket<unknown>>();
 let toTeams: ((e: Event) => void) | undefined; // the Teams bridge (below) follows every channel event
-const broadcast = (e: Event | TeamsEvent | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "laya"; laya: LayaStatus } | { type: "appUpdate"; update: UpdateStatus }) => {
+const broadcast = (e: Event | TeamsEvent | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "appUpdate"; update: UpdateStatus }) => {
   const data = JSON.stringify(e);
   for (const s of sockets) s.send(data);
   if ("channelId" in e) toTeams?.(e);
@@ -41,10 +40,12 @@ const broadcast = (e: Event | TeamsEvent | { type: "roster"; roster: typeof ROST
 mkdirSync(TEAM_AGENTS, { recursive: true });
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
 
-// Teammates as Microsoft Teams bots (teams.ts): each mirrors your 1:1 Teams chat into its #teams-<id> channel.
+// Microsoft Teams (teams.ts): teammates and Mozart as Teams bots, 1:1 chats, and linked channels and group chats.
 const teams = new TeamsBridge({
   emit: broadcast,
-  post: (ch, text) => team.userMessage(ch, text),
+  post: (ch, text) => team.userMessage(ch, text, undefined, { via: "teams" }),
+  guest: (ch, name, text, aadId) => team.guestMessage(ch, name, text, aadId),
+  note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "teams" } }),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
   activityFor: (channelId) => team.activityFor(channelId),
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
@@ -54,10 +55,7 @@ teams.start();
 
 if (!channels.size) createChannel("general", DEFAULT_CWD);
 
-// The router's local model starts with the server and stops with it.
-startLaya((laya) => broadcast({ type: "laya", laya }));
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (stopLaya(), process.exit(0)));
-process.on("exit", stopLaya);
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (teams.stop(), process.exit(0)));
 
 // Over-the-air updates from git (updates.ts). An install waits until no teammate or job is working.
 const working = () => team.sessions().filter((s) => s.busyIn).length + allChannels().reduce((n, c) => n + c.jobs.filter((j) => j.status === "running").length, 0);
@@ -92,11 +90,11 @@ const state = () => ({
   teamAgents: TEAM_AGENTS,
   clickupWorkspace: CLICKUP_WORKSPACE,
   clickupTaskPrefix: CLICKUP_TASK_PREFIX,
-  laya: layaStatus(),
   update: updateStatus(),
   usage,
   sessions: team.sessions(),
   teams: teams.status(),
+  teamsLinks: teams.linkViews(),
   defaultCwd: DEFAULT_CWD,
   stub: !!process.env.TEAM_CHAT_STUB,
   channels: allChannels(),
@@ -211,27 +209,33 @@ Bun.serve({
       }
 
       // ----- Microsoft Teams -----
-      if (p === "/api/teams" && !post) return json({ bots: teams.status() });
+      if (p === "/api/teams" && !post) return json({ bots: teams.status(), links: teams.linkViews() });
       if (p === "/api/teams/cli" && !post) return json(await teams.cliStatus());
       if ((p === "/api/teams/cli/install" || p === "/api/teams/cli/login") && post) {
         const r = await inTerminal(p.endsWith("install") ? "npm install -g @microsoft/teams.cli" : "teams login");
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
       }
-      const tb = p.match(/^\/api\/teams\/bots\/([a-z0-9_-]+)\/(create|import|enabled|remove)$/);
+      if (p === "/api/teams/unlink" && post) {
+        const err = teams.unlink(String(body.conversationId ?? ""));
+        return err ? json({ error: err }, 404) : json({ bots: teams.status(), links: teams.linkViews() });
+      }
+      const tb = p.match(/^\/api\/teams\/bots\/([a-z0-9_-]+)\/(create|import|enabled|remove|permissions)$/);
       if (tb && post) {
         const [, id, action] = tb;
-        if (!teammate(id)) return json({ error: "No such teammate." }, 404);
+        if (!teammate(id) && id !== MOZART) return json({ error: "No such teammate." }, 404);
+        if (action === "permissions" && id !== MOZART) return json({ error: "Only Mozart has permissions to set." }, 400);
         if (process.env.TEAM_CHAT_STUB && (action === "create" || action === "import")) return json({ error: "Not in the stub: it would make a real bot." }, 409);
         let err: string | undefined;
         try {
           if (action === "create") err = await teams.create(id, { color: String(body.color ?? ""), outline: String(body.outline ?? "") });
-          else if (action === "import") err = await teams.importEnv(id, String(body.path ?? "").trim());
+          else if (action === "import") err = await teams.importEnv(id, String(body.path ?? "").trim(), String(body.teamsAppId ?? "").trim() || undefined);
+          else if (action === "permissions") err = await teams.grantMozart();
           else if (action === "enabled") err = teams.setEnabled(id, Boolean(body.enabled));
           else err = await teams.remove(id);
         } catch (e) {
           err = (e as Error).message;
         }
-        return err ? json({ error: err }, 400) : json({ bots: teams.status() });
+        return err ? json({ error: err, bots: teams.status() }, 400) : json({ bots: teams.status(), links: teams.linkViews() });
       }
 
       if (p === "/api/channels" && post) {
