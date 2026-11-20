@@ -11,13 +11,18 @@
 // the teammate typing while it works. What you type in the app goes to Teams through Mozart. Without Mozart, a
 // teammate's bot still gets the messages that @mention it.
 //
-// `@Mozart new channel <name>` (with people you @mention or name by email) creates a Teams group chat: only its members
-// see it, and nobody can join it on their own. Through Microsoft Graph, as Mozart's own app: the chat (Chat.Create),
-// then Mozart and every teammate's bot installed in it (TeamsAppInstallation.ReadWriteAndConsentForChat.All, with
-// Mozart's consent to read the chat), and a linked channel here. Those two are tenant-wide permissions an admin
-// approves once, and the bots must be in the organization's app catalog for Graph to install them (AppCatalog.Read.All
-// finds their catalog ids). Teams channels aren't used: private ones don't let bots post, and shared ones need each
-// bot added by hand.
+// In a Teams channel every answer is a new post, not a reply in the thread you wrote in.
+//
+// `@Mozart new channel <name>` creates a standard channel in the team (Microsoft Graph, with Mozart's
+// Channel.Create.Group consent, which the team's owner grants by adding Mozart: no admin) and a linked channel here.
+// Everyone in the team sees it, so for a private place keep the team to yourself. Teammates' bots installed in the team
+// are in every standard channel. (Private channels aren't used: bots can't post in them.)
+//
+// `@Mozart new group chat <name>` (with people you @mention or name by email) creates a Teams group chat instead: only
+// its members see it. Through Microsoft Graph, as Mozart's own app: the chat (Chat.Create), then Mozart and every
+// teammate's bot installed in it (TeamsAppInstallation.ReadWriteAndConsentForChat.All, with Mozart's consent to read
+// the chat), and a linked channel here. Those two are tenant-wide permissions an admin approves once, and the bots must
+// be in the organization's app catalog for Graph to install them (AppCatalog.Read.All finds their catalog ids).
 //
 // Bots are made with Microsoft's Teams CLI (`teams app create --messaging-mode socket`) from the Microsoft Teams page,
 // and connect over Socket Mode (teams-socket.ts): nothing listens on the internet. Only the Microsoft Entra user who
@@ -48,7 +53,7 @@ export const MOZART_LOOK = { id: MOZART, name: "Mozart", avatar: "🎼", color: 
  * Mozart's resource-specific consent: read every message in the team's channels and in group chats it's in, create
  * channels, and see which apps (the teammates' bots) are installed there. Granted by whoever adds it to a team or chat.
  */
-export const MOZART_RSC = ["ChannelMessage.Read.Group", "ChatMessage.Read.Chat", "TeamsAppInstallation.Read.Group", "TeamsAppInstallation.Read.Chat"];
+export const MOZART_RSC = ["ChannelMessage.Read.Group", "ChatMessage.Read.Chat", "Channel.Create.Group", "TeamsAppInstallation.Read.Group", "TeamsAppInstallation.Read.Chat"];
 /** Mozart's chat-scoped consent, granted when it installs itself in a chat it made. */
 const MOZART_CHAT_RSC = MOZART_RSC.filter((p) => p.endsWith(".Chat"));
 /**
@@ -82,7 +87,6 @@ export type Link = {
   tenantId: string;
   teamId?: string; // channel: its team's id (the conversation id of the team's General channel)
   name?: string;
-  thread?: string; // channel: the thread your latest message was in; answers go there
   createdAt: number;
 };
 
@@ -450,7 +454,7 @@ export class TeamsBridge {
       // Its hello, unless it's a chat Mozart just made (that gets a welcome of its own).
       if (bot.agentId === MOZART && a.type === "installationUpdate" && a.action === "add" && !this.links[baseId(conv.id)]) {
         const where = a.channelData?.team ? "this team's channels" : "this chat";
-        bot.reply(a, `Hi, I'm Mozart 🎼. I connect ${where} to Team Chat: when ${USER_NAME} writes here, I pick the teammate who answers. **@Mozart new channel <name>** makes a new members-only group chat with the teammates.`);
+        bot.reply(a, `Hi, I'm Mozart 🎼. I connect ${where} to Team Chat: when ${USER_NAME} writes here, I pick the teammate who answers. ${a.channelData?.team ? "**@Mozart new channel <name>** makes a new channel in this team." : "**@Mozart new channel <name>** makes a new channel in your team."}`);
       }
       return;
     }
@@ -480,7 +484,6 @@ export class TeamsBridge {
       link = this.autoLink(a);
     }
     if (link.serviceUrl !== a.serviceUrl && a.serviceUrl) link.serviceUrl = a.serviceUrl;
-    if (yours && link.kind === "channel" && link.thread !== conv.id) link.thread = conv.id;
     this.saveLinks();
     void this.refreshMembers(link);
 
@@ -542,12 +545,79 @@ export class TeamsBridge {
         a,
         [
           "**Mozart** 🎼 links Teams to Team Chat. In a linked group chat or channel, write as usual and I pick who answers (or @mention a teammate).",
-          "- **@Mozart new channel <name>**: a new members-only group chat with you and the teammates, linked to a new Team Chat channel. @mention people (or write their email) to add them too: only members see it.",
+          "- **@Mozart new channel <name>**: a new channel in the team, linked to a new Team Chat channel. Everyone in the team sees it.",
+          "- **@Mozart new group chat <name>**: a members-only group chat with you and the teammates instead. @mention people (or write their email) to add them too. Needs an admin's approval once.",
           "- **@Mozart help**: this.",
         ].join("\n"),
       );
-    const err = await this.newChat(cmd.name, a);
-    if (err) bot.reply(a, `Couldn't create it: ${err}`);
+    if (cmd.kind === "newChat") {
+      const err = await this.newChat(cmd.name, a);
+      if (err) bot.reply(a, `Couldn't create it: ${err}`);
+      return;
+    }
+    const team = a.channelData?.team?.id ? this.knownTeams[a.channelData.team.id] : soleTeam(this.knownTeams);
+    if (!team)
+      return bot.reply(a, Object.keys(this.knownTeams).length ? "Which team? Ask me in one of that team's channels." : "Add me to a team first, then ask me in one of its channels.");
+    const err = await this.newChannel(team, cmd.name, a);
+    if (err) bot.reply(a, `Couldn't create the channel: ${err}`);
+  }
+
+  /** `new channel`: a standard channel in the team (Graph, Mozart's Channel.Create.Group consent) and a Team Chat channel linked to it. */
+  private async newChannel(team: KnownTeam, wanted: string, a: Activity): Promise<string | undefined> {
+    const mozart = this.mozartBot();
+    if (!mozart) return "Mozart isn't connected.";
+    if (!team.groupId) return "Teams didn't say which Microsoft 365 group this team is. Ask me in one of its channels.";
+    const displayName = teamsChannelName(wanted);
+    if (!displayName) return "Give it a name: @Mozart new channel <name>.";
+    let made: any;
+    try {
+      made = await mozart.graph("POST", `/teams/${team.groupId}/channels`, {
+        displayName,
+        description: "Linked to Team Chat: teammates answer here.",
+        membershipType: "standard",
+      });
+    } catch (err: any) {
+      return /403|Forbidden/i.test(err.message)
+        ? `Teams refused (${err.message}). Mozart needs the Channel.Create.Group permission in this team: remove Mozart from the team and add it again, and accept its permissions.`
+        : err.message;
+    }
+    const ch = createChannel(displayName, DEFAULT_CWD);
+    this.deps.channelCreated(ch);
+    const link: Link = {
+      conversationId: String(made.id),
+      kind: "channel",
+      channelId: ch.id,
+      serviceUrl: team.serviceUrl,
+      tenantId: team.tenantId,
+      teamId: team.id,
+      name: displayName,
+      createdAt: Date.now(),
+    };
+    this.links[link.conversationId] = link;
+    this.saveLinks();
+    this.membersAt.delete(memberKey(link));
+    await this.refreshMembers(link);
+    const bots = Object.values(this.records).filter((r) => r.agentId !== MOZART);
+    const inTeam = bots.filter((r) => r.installedIn?.includes(team.id));
+    const missing = ROSTER.filter((t) => !inTeam.some((r) => r.agentId === t.id));
+    const who = (list: { agentId: string }[]) => list.map((r) => `${teammate(r.agentId)?.avatar ?? ""} ${nameOf(r.agentId)}`.trim()).join(", ");
+    const lines = [
+      `This channel is **#${ch.name}** in Team Chat. Write here and I'll pick the teammate who answers, or @mention one.`,
+      inTeam.length ? `In this team: ${who(inTeam)}.` : "",
+      missing.length
+        ? `Not in this team yet: ${missing
+            .map((t) => {
+              const r = bots.find((b) => b.agentId === t.id);
+              return r ? `[${t.name}](https://teams.microsoft.com/l/app/${r.teamsAppId}?installAppPackage=true&appTenantId=${r.tenantId})` : `${t.name} (no bot yet)`;
+            })
+            .join(", ")}. Add them to the team and they're in every standard channel. Until then I answer for them.`
+        : "",
+    ].filter(Boolean);
+    await mozart.send({ type: "message", text: lines.join("\n\n"), textFormat: "markdown" }, { serviceUrl: link.serviceUrl, conversationId: link.conversationId });
+    this.deps.note(ch, `Created from Microsoft Teams: ${team.name ? `${team.name} › ` : ""}${displayName}, linked to this channel.`);
+    mozart.reply(a, `Created **${displayName}**${made.webUrl ? ` ([open](${made.webUrl}))` : ""}, linked to #${ch.name} in Team Chat.`);
+    this.changed();
+    this.deps.log("teams.channel_created", { team: team.id, conversation: link.conversationId, channelId: ch.id });
   }
 
   /** People named in a command: @mentions of people (not bots), by their Entra id, and email addresses. */
@@ -695,14 +765,15 @@ export class TeamsBridge {
   }
 
   private toShared(link: Link, e: Event) {
-    const target = { serviceUrl: link.serviceUrl, conversationId: link.thread ?? link.conversationId };
+    // The channel itself, never a thread in it: in a Teams channel each message is a new post.
+    const target = { serviceUrl: link.serviceUrl, conversationId: link.conversationId };
     if (e.type === "activity") {
       if (!teammate(e.agentId)) return;
       const key = `${link.channelId}:${e.agentId}`;
       const bot = this.installedIn(e.agentId, link) ? this.live.get(e.agentId) : undefined;
       if (e.status && bot && !this.typing.has(key)) {
         bot.typeOnce(target);
-        this.typing.set(key, setInterval(() => bot.typeOnce({ serviceUrl: link.serviceUrl, conversationId: link.thread ?? link.conversationId }), TYPING_EVERY));
+        this.typing.set(key, setInterval(() => bot.typeOnce(target), TYPING_EVERY));
       } else if (!e.status && this.typing.has(key)) {
         clearInterval(this.typing.get(key));
         this.typing.delete(key);
@@ -955,7 +1026,12 @@ class LiveBot {
 /** The key a bot's presence is kept under: a channel's team, or the group chat itself. */
 const memberKey = (l: Link) => l.teamId ?? l.conversationId;
 
-export type Command = { kind: "help" } | { kind: "newChannel"; name: string };
+export type Command = { kind: "help" } | { kind: "newChannel"; name: string } | { kind: "newChat"; name: string };
+
+const soleTeam = (teams: Record<string, KnownTeam>) => {
+  const all = Object.values(teams);
+  return all.length === 1 ? all[0] : undefined;
+};
 
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
@@ -963,19 +1039,31 @@ const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 export const commandText = (a: Activity) => plainText((a.text ?? "").replace(/<at>[^<]*<\/at>/gi, " "));
 
 /**
- * Mozart's commands: "new channel <name>" (also "new chat", "create channel …", "/newchannel …") and "help". In a
+ * Mozart's commands: "new channel <name>" (also "create channel …", "/newchannel …"), "new group chat <name>" (also
+ * "new chat …") and "help". In a
  * shared conversation they only count when Mozart was @mentioned (`addressed`), so a sentence that happens to start
  * with "new channel" isn't one. Emails and a trailing "with" (the people to add) aren't part of the name.
  */
 export function parseCommand(text: string, addressed: boolean): Command | undefined {
   if (!addressed) return;
   const t = text.trim().replace(/^\/+/, "");
-  const m = t.match(/^(?:new|create|add|make)[\s-]?(?:channel|chat|group chat)\b[\s:]*(.*)$/is);
+  const m = t.match(/^(?:new|create|add|make)[\s-]?(channel|chat|group[\s-]?chat)\b[\s:]*(.*)$/is);
   if (m) {
-    const name = m[1].replace(EMAIL, " ").replace(/(?:[\s,&]|\bwith\b|\band\b)+$/i, "");
-    return { kind: "newChannel", name: name.trim().replace(/^["“'#]+|["”']+$/g, "").trim() };
+    const name = m[2].replace(EMAIL, " ").replace(/(?:[\s,&]|\bwith\b|\band\b)+$/i, "");
+    return { kind: /^channel$/i.test(m[1]) ? "newChannel" : "newChat", name: name.trim().replace(/^["“'#]+|["”']+$/g, "").trim() };
   }
   if (/^(help|\?|commands)$/i.test(t)) return { kind: "help" };
+}
+
+/** A Teams channel name: at most 50 characters, none of ~ # % & * { } + / \\ : < > ? | ' " and no leading "_" or ".". */
+export function teamsChannelName(name: string): string {
+  return name
+    .replace(/[~#%&*{}+/\\:<>?|'"]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[_.\s]+/, "")
+    .slice(0, 50)
+    .trim();
 }
 
 /** A group chat's topic: at most 250 characters, and Teams doesn't allow ":" in it. */

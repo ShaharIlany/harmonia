@@ -292,28 +292,34 @@ Jobs and memories stay.
     back to Teams, with typing while they work.
   - **Group chats and channels:** add the **Mozart** bot (the Teams page
     creates it and sets its resource-specific consent with `teams app rsc
-    set`: reading messages in the chat or team, seeing which apps are
-    installed) and, if you like, the teammates' bots to a group chat or a
+    set`: reading messages in the chat or team, creating channels in the
+    team, seeing which apps are installed) and, if you like, the teammates' bots to a group chat or a
     team. The first time you write there, it's linked to a new channel here.
     Your messages land as yours and Mozart picks who answers, as in the app;
     `@Leo` goes straight to Leo. A teammate answers with its own bot when
     it's in that chat or team (typing included), else Mozart posts the answer
     under its name. What you type in the app goes to Teams through Mozart
-    ("**Alex** (in Team Chat): …"). In a channel, answers go to the thread
-    your last message was in.
+    ("**Alex** (in Team Chat): …"). In a channel, every answer is a new
+    post, not a reply in your thread.
   - **Only you wake the teammates.** Other people's messages in a linked
     chat or channel show here as "Bob · in Teams" and the teammates and
     Mozart read them as context, but they never wake anyone: the teammates can
     read your mail and calendar. Only you can run Mozart's commands.
-  - **New members-only chats from Teams:** `@Mozart new channel <name>` (in
-    any chat with Mozart, your 1:1 included; also `new chat`) creates a Teams
-    **group chat**: only its members see it, and nobody can join on their
-    own. You're in it, plus anyone you @mention or write the email of
-    (`@Mozart new channel Launch with @Dana and ron@corp.com`). Mozart then
-    installs itself and every teammate's bot in it and links it to a new
-    channel here, all through Microsoft Graph. (Not a Teams channel: bots
-    can't post in private channels, and in shared channels each bot has to
-    be added by hand.) A Microsoft 365 admin sets this up once, with the
+  - **New channels from Teams:** `@Mozart new channel <name>` in one of a
+    team's channels creates a standard channel in that team (Microsoft Graph,
+    with Mozart's `Channel.Create.Group` consent, which you grant by adding
+    Mozart to the team: no admin) and links it to a new channel here.
+    Everyone in the team sees it, so for the Team Chat feel make a private
+    team with only you in it. Teammates' bots added to the team are in every
+    standard channel. (Not private channels: bots can't post in them.)
+  - **New members-only chats from Teams:** `@Mozart new group chat <name>`
+    (in any chat with Mozart, your 1:1 included; also `new chat`) creates a
+    Teams **group chat**: only its members see it, and nobody can join on
+    their own. You're in it, plus anyone you @mention or write the email of
+    (`@Mozart new group chat Launch with @Dana and ron@corp.com`). Mozart
+    then installs itself and every teammate's bot in it and links it to a
+    new channel here, all through Microsoft Graph. A Microsoft 365 admin sets
+    this up once, with the
     checklist on the Teams page: give Mozart's app the Graph application
     permissions `Chat.Create`, `TeamsAppInstallation.ReadWriteAndConsentForChat.All`
     and `AppCatalog.Read.All` with admin consent, and publish Mozart and the
@@ -346,7 +352,7 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `teams.ts` | Teammates and Mozart as Microsoft Teams bots: setup through the Teams CLI, the Keychain, 1:1 mirrors, linked channels and group chats, `new channel` |
+| `teams.ts` | Teammates and Mozart as Microsoft Teams bots: setup through the Teams CLI, the Keychain, 1:1 mirrors, linked channels and group chats, `new channel` and `new group chat` |
 | `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
 

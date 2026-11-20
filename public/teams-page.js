@@ -66,9 +66,10 @@
     const bot = botOf(MOZART.id);
     const steps = `<ol class="tm-plain">
         <li>Add Mozart (and, if you like, the teammates' bots) to a group chat or a team, and write there as usual: it's linked to a new channel here, and Mozart picks who answers. <code>@Leo</code> still goes straight to Leo.</li>
-        <li><code>@Mozart new channel &lt;name&gt;</code> (in any chat with Mozart, 1:1 included) makes a new <b>group chat</b>: only its members see it, and nobody can join on their own. You're in it, plus anyone you @mention or write the email of. Mozart adds itself and every teammate's bot, and links it to a new channel here.</li>
+        <li><code>@Mozart new channel &lt;name&gt;</code> (in one of the team's channels) makes a new channel in that team, linked to a new channel here. No admin needed. Everyone in the team sees it, so keep the team to yourself for a private place.</li>
+        <li><code>@Mozart new group chat &lt;name&gt;</code> makes a members-only <b>group chat</b> instead: you, anyone you @mention or write the email of, Mozart and every teammate's bot. It needs an admin once (below).</li>
       </ol>
-      <p class="hint">Only your messages wake the teammates. Other people's messages show here as context. A teammate answers with its own bot when that bot is in the chat; otherwise Mozart posts the answer under its name. What you type here goes to Teams through Mozart.</p>`;
+      <p class="hint">Only your messages wake the teammates. Other people's messages show here as context. A teammate answers with its own bot when that bot is in the chat; otherwise Mozart posts the answer under its name. In a Teams channel, every answer is a new post. What you type here goes to Teams through Mozart.</p>`;
     if (bot) return `<section class="card"><h2>Channels and group chats</h2>${steps}${adminHtml()}</section>`;
     return `<section class="card">
       <h2>Channels and group chats</h2>
@@ -82,16 +83,16 @@
     </section>`;
   }
 
-  /** The two things an admin does once so `new channel` works through the API alone. */
+  /** The two things an admin does once so `new group chat` works through the API alone. */
   function adminHtml() {
     const row = (ok, text) => `<div class="tm-row">${tick(ok)}<span>${text}</span></div>`;
-    if (!admin) return `<h3 class="tm-sub">For <code>new channel</code>: once, by a Microsoft 365 admin</h3><p class="tm-check">${checkingAdmin ? "Checking…" : ""}</p>`;
+    if (!admin) return `<h3 class="tm-sub">For <code>new group chat</code>: once, by a Microsoft 365 admin</h3><p class="tm-check">${checkingAdmin ? "Checking…" : ""}</p>`;
     const bots = (S.teams || []).map((b) => b.agentId);
     const catalogKnown = admin.granted.includes("AppCatalog.Read.All");
     const inCatalog = bots.filter((id) => admin.catalog[id]);
     const allPerms = !admin.missing.length;
     const allCatalog = catalogKnown && inCatalog.length === bots.length;
-    return `<h3 class="tm-sub">For <code>new channel</code>: once, by a Microsoft 365 admin</h3>
+    return `<h3 class="tm-sub">For <code>new group chat</code>: once, by a Microsoft 365 admin</h3>
       <ol class="tm-plain">
         <li>${allPerms ? "✓ " : ""}Give Mozart's app these Microsoft Graph <b>application</b> permissions, and grant admin consent: <a href="${esc(admin.permissionsLink)}" target="_blank" rel="noopener">Mozart's API permissions in Entra</a> → Add a permission → Microsoft Graph → Application permissions.
           <div class="tm-rows">${["Chat.Create", "TeamsAppInstallation.ReadWriteAndConsentForChat.All", "AppCatalog.Read.All"].map((p) => row(admin.granted.includes(p), `<code>${p}</code>`)).join("")}</div>
