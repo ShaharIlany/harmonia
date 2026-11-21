@@ -265,6 +265,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     return nil
   }
 
+  // The composer's 📎: WKWebView shows no file picker of its own. A file picked here (or dropped on the window) is
+  // copied into Harmonia's data folder, so the teammates can read it even when it was in a folder they're kept out of.
+  func webView(
+    _ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping ([URL]?) -> Void
+  ) {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+    panel.prompt = "Attach"
+    panel.beginSheetModal(for: window) { result in
+      completionHandler(result == .OK ? panel.urls : nil)
+    }
+  }
+
   func webView(
     _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo,
     completionHandler: @escaping () -> Void

@@ -5,6 +5,7 @@ import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
+import { filesLines, type Attachment } from "./attachments";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
@@ -113,7 +114,11 @@ export function bubbles(text: string): string[] {
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "\n…(cut)" : s);
 
-function line(m: Message): string {
+/**
+ * A message as the teammates (and Mozart) read it: "[14:02] Name: text". With `channelId`, each attached file follows
+ * on a line of its own with its path, so a teammate can open it; without (Mozart), only the files' names.
+ */
+function line(m: Message, channelId?: string): string {
   if (m.kind === "permission") {
     const p = m.meta!.permission!;
     const verdict = { pending: "is waiting on", once: "allowed once", always: "allowed for this channel", denied: "denied" }[p.status];
@@ -126,10 +131,11 @@ function line(m: Message): string {
   }
   if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
   if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
-  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"}): ${m.text}`;
+  const files = m.meta?.files?.length ? (channelId ? filesLines(channelId, m.meta.files) : ` (attached: ${m.meta.files.map((f) => f.name).join(", ")})`) : "";
+  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"}): ${m.text}${files}`;
   const re = m.meta?.replyTo;
   const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
-  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}`;
+  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}${files}`;
 }
 
 // First start with TeamAgents chat sessions: they're new, so each teammate re-reads each channel's recent messages.
@@ -233,14 +239,19 @@ export class Team {
   private coordinating = new Map<string, Promise<unknown>>(); // channel id → its Mozart decisions, one at a time
 
   /**
-   * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`, and where it is there). An
-   * @mention, "Name, …" or a reply to a teammate's message goes straight to that teammate; anything else, the
-   * channel's Mozart decides.
+   * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`, and where it is there), maybe
+   * with files (attachments.ts). An @mention, "Name, …" or a reply to a teammate's message goes straight to that
+   * teammate; anything else, the channel's Mozart decides.
    */
-  userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef } = {}): Message {
+  userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef; files?: Attachment[] } = {}): Message {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
     const replyTo = target && { id: target.id, author: target.author, text: replyText(target).slice(0, 300) };
-    const meta = { ...(replyTo && { replyTo }), ...(from.via && { via: from.via }), ...(from.slack && { slack: from.slack }) };
+    const meta = {
+      ...(replyTo && { replyTo }),
+      ...(from.files?.length && { files: from.files }),
+      ...(from.via && { via: from.via }),
+      ...(from.slack && { slack: from.slack }),
+    };
     const msg = this.post(ch, { author: "user", text, ...(Object.keys(meta).length && { meta }) });
     const named = mentions(text).filter((id) => id !== "user");
     // A reply to a teammate's message goes to that teammate (no Mozart), unless the reply names someone.
@@ -261,8 +272,9 @@ export class Team {
    * Someone else's message in a linked Slack conversation. It's context for the teammates and Mozart (they read it
    * with the rest of the channel), but it never wakes anyone: the teammates work for you.
    */
-  guestMessage(ch: Channel, name: string, text: string, slackId?: string, slack?: SlackRef) {
-    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) }, via: "slack", ...(slack && { slack }) } });
+  guestMessage(ch: Channel, name: string, text: string, slackId?: string, slack?: SlackRef, files?: Attachment[]) {
+    const guest = { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) };
+    return this.post(ch, { author: "guest", text, meta: { guest, ...(files?.length && { files }), via: "slack", ...(slack && { slack }) } });
   }
 
   /** The channel's Mozart decides who answers `msg`, after any decision still running there. Nothing shows meanwhile. */
@@ -270,7 +282,7 @@ export class Team {
     const prev = this.coordinating.get(ch.id) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (ch.status === "archived") return;
-      const d = await decide({ ch, all: messages.get(ch.id) ?? [], msg, line, waitingOn }).catch((e) => ({
+      const d = await decide({ ch, all: messages.get(ch.id) ?? [], msg, line: (m) => line(m), waitingOn }).catch((e) => ({
         to: msg.author === "user" ? [waitingOn ?? TRIAGE] : [],
         why: `Mozart failed: ${String(e).slice(0, 80)}`,
         by: "rule" as const,
@@ -445,7 +457,7 @@ export class Team {
 
     const where = `#${ch.name} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
-    const lines = [...fresh.map(line), ...events];
+    const lines = [...fresh.map((m) => line(m, ch.id)), ...events];
     const prompt = `${intro}\n${lines.join("\n")}\n\nWrite your next message in #${ch.name}, or (no reply) if nothing here is waiting on you.`;
 
     const had = agentSessions[agentId];
@@ -694,12 +706,12 @@ export class Team {
       channel: ch.name,
       feedback: text,
       time: new Date(target.ts).toISOString(),
-      message: line(target),
+      message: line(target, ch.id),
       job: job
         ? `\nThe job: brief\n<brief>\n${clip(job.brief, 4000)}\n</brief>\nreport\n<report>\n${clip(job.report ?? "(none yet)", 6000)}\n</report>\nIts whole run is Claude Code session ${job.sessionId} (~/.claude/projects/*/${job.sessionId}.jsonl).\n`
         : "",
       messagesFile: join(DATA, "messages", `${ch.id}.json`),
-      history: all.slice(Math.max(0, i - 40), i + 1).map(line).join("\n"),
+      history: all.slice(Math.max(0, i - 40), i + 1).map((m) => line(m, ch.id)).join("\n"),
       agentFile: agentFile(agentId),
       memoryDir: memoryDir(agentId),
       chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId) }),
@@ -860,12 +872,12 @@ export class Team {
   }
 }
 
-/** What a reply quotes from a message: its text, or what the card is. */
+/** What a reply quotes from a message: its text, what the card is, or the files it carries. */
 function replyText(m: Message): string {
   if (m.kind === "job") return m.text;
   if (m.kind === "permission") return `asks to use ${m.meta?.permission?.tool}`;
   if (m.kind === "tools") return `asks for ${m.meta?.toolRequest?.tools.map((t) => t.name).join(", ")}`;
-  return m.text;
+  return m.text || (m.meta?.files?.length ? `📎 ${m.meta.files.map((f) => f.name).join(", ")}` : "");
 }
 
 /** "ABC-123", "123" (→ ABC-123 when the task prefix is ABC), "1amkz0hxp0q" (an internal id) or a ClickUp task link. */

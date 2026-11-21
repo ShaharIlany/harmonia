@@ -66,7 +66,7 @@
     } catch {}
     return `<section class="card sk-update">
       <h2>Update the Slack app</h2>
-      <p class="hint">It was made from an older ${APP} manifest, so some of what it does here won't work yet (like reading your reactions, or the buttons on a teammate's request). It's missing ${s.missingScopes.map((x) => `<code>${esc(x)}</code>`).join(", ")}.</p>
+      <p class="hint">It was made from an older ${APP} manifest, so some of what it does here won't work yet (like files, reading your reactions, or the buttons on a teammate's request). It's missing ${s.missingScopes.map((x) => `<code>${esc(x)}</code>`).join(", ")}.</p>
       <ol class="sk-plain">
         <li>In ${s.appLink ? ext(s.appLink, "the app's settings") : "the app's settings"}, open <b>App Manifest</b>, replace what's there with ${APP}'s, and <b>Save Changes</b>. <button class="btn" data-copy-manifest>Copy the manifest</button></li>
         <li>Slack asks you to reinstall the app: <b>Install App</b> → <b>Reinstall to Workspace</b> → <b>Allow</b>. The tokens stay the same.</li>

@@ -274,6 +274,8 @@ function stubRun(o: RunOptions): Run {
     if (o.chat && /\bjob\b/i.test(lastLine)) return { ...base, text: "(stub) On it, I started a job.", denials: [] };
     if (/stub-permission/.test(lastLine) && !o.allowedTools.length)
       return { ...base, text: "I need to run the tests for this, can I?", denials: [{ tool: "Bash", rule: "Bash(bun test)", summary: "Bash: bun test" }] };
+    const attached = [...o.prompt.matchAll(/^ {2}attached file: (.+) \(/gm)].map((m) => m[1].split("/").pop());
+    if (o.chat && attached.length) return { ...base, text: `(stub) Got ${attached.length === 1 ? "the file" : `${attached.length} files`}: ${attached.map((n) => `\`${n}\``).join(", ")}`, denials: [] };
     if (o.agentId === "emily" && /design/i.test(lastLine))
       return { ...base, text: "On it. **@Leo** can you sketch this one?", denials: [] };
     if (o.agentId === "leo")

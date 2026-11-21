@@ -265,6 +265,20 @@ Jobs and memories stay.
   per browser. A muted channel still notifies you when a teammate needs your OK.
 - **Reactions:** your emoji on any message (its menu, or ☺ beside it); click
   your reaction to take it off. Teammates react by answering with only an emoji.
+- **Files:** 📎 in the composer, drop files anywhere on the channel, or paste
+  them (a screenshot, a picture copied from a page, a file copied in the
+  Finder; text copied from Word or Excel still pastes as text). Up to 10 files
+  of up to 100 MB on a message, with or without words. They upload while you
+  type and wait above the composer (× takes one off; they stay with their
+  channel if you switch away). Pictures show in the bubble (click one for a
+  viewer, ← → between them); other files are cards that open in their app.
+  A message's menu has **Show in Finder**. Each file is copied into the data
+  folder, `attachments/<channel>/<id>/<name>` (`attachments.ts`), and the
+  teammates read it under the message as `attached file: <path> (type,
+  size)`: they open it with Read (images and PDFs too) and put the path in a
+  job's brief. That works for files from Downloads or the Desktop, which the
+  sandbox otherwise keeps them out of. Uploads that never went out are
+  deleted the next time the server starts.
 - **Reply to a message:** hover a message → ↩ beside it, or Reply in its menu. The composer shows what
   you're answering (Esc cancels), and the posted message quotes it (click the
   quote to jump there). A reply to a teammate's message wakes that teammate
@@ -392,15 +406,24 @@ Jobs and memories stay.
     needed, unless your workspace doesn't let apps create channels. In your DM
     with the app, leave out the `@Harmonia`. `@Harmonia help` lists the
     commands.
+  - **Files:** a file on your Slack message (or on someone else's, in a
+    linked channel) is fetched into the channel's attachments here
+    (`files:read`), so it shows in the app and the teammates can open it. A
+    Google Drive link or a file too big comes in as its name, with why. A
+    file you attach in the app goes to Slack too (`files:write`): Slack posts
+    a file message from the app itself, so it can't carry your name and
+    picture the way your other messages do, and its comment starts with
+    "Alex (in Harmonia)" instead. A thread reply on it in Slack is a reply to
+    it here, as with any message. An app made before files is told so: your
+    words still go, with the files' names, and a note here says what to update.
   - Messages from Slack are read as text: mentions become `@Name`, and links
-    their label and address. Files stay in Slack (the teammates see their
-    names). The Slack page lists the linked conversations, with **Unlink**.
+    their label and address. The Slack page lists the linked conversations, with **Unlink**.
     `slack.json` in the data folder holds the workspace, who the app works for,
     the links, the open ⚠️ questions and the teammates' apps; the tokens are in the Keychain
     (`Harmonia Slack`; off a Mac, `slack-secrets.json` in the data folder,
     readable only by you).
-  - **An app made from an older manifest** (before reactions and buttons) is
-    missing scopes: the Slack page notices and shows how to update it (paste
+  - **An app made from an older manifest** (before files, or reactions and
+    buttons) is missing scopes: the Slack page notices and shows how to update it (paste
     the new manifest in the app's **App Manifest** page, then reinstall it).
 
 ## Files
@@ -428,7 +451,8 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel` |
+| `attachments.ts` | Files on messages: where they're kept, their limits, uploads waiting for their message, the lines the teammates read |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel` |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |
