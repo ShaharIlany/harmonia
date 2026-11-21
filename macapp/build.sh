@@ -45,6 +45,27 @@ xcrun swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/Harmonia" macapp/main.s
   -framework Cocoa -framework WebKit -framework UserNotifications
 cp macapp/Info.plist "$APP/Contents/Info.plist"
 
+# What the About panel shows: "Version <CFBundleShortVersionString> (<CFBundleVersion>)". A release gets its version
+# and commit, "2.1.3 (1a2b3c4)"; a build from source the newest version tag it's built on, with how many commits it's
+# past that, "2.1.3+4 (1a2b3c4-dirty)". Info.plist's own 1.0 is only for a build outside a git checkout.
+if [ -n "${COMMIT:-}" ]; then
+  SHORT="$VERSION"
+  if [ -z "$SHORT" ]; then
+    TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+    if [ -n "$TAG" ]; then
+      SHORT="${TAG#v}"
+      AHEAD="$(git rev-list --count "$TAG..HEAD")"
+      [ "$AHEAD" -gt 0 ] && SHORT="$SHORT+$AHEAD"
+    else
+      SHORT="0.0.0"
+    fi
+  fi
+  BUNDLE="${COMMIT:0:7}"
+  [ "$DIRTY" = true ] && BUNDLE="$BUNDLE-dirty"
+  plutil -replace CFBundleShortVersionString -string "$SHORT" "$APP/Contents/Info.plist"
+  plutil -replace CFBundleVersion -string "$BUNDLE" "$APP/Contents/Info.plist"
+fi
+
 # The icon is drawn by make-icon.swift (docs/brand/app-icon.svg is the same drawing) and rebuilt when that script changes.
 ICON_STAMP="$(shasum macapp/make-icon.swift | cut -d' ' -f1)"
 if [ ! -f build/AppIcon.icns ] || [ "$(cat build/AppIcon.stamp 2>/dev/null)" != "$ICON_STAMP" ]; then
