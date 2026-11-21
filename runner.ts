@@ -260,6 +260,16 @@ function stubRun(o: RunOptions): Run {
     if (o.chat && lastLine.includes("(event)") && /finished|failed/.test(lastLine))
       return { ...base, text: "(stub) The job is done. Report's in the card above.", denials: [] };
     if (/stub-react/.test(lastLine)) return { ...base, text: "👍", denials: [] };
+    if (/stub-tools/.test(lastLine) && o.chat) {
+      const env = JSON.parse(o.chat.mcpConfig).mcpServers?.team?.env ?? {};
+      const r = await fetch(`${env.HARMONIA_URL}/api/turn/${env.HARMONIA_TURN}/request_tool`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tools: ["outlook_email_search"], reason: "(stub) to look up the customer's last email" }),
+      });
+      const j: any = await r.json().catch(() => ({}));
+      return { ...base, text: `(stub) I asked for a tool: ${j.text ?? j.error ?? r.status}`, denials: [] };
+    }
     if (/stub-bubbles/.test(lastLine)) return { ...base, text: "found it\n---\n`paths.ts:36` defaults to the home folder\n---\nwant me to change it?", denials: [] };
     if (o.chat && /\bjob\b/i.test(lastLine)) return { ...base, text: "(stub) On it, I started a job.", denials: [] };
     if (/stub-permission/.test(lastLine) && !o.allowedTools.length)

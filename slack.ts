@@ -5,8 +5,13 @@
 // is linked to a Harmonia channel the first time you write there. What you write lands in the linked channel as
 // your message; other people's messages land too, as context, but never wake a teammate: the teammates work for you
 // and can read your mail. What happens in the channel goes back to Slack: the teammates' answers, job starts, errors,
-// anything waiting for your OK, and what you type in the app. While a teammate works on your Slack message, it
-// carries 👀. Answers are new messages in the channel, not thread replies.
+// and what you type in the app. While a teammate works on your Slack message, it carries 👀.
+//
+// Every message is kept with its Slack ts (meta.slack), so Slack's own gestures work: a thread reply is a reply to that
+// message here (it wakes that teammate), and the answers follow you into the thread; your reaction on a message is
+// your reaction here; ⚠️ on a teammate's message gets you a DM asking how it could be better, and your answer (a
+// thread reply, or the box behind its button) is feedback, as ✎ gives it in the app. A teammate's request for a tool
+// (a connector) or a permission comes with buttons, and the card says what you decided, here or there.
 //
 // `@Harmonia new channel <name>` (or `new private channel <name>`) creates a Slack channel with you and anyone you
 // @mention in it (conversations.create and conversations.invite: no admin needed) and a linked channel here.
@@ -21,9 +26,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA, DEFAULT_CWD } from "./paths";
 import { USER_NAME, nameOf, teammate } from "./roster";
-import { channels, createChannel, type Channel, type Message } from "./store";
+import { channels, createChannel, messages, saveMessages, type Channel, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
-import { SlackError, SlackSocket, isAuthError, slackCall, type Envelope, type SocketState } from "./slack-socket";
+import { SlackError, SlackSocket, isAuthError, slackAuth, slackCall, type Envelope, type SocketState } from "./slack-socket";
 
 const FILE = join(DATA, "slack.json");
 const KEYCHAIN_SERVICE = "Harmonia Slack";
@@ -34,14 +39,17 @@ const WORKING = "eyes"; // the reaction on your Slack message while a teammate w
 const MARKDOWN_BLOCK_MAX = 12_000; // Slack's limit for a markdown block
 const TEXT_MAX = 39_000; // chat.postMessage truncates text past 40,000 characters
 const PAIR_TRIES = 5; // wrong pairing codes one Slack user may send before the app stops listening to them
+const FEEDBACK = "warning"; // ⚠️: your reaction that asks for feedback on a teammate's message
+const FEEDBACK_VIEW = "harmonia:feedback"; // the feedback box (a modal)
+const ASKS_KEPT = 50; // feedback questions whose thread replies still count as feedback
 
 /** The app's name in Slack. The commands are written to it: `@Harmonia new channel …`. */
 export const APP_NAME = "Harmonia";
-const APP_LOOK = { name: APP_NAME, avatar: "🎼" };
+const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
 
 /**
  * What the app may do, as bot scopes: read and write in the conversations it's in, post under the teammates' names,
- * create channels and invite you to them, react (👀), and look up people by id or email.
+ * create channels and invite you to them, react (👀) and read your reactions, and look up people by id or email.
  */
 export const BOT_SCOPES = [
   "app_mentions:read",
@@ -58,13 +66,14 @@ export const BOT_SCOPES = [
   "im:write",
   "mpim:history",
   "mpim:read",
+  "reactions:read",
   "reactions:write",
   "users:read",
   "users:read.email",
 ];
-export const BOT_EVENTS = ["message.channels", "message.groups", "message.im", "message.mpim", "member_joined_channel"];
+export const BOT_EVENTS = ["message.channels", "message.groups", "message.im", "message.mpim", "member_joined_channel", "reaction_added", "reaction_removed"];
 
-/** The Slack app manifest: Socket Mode on, a bot you can DM, and the scopes and events above. */
+/** The Slack app manifest: Socket Mode on, a bot you can DM, buttons and boxes (interactivity), and the scopes and events above. */
 export function manifest() {
   return {
     display_information: {
@@ -81,7 +90,7 @@ export function manifest() {
     oauth_config: { scopes: { bot: BOT_SCOPES } },
     settings: {
       event_subscriptions: { bot_events: BOT_EVENTS },
-      interactivity: { is_enabled: false },
+      interactivity: { is_enabled: true },
       org_deploy_enabled: false,
       socket_mode_enabled: true,
       token_rotation_enabled: false,
@@ -102,9 +111,13 @@ type Config = {
   ownerId?: string; // the only Slack user who wakes the teammates (whoever sent the pairing code)
   ownerName?: string;
   pairCode?: string; // while nobody is paired
+  scopes?: string[]; // what the bot token was granted, last time Slack was asked
   enabled: boolean;
   createdAt: number;
 };
+
+/** A ⚠️ question in your DM: thread replies to it are feedback on that message. */
+type Ask = { channelId: string; messageId: string; at: number };
 
 /** A Slack conversation linked to a Harmonia channel. */
 export type Link = {
@@ -127,6 +140,7 @@ export type SlackView = {
   paired: boolean;
   ownerName?: string;
   pairCode?: string;
+  missingScopes: string[]; // the app was made from an older manifest: update it
   createLink: string;
 };
 
@@ -135,15 +149,25 @@ export type LinkView = { conversationId: string; kind: Link["kind"]; channelId: 
 export type SlackEvent = { type: "slack"; slack: SlackView; links: LinkView[] };
 
 type Look = { name: string; avatar: string };
+/** What a Slack message says: the teammates' Markdown, or the app's own mrkdwn text with blocks (cards, buttons). */
+type Content = { markdown: string } | { text: string; blocks: unknown[] };
 
 type Deps = {
   emit: (e: SlackEvent) => void;
-  /** Posts as you in a channel, exactly like typing it there (from Slack). */
-  post: (ch: Channel, text: string) => void;
+  /** Posts as you in a channel, exactly like typing it there (from Slack): maybe a reply to a message there. */
+  post: (ch: Channel, text: string, from: { replyTo?: string; slack: SlackRef }) => Message;
   /** Someone else's message in a linked Slack conversation: context only. */
-  guest: (ch: Channel, name: string, text: string, slackId?: string) => void;
+  guest: (ch: Channel, name: string, text: string, slackId: string | undefined, slack: SlackRef) => void;
   /** A note in a channel (from Slack, so it isn't sent back there). */
   note: (ch: Channel, text: string) => void;
+  /** Your reaction on a message (undefined takes it off), from Slack. */
+  react: (ch: Channel, m: Message, emoji: string | undefined) => void;
+  /** Your feedback on a teammate's message, as ✎ gives it (given in Slack, so it stays out of the Slack conversation). */
+  feedback: (ch: Channel, messageId: string, text: string) => string | undefined;
+  /** Approve / Deny on a teammate's tool request. */
+  decideTools: (ch: Channel, messageId: string, decision: "approved" | "denied") => string | undefined;
+  /** Allow once / always / Deny on a permission card. */
+  decide: (ch: Channel, messageId: string, decision: "once" | "always" | "denied") => void;
   /** Tells the page about a channel the bridge created. */
   channelCreated: (ch: Channel) => void;
   log: (event: string, fields?: Record<string, unknown>) => void;
@@ -173,14 +197,18 @@ export class SlackBridge {
   private lastIn = new Map<string, string>(); // Harmonia channel id → ts of your latest Slack message there
   private watching = new Map<string, { channel: string; ts: string }>(); // Harmonia channel id → the message with 👀
   private reacted = new Set<string>();
+  private threads = new Map<string, string>(); // Harmonia channel id → the Slack thread the conversation is in now
+  private cardsDone = new Set<string>(); // cards whose Slack message already says what was decided
+  private asks: Record<string, Ask>; // ts of a ⚠️ question in your DM → the message it's about
   private sending: Promise<void> = Promise.resolve();
   private inbound: Promise<unknown> = Promise.resolve(); // Slack messages are taken in one at a time, in order
   private rev = 0;
 
   constructor(private deps: Deps) {
-    const saved = readJson<{ config?: Config; links?: Record<string, Link> }>(FILE, {});
+    const saved = readJson<{ config?: Config; links?: Record<string, Link>; asks?: Record<string, Ask> }>(FILE, {});
     this.config = saved.config;
     this.links = saved.links ?? {};
+    this.asks = saved.asks ?? {};
   }
 
   /** Connects, when the app is set up and on. */
@@ -212,6 +240,7 @@ export class SlackBridge {
       paired: Boolean(c?.ownerId),
       ownerName: c?.ownerName,
       pairCode: c && !c.ownerId ? c.pairCode : undefined,
+      missingScopes: c?.scopes ? BOT_SCOPES.filter((s) => !c.scopes!.includes(s)) : [],
       createLink: CREATE_LINK,
     };
   }
@@ -233,7 +262,7 @@ export class SlackBridge {
   };
 
   private save() {
-    writeFileSync(FILE, JSON.stringify({ config: this.config, links: this.links }, null, 1), { mode: 0o600 });
+    writeFileSync(FILE, JSON.stringify({ config: this.config, links: this.links, asks: this.asks }, null, 1), { mode: 0o600 });
   }
 
   // ---------- Setup ----------
@@ -246,7 +275,7 @@ export class SlackBridge {
     if (!appToken.startsWith("xapp-")) return "The app-level token starts with xapp-. Make one under Basic Information → App-Level Tokens, with the connections:write scope.";
     let auth: any;
     try {
-      auth = await slackCall(botToken, "auth.test");
+      auth = await slackAuth(botToken);
     } catch (e: any) {
       return `Slack didn't accept the bot token: ${e.message}`;
     }
@@ -275,12 +304,28 @@ export class SlackBridge {
       ownerId: same ? was?.ownerId : undefined,
       ownerName: same ? was?.ownerName : undefined,
       pairCode: same && was?.ownerId ? undefined : newPairCode(),
+      scopes: auth.scopes,
       enabled: true,
       createdAt: same ? was!.createdAt : Date.now(),
     };
     this.save();
     await this.connect();
     this.deps.log("slack.app_connected", { team: auth.team_id, app: bot.app_id });
+  }
+
+  /** Asks Slack again what the bot token may do (after you updated the app's manifest and reinstalled it). */
+  async checkScopes(): Promise<string | undefined> {
+    if (!this.config) return "Slack isn't set up.";
+    if (!this.botToken) return "Slack isn't connected.";
+    try {
+      const auth = await slackAuth(this.botToken);
+      if (JSON.stringify(auth.scopes) === JSON.stringify(this.config.scopes)) return;
+      this.config.scopes = auth.scopes;
+      this.save();
+      this.changed();
+    } catch (e: any) {
+      return `Couldn't ask Slack: ${e.message}`;
+    }
   }
 
   setEnabled(enabled: boolean): string | undefined {
@@ -347,6 +392,7 @@ export class SlackBridge {
     );
     this.socket.start();
     this.changed();
+    void this.checkScopes();
   }
 
   private api(method: string, params: Record<string, unknown> = {}) {
@@ -357,12 +403,16 @@ export class SlackBridge {
   // ---------- Slack → Harmonia ----------
 
   private async onEnvelope(env: Envelope) {
+    // A button or a box: right away, since a box has to open within 3 s of the click.
+    if (env.type === "interactive") return this.interactive(env.payload ?? {});
     if (env.type !== "events_api") return;
     const ev = env.payload?.event;
     if (ev?.type === "member_joined_channel") return this.joined(ev);
-    if (ev?.type !== "message") return;
-    // One at a time: two quick messages in a new conversation link it once, and land in the order they were sent.
-    const next = this.inbound.then(() => this.message(ev));
+    const handle =
+      ev?.type === "message" ? () => this.message(ev) : ev?.type === "reaction_added" || ev?.type === "reaction_removed" ? () => this.reaction(ev, ev.type === "reaction_added") : undefined;
+    if (!handle) return;
+    // One at a time: two quick messages in a new conversation link it once, and everything lands in the order sent.
+    const next = this.inbound.then(handle);
     this.inbound = next.catch(() => {});
     return next;
   }
@@ -396,6 +446,10 @@ export class SlackBridge {
       this.deps.log("slack.message_refused", { user: ev.user });
       return this.say(ev.channel, `Sorry, I only work for ${USER_NAME}.`);
     }
+    // A reply in a thread: in your DM under a ⚠️ question it's feedback; anywhere else, a reply to the thread's message.
+    const thread = ev.thread_ts && ev.thread_ts !== ev.ts ? String(ev.thread_ts) : undefined;
+    const ask = dm && yours && thread ? this.asks[thread] : undefined;
+    if (ask) return this.feedbackReply(ev, raw, ask, thread!);
     if (yours && (dm || mentions(raw, c.botUserId))) {
       const cmd = parseCommand(commandText(raw));
       if (cmd) return this.command(ev, raw, cmd);
@@ -416,11 +470,165 @@ export class SlackBridge {
     const files = (ev.files ?? []).map((f: any) => f.name || f.title).filter(Boolean);
     let text = await this.chatText(raw);
     if (files.length) text = [text, `(attached in Slack: ${files.join(", ")})`].filter(Boolean).join("\n");
-    if (!text) return yours ? this.say(ev.channel, "I can only read text for now.") : undefined;
-    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user);
-    if (ch.status === "archived") return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`);
-    this.lastIn.set(ch.id, ev.ts);
-    this.deps.post(ch, text);
+    if (!text) return yours ? this.say(ev.channel, "I can only read text for now.", thread) : undefined;
+    const ref: SlackRef = { channel: ev.channel, ts: String(ev.ts), ...(thread && { thread }) };
+    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user, ref);
+    if (ch.status === "archived") return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`, thread);
+    // The answers go where you wrote: into the thread, or the channel itself.
+    if (thread) this.threads.set(ch.id, thread);
+    else this.threads.delete(ch.id);
+    this.lastIn.set(ch.id, ref.ts);
+    this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref });
+  }
+
+  /** The message here that is `ts` in a Slack conversation. */
+  private bySlack(channelId: string, conversation: string, ts: string): Message | undefined {
+    return (messages.get(channelId) ?? []).findLast((m) => m.meta?.slack?.ts === ts && m.meta.slack.channel === conversation);
+  }
+
+  // ---------- Your reactions, and ⚠️ feedback ----------
+
+  /** Your reaction on a message in a linked conversation is your reaction on it here. ⚠️ on a teammate's also asks for feedback. */
+  private async reaction(ev: any, added: boolean) {
+    const c = this.config;
+    const item = ev.item;
+    if (!c?.ownerId || ev.user !== c.ownerId || item?.type !== "message") return;
+    const link = this.links[item.channel];
+    const ch = link && channels.get(link.channelId);
+    const m = ch && this.bySlack(ch.id, item.channel, String(item.ts));
+    if (!ch || !m) return;
+    const emoji = emojiOf(String(ev.reaction));
+    if (added) {
+      this.deps.react(ch, m, emoji);
+      if (bareName(String(ev.reaction)) === FEEDBACK && teammate(m.author)) await this.askFeedback(ch, link, m);
+    } else if (m.meta?.reactions?.some((x) => x.by === "user" && x.emoji === emoji)) this.deps.react(ch, m, undefined);
+  }
+
+  /** A DM asking how a teammate's message can be improved: its thread replies, or the box behind its button, are feedback. */
+  private async askFeedback(ch: Channel, link: Link, m: Message) {
+    const dm = await this.api("conversations.open", { users: this.config!.ownerId }).then(
+      (j) => String(j.channel.id),
+      (e) => void this.deps.log("slack.feedback_dm_failed", { error: e.message }),
+    );
+    if (!dm) return;
+    const name = escapeSlack(nameOf(m.author));
+    const text = [
+      `:warning: How can *${name}*'s message ${link.conversationId === dm ? "here" : `in <#${link.conversationId}>`} be improved?`,
+      quote(relayText(m) ?? m.text),
+      `Reply in this thread, or press *Write feedback*. ${name} works out how its rules led to that message and amends them, like ✎ in Harmonia.`,
+    ].join("\n");
+    const blocks = [section(text), { type: "actions", elements: [button("Write feedback", `${FEEDBACK_VIEW}:open`, target(ch, m), "primary")] }];
+    const r = await this.queue(() => this.api("chat.postMessage", { channel: dm, text, blocks, unfurl_links: false }), dm);
+    if (!r?.ts) return;
+    this.asks[String(r.ts)] = { channelId: ch.id, messageId: m.id, at: Date.now() };
+    for (const [ts] of Object.entries(this.asks).sort(([, a], [, b]) => b.at - a.at).slice(ASKS_KEPT)) delete this.asks[ts];
+    this.save();
+    this.deps.log("slack.feedback_asked", { channelId: ch.id, messageId: m.id });
+  }
+
+  private async feedbackReply(ev: any, raw: string, ask: Ask, thread: string) {
+    const text = await this.chatText(raw);
+    this.say(ev.channel, text ? this.giveFeedback(ask.channelId, ask.messageId, text) : "I can only read text for now.", thread);
+  }
+
+  /** Feedback on a teammate's message, as ✎ gives it in the app. Returns what to tell you. */
+  private giveFeedback(channelId: string, messageId: string, text: string): string {
+    const ch = channels.get(channelId);
+    const m = ch && messages.get(ch.id)?.find((x) => x.id === messageId);
+    if (!ch || !m) return "That message is gone from Harmonia.";
+    if (ch.status === "archived") return `#${ch.name} is archived in Harmonia. Unarchive it there, then try again.`;
+    if (text.length > 4000) return "Feedback is up to 4000 characters.";
+    const err = this.deps.feedback(ch, messageId, text);
+    return err ? `Couldn't send it: ${err}` : `:white_check_mark: Sent to ${escapeSlack(nameOf(m.author))}. It's amending its rules: its job shows in #${escapeSlack(ch.name)}.`;
+  }
+
+  // ---------- Buttons and boxes ----------
+
+  private async interactive(p: any) {
+    const c = this.config;
+    if (!c) return;
+    const user = p.user?.id;
+    if (p.type === "view_submission" && p.view?.callback_id === FEEDBACK_VIEW) {
+      if (user !== c.ownerId) return;
+      const at = parse(p.view.private_metadata);
+      const text = String(p.view.state?.values?.feedback?.text?.value ?? "").trim();
+      if (!text) return;
+      const said = this.giveFeedback(at.c, at.m, text);
+      if (at.dm) this.say(at.dm, said, at.ts);
+      return;
+    }
+    if (p.type !== "block_actions") return;
+    const where = p.channel?.id ?? p.container?.channel_id;
+    for (const a of p.actions ?? []) {
+      const [ns, kind, choice] = String(a.action_id ?? "").split(":");
+      if (ns !== "harmonia") continue;
+      if (user !== c.ownerId) {
+        this.ephemeral(where, user, `Only ${USER_NAME} can do that.`);
+        continue;
+      }
+      const t = parse(a.value);
+      const ch = channels.get(t.c);
+      if (!ch) {
+        this.ephemeral(where, user, "That channel is gone from Harmonia.");
+        continue;
+      }
+      if (kind === "feedback") {
+        await this.openFeedback(p.trigger_id, ch, t.m, { dm: where, ts: p.message?.ts ?? p.container?.message_ts });
+        continue;
+      }
+      if (ch.status === "archived") {
+        this.ephemeral(where, user, `#${ch.name} is archived in Harmonia. Unarchive it there first.`);
+        continue;
+      }
+      let err: string | undefined;
+      if (kind === "tools" && (choice === "approved" || choice === "denied")) err = this.deps.decideTools(ch, t.m, choice);
+      else if (kind === "perm" && (choice === "once" || choice === "always" || choice === "denied")) {
+        const m = messages.get(ch.id)?.find((x) => x.id === t.m);
+        if (!m?.meta?.permission) err = "That request is gone.";
+        else if (m.meta.permission.status !== "pending") err = "Already decided.";
+        else this.deps.decide(ch, t.m, choice);
+      } else continue;
+      if (err) this.ephemeral(where, user, err);
+      this.deps.log("slack.decided", { kind, choice, error: err });
+    }
+  }
+
+  /** The feedback box, like ✎'s in the app. */
+  private async openFeedback(trigger: string, ch: Channel, messageId: string, origin: { dm?: string; ts?: string }) {
+    const m = messages.get(ch.id)?.find((x) => x.id === messageId);
+    if (!m || !teammate(m.author)) return this.ephemeral(origin.dm, this.config?.ownerId, "That message is gone from Harmonia.");
+    const name = nameOf(m.author);
+    try {
+      await this.api("views.open", {
+        trigger_id: trigger,
+        view: {
+          type: "modal",
+          callback_id: FEEDBACK_VIEW,
+          private_metadata: JSON.stringify({ c: ch.id, m: m.id, ...origin }),
+          title: plain(`Feedback for ${name}`.slice(0, 24)),
+          submit: plain("Send"),
+          close: plain("Cancel"),
+          blocks: [
+            section(`*${escapeSlack(name)}* in #${escapeSlack(ch.name)}:\n${quote(relayText(m) ?? m.text)}`),
+            {
+              type: "input",
+              block_id: "feedback",
+              label: plain("How can it be improved?"),
+              hint: plain(`${name} works out how its rules led to this message and amends them.`),
+              element: { type: "plain_text_input", action_id: "text", multiline: true, max_length: 4000, focus_on_load: true },
+            },
+          ],
+        },
+      });
+    } catch (e: any) {
+      this.deps.log("slack.feedback_box_failed", { error: e.message });
+      if (origin.dm) this.say(origin.dm, `Couldn't open the box (${e.code ?? e.message}). Reply in this thread instead.`, origin.ts);
+    }
+  }
+
+  /** A note only `user` sees, in that conversation. */
+  private ephemeral(channel: string | undefined, user: string | undefined, text: string) {
+    if (channel && user) void this.queue(() => this.api("chat.postEphemeral", { channel, user, text }), channel);
   }
 
   /** Nobody is paired yet: the first person to DM the pairing code becomes the one the teammates work for. */
@@ -550,11 +758,9 @@ export class SlackBridge {
     this.links[link.conversationId] = link;
     this.save();
     this.changed();
-    this.postAs(
-      undefined,
-      link.conversationId,
-      `This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${cmd.private ? " Only the people in it see it." : ""}`,
-    );
+    this.postAs(undefined, link.conversationId, {
+      markdown: `This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${cmd.private ? " Only the people in it see it." : ""}`,
+    });
     this.deps.note(ch, `Created from Slack: the ${cmd.private ? "private " : ""}channel #${name}, linked to this channel.`);
     if (inviteError) this.deps.note(ch, `Couldn't invite everyone to #${name} in Slack: ${inviteError}`);
     this.say(ev.channel, `Created <#${made.id}>, linked to *#${ch.name}* in Harmonia.${inviteError ? ` I couldn't invite everyone: ${inviteError}` : ""}`);
@@ -567,20 +773,43 @@ export class SlackBridge {
   onEvent(e: Event) {
     if (!this.config?.enabled || !this.botToken || !("channelId" in e)) return;
     const link = Object.values(this.links).find((l) => l.channelId === e.channelId);
-    if (!link) return;
+    const ch = link && channels.get(link.channelId);
+    if (!link || !ch) return;
     if (e.type === "activity") return this.activity(link, e.agentId, e.status);
-    if (e.type === "update") return this.reactions(link, e.message);
+    if (e.type === "update") return this.updated(link, ch, e.message);
     if (e.type !== "message") return;
     const m = e.message;
     if (m.meta?.via === "slack" || m.author === "guest") return;
+    const ref = { channelId: ch.id, message: m };
     if (m.author === "user") {
-      this.lastIn.delete(link.channelId); // you're writing in the app now: 👀 goes on nothing in Slack
-      return this.postAs({ name: `${USER_NAME} (in Harmonia)`, avatar: "👤" }, link.conversationId, m.text);
+      // Typed in the app. A reply to a message that's in Slack goes into its thread, and the answers follow.
+      const to = m.meta?.replyTo && messages.get(ch.id)?.find((x) => x.id === m.meta!.replyTo!.id)?.meta?.slack;
+      const root = to && to.channel === link.conversationId ? (to.thread ?? to.ts) : undefined;
+      if (root) this.threads.set(ch.id, root);
+      else this.threads.delete(ch.id);
+      this.lastIn.delete(ch.id); // you're writing in the app now: 👀 goes on nothing in Slack
+      return this.postAs(USER_LOOK, link.conversationId, { markdown: m.text }, { thread: root, ref });
     }
-    if (m.author === "system") return this.postAs(undefined, link.conversationId, `_${m.text}_`);
+    const thread = this.threads.get(ch.id);
+    if (m.author === "system") return this.postAs(undefined, link.conversationId, { markdown: `_${m.text}_` }, { thread, ref });
     const t = teammate(m.author);
-    const text = t && relayText(m);
-    if (t && text) this.postAs(t, link.conversationId, text);
+    if (!t) return;
+    const text = relayText(m, ch);
+    const content: Content | undefined = card(m, ch) ?? (text ? { markdown: text } : undefined);
+    if (content) this.postAs(t, link.conversationId, content, { thread, ref });
+  }
+
+  /** A message changed: a teammate's emoji on yours, or a card that's decided now (here or by its buttons). */
+  private updated(link: Link, ch: Channel, m: Message) {
+    this.reactions(link, m);
+    const decided = m.kind === "tools" ? m.meta?.toolRequest?.status !== "pending" : m.kind === "permission" ? m.meta?.permission?.status !== "pending" : false;
+    if (!decided || this.cardsDone.has(m.id)) return;
+    this.cardsDone.add(m.id);
+    void this.queue(async () => {
+      const at = m.meta?.slack; // read now: the card itself may have been posted only just before
+      const c = card(m, ch);
+      if (at && c) await this.api("chat.update", { channel: at.channel, ts: at.ts, ...c });
+    }, link.conversationId);
   }
 
   /** 👀 on your latest Slack message while any teammate works in the channel. */
@@ -613,55 +842,70 @@ export class SlackBridge {
       const t = teammate(x.by);
       if (!t || this.reacted.has(key)) continue;
       this.reacted.add(key);
-      this.postAs(t, link.conversationId, x.emoji);
+      this.postAs(t, link.conversationId, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
     }
   }
 
   /**
    * A message in Slack under a teammate's name and emoji (chat:write.customize), or as the app itself (`look`
-   * undefined). The teammates write Markdown: it goes in a markdown block, with a mrkdwn copy as the notification text.
+   * undefined), in a thread or not. The teammates write Markdown: it goes in a markdown block, with a mrkdwn copy as
+   * the notification text. `ref`: the message here, which keeps the Slack ts (for replies, reactions and its card).
    */
-  private postAs(look: Look | undefined, channel: string, markdown: string) {
+  private postAs(look: Look | undefined, channel: string, content: Content, opts: { thread?: string; ref?: { channelId: string; message: Message } } = {}) {
     const icon = look && slackEmoji(look.avatar);
+    const md = "markdown" in content ? content.markdown : undefined;
     const params: Record<string, unknown> = {
       channel,
-      text: mrkdwn(markdown).slice(0, TEXT_MAX),
+      ...(md === undefined
+        ? { text: (content as { text: string }).text.slice(0, TEXT_MAX), blocks: (content as { blocks: unknown[] }).blocks }
+        : { text: mrkdwn(md).slice(0, TEXT_MAX), ...(md.length <= MARKDOWN_BLOCK_MAX && { blocks: [{ type: "markdown", text: md }] }) }),
+      ...(opts.thread && { thread_ts: opts.thread }),
       unfurl_links: false,
       unfurl_media: false,
       ...(look && { username: icon ? look.name : `${look.avatar} ${look.name}`.trim(), ...(icon && { icon_emoji: `:${icon}:` }) }),
-      ...(markdown.length <= MARKDOWN_BLOCK_MAX && { blocks: [{ type: "markdown", text: markdown }] }),
     };
     return this.queue(async () => {
+      let r: any;
       try {
-        await this.api("chat.postMessage", params);
+        r = await this.api("chat.postMessage", params);
       } catch (e) {
         // A workspace or client that won't take the markdown block gets the mrkdwn text alone.
-        if (!(e instanceof SlackError && e.code === "invalid_blocks" && params.blocks)) throw e;
+        if (!(e instanceof SlackError && e.code === "invalid_blocks" && md !== undefined && params.blocks)) throw e;
         delete params.blocks;
-        await this.api("chat.postMessage", params);
+        r = await this.api("chat.postMessage", params);
+      }
+      if (opts.ref && r?.ts) {
+        (opts.ref.message.meta ??= {}).slack = { channel, ts: String(r.ts), ...(opts.thread && { thread: opts.thread }) };
+        saveMessages(opts.ref.channelId);
       }
     }, channel);
   }
 
-  /** The app's own words, in Slack's mrkdwn. */
-  private say(channel: string, text: string) {
-    return this.queue(() => this.api("chat.postMessage", { channel, text, unfurl_links: false }), channel);
+  /** The app's own words, in Slack's mrkdwn (in a thread when `thread` is set). */
+  private say(channel: string, text: string, thread?: string) {
+    return this.queue(() => this.api("chat.postMessage", { channel, text, unfurl_links: false, ...(thread && { thread_ts: thread }) }), channel);
   }
 
-  /** One call at a time, so messages arrive in order; a failed one is retried a few times unless Slack said no for good. */
-  private queue(fn: () => Promise<unknown>, where: string): Promise<void> {
-    this.sending = this.sending.then(async () => {
+  /**
+   * One call at a time, so messages arrive in order; a failed one is retried a few times unless Slack said no for good.
+   * Resolves with what the call returned, or undefined when it failed.
+   */
+  private queue<T>(fn: () => Promise<T>, where: string): Promise<T | undefined> {
+    const run = this.sending.then(async () => {
       for (let i = 0; ; i++) {
         try {
-          await fn();
-          return;
+          return await fn();
         } catch (err: any) {
-          if (i >= SEND_RETRIES.length || !retryable(err)) return this.deps.log("slack.send_failed", { channel: where, error: err?.message });
+          if (i >= SEND_RETRIES.length || !retryable(err)) {
+            this.deps.log("slack.send_failed", { channel: where, error: err?.message });
+            return undefined;
+          }
           await Bun.sleep(SEND_RETRIES[i]);
         }
       }
     });
-    return this.sending;
+    this.sending = run.then(() => {});
+    return run;
   }
 }
 
@@ -684,6 +928,62 @@ function retryable(e: unknown) {
 }
 
 const newPairCode = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+
+const parse = (json: unknown): Record<string, any> => {
+  try {
+    return JSON.parse(String(json ?? "{}")) ?? {};
+  } catch {
+    return {};
+  }
+};
+
+// Block Kit pieces.
+const plain = (text: string) => ({ type: "plain_text", text });
+const section = (mrkdwnText: string) => ({ type: "section", text: { type: "mrkdwn", text: mrkdwnText.slice(0, 3000) } });
+const button = (label: string, action_id: string, value: string, style?: "primary" | "danger") => ({ type: "button", text: plain(label.slice(0, 75)), action_id, value, ...(style && { style }) });
+/** What a button acts on: a message in a Harmonia channel. */
+const target = (ch: Channel, m: Message) => JSON.stringify({ c: ch.id, m: m.id });
+
+/** Text as a Slack quote: its first lines, clipped. */
+function quote(text: string): string {
+  const t = text.trim();
+  return escapeSlack(t.length > 500 ? t.slice(0, 499) + "…" : t)
+    .split("\n")
+    .slice(0, 12)
+    .map((l) => `>${l}`)
+    .join("\n");
+}
+
+/**
+ * A teammate's tool request (a connector it lacks) or permission card, as a Slack message: Approve / Deny (or Allow
+ * once / always / Deny) buttons while it's pending, what was decided once it isn't. Undefined for anything else.
+ */
+export function card(m: Message, ch: Channel): { text: string; blocks: unknown[] } | undefined {
+  const name = escapeSlack(nameOf(m.author));
+  const value = target(ch, m);
+  const r = m.kind === "tools" ? m.meta?.toolRequest : undefined;
+  if (r) {
+    const one = r.tools.length === 1;
+    const text = `:toolbox: *${name}* asks for ${one ? "a new tool" : "new tools"}: ${r.tools.map((t) => `\`${escapeSlack(t.name)}\``).join(", ")}${r.reason ? `\n${quote(r.reason)}` : ""}`;
+    const done = r.status === "approved" ? `:white_check_mark: Approved: ${name} has ${one ? "it" : "them"} from now on` : r.status === "denied" ? ":no_entry_sign: Denied" : undefined;
+    return decided(text, done, [button("Approve", "harmonia:tools:approved", value, "primary"), button("Deny", "harmonia:tools:denied", value)]);
+  }
+  const p = m.kind === "permission" ? m.meta?.permission : undefined;
+  if (p) {
+    const text = `:closed_lock_with_key: *${name}*${p.jobId ? `'s job ${escapeSlack(p.jobId)}` : ""} wants to use ${escapeSlack(p.tool)}\n\`${escapeSlack(p.summary)}\``;
+    const done = { pending: undefined, once: ":white_check_mark: Allowed once", always: `:white_check_mark: Allowed in #${escapeSlack(ch.name)}`, denied: ":no_entry_sign: Denied" }[p.status];
+    return decided(text, done, [
+      button("Allow once", "harmonia:perm:once", value, "primary"),
+      button(`Always in #${ch.name}`, "harmonia:perm:always", value),
+      button("Deny", "harmonia:perm:denied", value),
+    ]);
+  }
+}
+
+const decided = (text: string, done: string | undefined, buttons: unknown[]) => ({
+  text: done ? `${text}\n${done}` : text,
+  blocks: [section(text), done ? { type: "context", elements: [{ type: "mrkdwn", text: done }] } : { type: "actions", elements: buttons }],
+});
 
 export type Command = { kind: "help" } | { kind: "newChannel"; name: string; private: boolean };
 
@@ -718,16 +1018,21 @@ export function slackChannelName(name: string): string {
     .replace(/[-_]+$/, "");
 }
 
-/** What a Harmonia message says in Slack (under its teammate's name), or undefined when it stays in the app. */
-export function relayText(m: Message): string | undefined {
+/**
+ * What a Harmonia message says in Slack (under its teammate's name), or undefined when it stays in the app. A feedback
+ * job's card doesn't quote the feedback (its title does): you may have given it in a DM, and the channel may be shared.
+ */
+export function relayText(m: Message, ch?: Channel): string | undefined {
   if (m.author === "user" || m.author === "guest") return undefined;
   if (m.author === "system") return `_${m.text}_`;
   const name = nameOf(m.author);
   switch (m.kind ?? "text") {
     case "text":
       return m.text.trim() ? m.text : undefined;
-    case "job":
-      return `🛠️ ${name} ${m.text}`;
+    case "job": {
+      const job = ch?.jobs.find((j) => j.id === m.meta?.jobId);
+      return job?.feedback ? `🛠️ ${name} is amending its rules from ${USER_NAME}'s feedback (job ${job.id})` : `🛠️ ${name} ${m.text}`;
+    }
     case "error":
       return `⚠️ ${m.text}`;
     case "permission":
@@ -793,8 +1098,7 @@ export function mrkdwn(md: string): string {
 const bare = (e: string) => e.replace(/[\u{1F3FB}-\u{1F3FF}️]/gu, "");
 
 /** Slack's names for emoji a teammate might have as its avatar (icon_emoji takes a name, not the emoji). */
-const SLACK_EMOJI = new Map(
-  Object.entries({
+const AVATAR_NAMES: Record<string, string> = {
     "🎼": "musical_score", "👤": "bust_in_silhouette", "🤖": "robot_face",
     "🧙": "mage", "🧙‍♂️": "male_mage", "🧙‍♀️": "female_mage",
     "🧑‍🎨": "artist", "👨‍🎨": "male-artist", "👩‍🎨": "female-artist",
@@ -817,11 +1121,64 @@ const SLACK_EMOJI = new Map(
     "🧠": "brain", "🔍": "mag", "🛠️": "hammer_and_wrench", "📅": "date", "📝": "memo", "💡": "bulb", "🚀": "rocket",
     "⭐": "star", "🔥": "fire", "🎨": "art", "🧪": "test_tube", "📊": "bar_chart", "💼": "briefcase", "🎯": "dart",
     "🧩": "jigsaw", "👻": "ghost", "👽": "alien", "😎": "sunglasses", "🤓": "nerd_face", "🙂": "slightly_smiling_face",
-  }).map(([emoji, name]) => [bare(emoji), name]),
-);
+};
+const SLACK_EMOJI = new Map(Object.entries(AVATAR_NAMES).map(([emoji, name]) => [bare(emoji), name]));
 
 /** The Slack emoji name for an avatar, when there's one. */
 export const slackEmoji = (avatar: string) => SLACK_EMOJI.get(bare(avatar.trim()));
+
+/** The emoji behind Slack's names for the reactions people use most (and the avatars above). */
+const REACTION_EMOJI = new Map<string, string>([
+  ...Object.entries(AVATAR_NAMES).map(([emoji, name]) => [name, emoji] as [string, string]),
+  ...Object.entries({
+    "+1": "👍", thumbsup: "👍", "-1": "👎", thumbsdown: "👎", ok_hand: "👌", clap: "👏", raised_hands: "🙌", pray: "🙏",
+    muscle: "💪", wave: "👋", point_up: "☝️", point_up_2: "👆", point_down: "👇", point_left: "👈", point_right: "👉",
+    crossed_fingers: "🤞", hand_with_index_and_middle_fingers_crossed: "🤞", v: "✌️", handshake: "🤝", open_hands: "👐",
+    raised_hand: "✋", hand: "✋", writing_hand: "✍️", eyes: "👀", brain: "🧠",
+    heart: "❤️", orange_heart: "🧡", yellow_heart: "💛", green_heart: "💚", blue_heart: "💙", purple_heart: "💜",
+    black_heart: "🖤", white_heart: "🤍", broken_heart: "💔", two_hearts: "💕", sparkling_heart: "💖", heart_eyes: "😍",
+    smile: "😄", smiley: "😃", grinning: "😀", grin: "😁", laughing: "😆", satisfied: "😆", joy: "😂", rolling_on_the_floor_laughing: "🤣",
+    sweat_smile: "😅", blush: "😊", wink: "😉", upside_down_face: "🙃", relieved: "😌", innocent: "😇", star_struck: "🤩",
+    "star-struck": "🤩", partying_face: "🥳", hugging_face: "🤗", thinking_face: "🤔", face_with_monocle: "🧐",
+    face_with_raised_eyebrow: "🤨", raised_eyebrow: "🤨", neutral_face: "😐", expressionless: "😑", no_mouth: "😶",
+    face_with_rolling_eyes: "🙄", smirk: "😏", grimacing: "😬", confused: "😕", worried: "😟", slightly_frowning_face: "🙁",
+    disappointed: "😞", pensive: "😔", cry: "😢", sob: "😭", scream: "😱", fearful: "😨", cold_sweat: "😰", sweat: "😓",
+    flushed: "😳", exploding_head: "🤯", rage: "😡", angry: "😠", triumph: "😤", sleeping: "😴", sleepy: "😪", mask: "😷",
+    zipper_mouth_face: "🤐", shushing_face: "🤫", face_palm: "🤦", facepalm: "🤦", shrug: "🤷", skull: "💀", poop: "💩",
+    hankey: "💩", clown_face: "🤡", see_no_evil: "🙈", hear_no_evil: "🙉", speak_no_evil: "🙊",
+    "100": "💯", sparkles: "✨", star2: "🌟", dizzy: "💫", zap: "⚡", boom: "💥", collision: "💥", tada: "🎉",
+    confetti_ball: "🎊", balloon: "🎈", gift: "🎁", trophy: "🏆", sports_medal: "🏅", first_place_medal: "🥇",
+    pencil2: "✏️", pencil: "📝", pushpin: "📌", round_pushpin: "📍", paperclip: "📎", link: "🔗", lock: "🔒", unlock: "🔓",
+    key: "🔑", wrench: "🔧", hammer: "🔨", gear: "⚙️", bug: "🐛", chart_with_upwards_trend: "📈",
+    chart_with_downwards_trend: "📉", calendar: "📆", spiral_calendar_pad: "🗓️", alarm_clock: "⏰", hourglass: "⌛",
+    hourglass_flowing_sand: "⏳", stopwatch: "⏱️", white_check_mark: "✅", heavy_check_mark: "✔️", ballot_box_with_check: "☑️",
+    x: "❌", heavy_multiplication_x: "✖️", negative_squared_cross_mark: "❎", warning: "⚠️", no_entry: "⛔",
+    no_entry_sign: "🚫", octagonal_sign: "🛑", stop_sign: "🛑", exclamation: "❗", heavy_exclamation_mark: "❗",
+    question: "❓", grey_question: "❔", grey_exclamation: "❕", bangbang: "‼️", interrobang: "⁉️", heavy_plus_sign: "➕",
+    heavy_minus_sign: "➖", arrow_up: "⬆️", arrow_down: "⬇️", arrow_right: "➡️", arrow_left: "⬅️", arrows_counterclockwise: "🔄",
+    repeat: "🔁", recycle: "♻️", red_circle: "🔴", large_orange_circle: "🟠", large_yellow_circle: "🟡",
+    large_green_circle: "🟢", large_blue_circle: "🔵", large_purple_circle: "🟣", white_circle: "⚪", black_circle: "⚫",
+    speech_balloon: "💬", thought_balloon: "💭", email: "📧", envelope: "✉️", inbox_tray: "📥", outbox_tray: "📤",
+    package: "📦", coffee: "☕", tea: "🍵", beer: "🍺", beers: "🍻", clinking_glasses: "🥂", pizza: "🍕", cake: "🍰",
+    birthday: "🎂", cookie: "🍪", popcorn: "🍿", sunny: "☀️", rainbow: "🌈", cloud: "☁️", snowflake: "❄️", umbrella: "☔",
+    earth_americas: "🌎", musical_note: "🎵", notes: "🎶", camera: "📷", computer: "💻", keyboard: "⌨️", iphone: "📱",
+    moneybag: "💰", dollar: "💵", money_with_wings: "💸", shield: "🛡️", crown: "👑", gem: "💎", rose: "🌹", seedling: "🌱",
+    herb: "🌿", four_leaf_clover: "🍀", cactus: "🌵", turtle: "🐢", snail: "🐌", sloth: "🦥", ok: "🆗", new: "🆕", cool: "🆒",
+    sos: "🆘", up: "🆙", soon: "🔜", top: "🔝", heavy_dollar_sign: "💲", hammer_and_wrench: "🛠️", date: "📅", memo: "📝",
+  }),
+]);
+
+/** A reaction's name without its skin tone ("+1::skin-tone-3" → "+1"). */
+const bareName = (name: string) => name.replace(/::skin-tone-\d$/, "");
+
+/** The emoji for a Slack reaction name (with its skin tone, for a one-character emoji), or :name: for one it doesn't know (a custom emoji). */
+export function emojiOf(name: string): string {
+  const base = REACTION_EMOJI.get(bareName(name));
+  if (!base) return `:${bareName(name)}:`;
+  const tone = name.match(/::skin-tone-([2-6])$/);
+  const single = base.replace(/\uFE0F/g, "");
+  return tone && [...single].length === 1 ? single + String.fromCodePoint(0x1f3fb + Number(tone[1]) - 2) : base;
+}
 
 // ---------- The tokens: the Keychain on the Mac, a private file elsewhere ----------
 

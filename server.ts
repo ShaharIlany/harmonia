@@ -9,7 +9,7 @@ import type { ServerWebSocket } from "bun";
 import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Message } from "./store";
+import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Channel, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
@@ -41,12 +41,24 @@ const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROST
 mkdirSync(TEAM_AGENTS, { recursive: true });
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
 
+/** Your reaction on a message (one at a time, like a teammate's), or none. From the page, or from Slack. */
+function setReaction(ch: Channel, msg: Message, emoji: string | undefined) {
+  msg.meta ??= {};
+  msg.meta.reactions = [...(msg.meta.reactions ?? []).filter((x) => x.by !== "user"), ...(emoji ? [{ by: "user", emoji }] : [])];
+  saveMessages(ch.id);
+  broadcast({ type: "update", channelId: ch.id, message: msg });
+}
+
 // Slack (slack.ts): one Slack app the teammates talk through, your DM with it, and linked channels and group DMs.
 const slack = new SlackBridge({
   emit: broadcast,
-  post: (ch, text) => team.userMessage(ch, text, undefined, { via: "slack" }),
-  guest: (ch, name, text, slackId) => team.guestMessage(ch, name, text, slackId),
+  post: (ch, text, from) => team.userMessage(ch, text, from.replyTo, { via: "slack", slack: from.slack }),
+  guest: (ch, name, text, slackId, ref) => team.guestMessage(ch, name, text, slackId, ref),
   note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "slack" } }),
+  react: setReaction,
+  feedback: (ch, messageId, text) => team.feedback(ch, messageId, text, { via: "slack" }),
+  decideTools: (ch, messageId, decision) => team.decideTools(ch, messageId, decision),
+  decide: (ch, messageId, decision) => team.decide(ch, messageId, decision),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
 });
@@ -169,7 +181,7 @@ Bun.serve({
     }
 
     // A chat session's job tools (job-tools.ts) call back here, with a token that's only good for that turn.
-    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|stop_job)$/);
+    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|stop_job|request_tool)$/);
     if (turn && req.method === "POST") {
       const r = team.turnTool(turn[1], turn[2], await req.json().catch(() => ({})));
       return r.error ? json({ error: r.error }, 403) : json({ text: r.text });
@@ -211,7 +223,7 @@ Bun.serve({
       // ----- Slack -----
       const slackState = () => ({ slack: slack.status(), links: slack.linkViews() });
       if (p === "/api/slack" && !post) return json(slackState());
-      const sa = p.match(/^\/api\/slack\/(connect|enabled|remove|repair|unlink)$/);
+      const sa = p.match(/^\/api\/slack\/(connect|enabled|remove|repair|unlink|check)$/);
       if (sa && post) {
         let err: string | undefined;
         try {
@@ -219,6 +231,7 @@ Bun.serve({
           else if (sa[1] === "enabled") err = slack.setEnabled(Boolean(body.enabled));
           else if (sa[1] === "repair") err = slack.repair();
           else if (sa[1] === "unlink") err = slack.unlink(String(body.conversationId ?? ""));
+          else if (sa[1] === "check") err = await slack.checkScopes();
           else err = await slack.remove();
         } catch (e) {
           err = (e as Error).message;
@@ -337,10 +350,7 @@ Bun.serve({
         if (!msg) return json({ error: "No such message." }, 404);
         if (!emoji || emoji.length > 16 || /[\w\s<>]/.test(emoji)) return json({ error: "That isn't an emoji." }, 400);
         const mine = msg.meta?.reactions?.find((x) => x.by === "user");
-        msg.meta ??= {};
-        msg.meta.reactions = [...(msg.meta.reactions ?? []).filter((x) => x.by !== "user"), ...(mine?.emoji === emoji ? [] : [{ by: "user", emoji }])];
-        saveMessages(ch.id);
-        broadcast({ type: "update", channelId: ch.id, message: msg });
+        setReaction(ch, msg, mine?.emoji === emoji ? undefined : emoji);
         return json({ ok: true });
       }
       if (m[2] === "stop" && post) {

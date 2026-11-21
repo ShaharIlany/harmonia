@@ -43,6 +43,17 @@ export const isAuthError = (e: unknown) => e instanceof SlackError && AUTH_ERROR
 
 /** A Web API call. Objects and arrays (blocks, say) are sent as JSON strings, as Slack expects in a form body. */
 export async function slackCall(token: string, method: string, params: Record<string, unknown> = {}): Promise<any> {
+  return (await request(token, method, params)).json;
+}
+
+/** auth.test, plus the scopes the token was granted (Slack lists them in a header). */
+export async function slackAuth(token: string): Promise<any> {
+  const { json, headers } = await request(token, "auth.test");
+  const scopes = headers.get("x-oauth-scopes");
+  return { ...json, scopes: scopes === null ? undefined : scopes.split(",").map((s) => s.trim()).filter(Boolean) };
+}
+
+async function request(token: string, method: string, params: Record<string, unknown> = {}): Promise<{ json: any; headers: Headers }> {
   const body = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) body.set(k, typeof v === "string" ? v : JSON.stringify(v));
   for (let attempt = 0; ; attempt++) {
@@ -57,7 +68,7 @@ export async function slackCall(token: string, method: string, params: Record<st
       const code = String(j.error ?? "unknown_error");
       throw new SlackError(code, `Slack refused ${method}: ${code}${j.needed ? ` (the app needs the ${j.needed} scope)` : ""}`);
     }
-    return j;
+    return { json: j, headers: r.headers };
   }
 }
 
