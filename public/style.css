@@ -651,3 +651,6 @@ a.btn.primary { color: #fff; }
 .sk-pair .hint { flex: 1; min-width: 200px; margin: 0; }
 #slack-view .row-btns { margin-top: 10px; }
 #sk-body { display: flex; flex-direction: column; gap: 16px; }
+.sk-update { border-color: color-mix(in srgb, #e8912d 55%, var(--line)); }
+.sk-update .btn { padding-block: 2px; }
+.sk-manifest { width: 100%; min-height: 220px; margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }

@@ -322,11 +322,32 @@ Jobs and memories stay.
     write there: the first time, it's linked to a new channel here
     (`#slack-<name>`). Each teammate answers under its own name and emoji
     (`chat:write.customize`: the avatar's Slack emoji when it has one, else the
-    avatar goes before the name). Answers, job starts, errors and anything
-    waiting for your OK go to Slack as new messages, not thread replies; the
+    avatar goes before the name). Answers, job starts and errors go to Slack
+    where you last wrote: in the channel, or in the thread you replied in; the
     5-minute job status updates stay here. The teammates' Markdown goes in a
     Slack markdown block. What you type in the app goes to Slack as "Alex (in
     Harmonia)". While a teammate works on your Slack message, it carries 👀.
+  - **Replies:** reply in a Slack thread to a message and it's a reply to that
+    message here: a reply to a teammate goes straight to them (no Mozart), and
+    the answers come back in the thread. A reply you type in the app goes in
+    that message's Slack thread. Every message keeps its Slack ts
+    (`meta.slack`) for this.
+  - **Reactions:** your reaction on a message in Slack is your reaction on it
+    here, and taking it off takes it off (one at a time, as in the app; a
+    custom emoji shows as `:name:`). Other people's reactions aren't read.
+  - **⚠️ feedback:** react ⚠️ to a teammate's message and Harmonia DMs you:
+    "How can Leo's message be improved?", quoting it. Answer in that DM's
+    thread, or press **Write feedback** for a box. Either way it's the same as
+    ✎ in the app: a feedback job in which the teammate amends its rules. The
+    feedback stays out of the Slack channel (shared channels have other people
+    in them), and the job's card there says only that the teammate is
+    amending its rules.
+  - **Requests with buttons:** when a teammate asks for a tool it doesn't have
+    (a connector, through `request_tool`), its message in Slack has
+    **Approve** / **Deny**; a permission card has **Allow once** / **Always in
+    #channel** / **Deny**. Only your clicks count (anyone else gets a note only
+    they see). Decide in Slack or in the app: the Slack message then says what
+    you chose, without the buttons.
   - **Only you wake the teammates.** Other people's messages in a linked
     channel show here as "Bob · in Slack", and the teammates and Mozart read
     them as context, but they never wake anyone: the teammates can read your
@@ -342,9 +363,13 @@ Jobs and memories stay.
   - Messages from Slack are read as text: mentions become `@Name`, and links
     their label and address. Files stay in Slack (the teammates see their
     names). The Slack page lists the linked conversations, with **Unlink**.
-    `slack.json` in the data folder holds the workspace, who the app works for
-    and the links; the tokens are in the Keychain (`Harmonia Slack`; off a Mac,
-    `slack-secrets.json` in the data folder, readable only by you).
+    `slack.json` in the data folder holds the workspace, who the app works for,
+    the links and the open ⚠️ questions; the tokens are in the Keychain
+    (`Harmonia Slack`; off a Mac, `slack-secrets.json` in the data folder,
+    readable only by you).
+  - **An app made from an older manifest** (before reactions and buttons) is
+    missing scopes: the Slack page notices and shows how to update it (paste
+    the new manifest in the app's **App Manifest** page, then reinstall it).
 
 ## Files
 
@@ -370,7 +395,7 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, the teammates' names and emoji, 👀, `new channel` |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, the teammates' names and emoji, threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel` |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |

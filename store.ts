@@ -11,6 +11,7 @@ export type Message = {
   meta?: {
     guest?: { name: string; slackId?: string; aadId?: string }; // author "guest": who wrote it (aadId: in Microsoft Teams, before the Slack bridge)
     via?: "slack" | "teams"; // written in Slack (so the bridge doesn't send it back there), or in Microsoft Teams before it
+    slack?: SlackRef; // the same message in the linked Slack conversation (for replies, reactions and cards there)
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
@@ -39,6 +40,9 @@ export type Message = {
   };
 };
 
+/** A message in Slack: its conversation, its ts, and the thread it's in (the thread's first message), if any. */
+export type SlackRef = { channel: string; ts: string; thread?: string };
+
 /** A job: a Claude Code session a teammate started for real work. Chat-mode runs from before 2026-11-17 are kind "chat". */
 export type Job = {
   id: string;
@@ -55,6 +59,7 @@ export type Job = {
   cost: number;
   report?: string;
   allowed: string[]; // permission rules granted to this job
+  feedback?: boolean; // a feedback job: the teammate amending its own rules (its title quotes the feedback)
 };
 
 export const CHANNEL_STATUSES = ["inProgress", "waiting", "later", "archived"] as const;

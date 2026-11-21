@@ -24,6 +24,7 @@ import {
   type ChannelStatus,
   type Job,
   type Message,
+  type SlackRef,
 } from "./store";
 
 /** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
@@ -232,13 +233,14 @@ export class Team {
   private coordinating = new Map<string, Promise<unknown>>(); // channel id → its Mozart decisions, one at a time
 
   /**
-   * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`). An @mention, "Name, …" or
-   * a reply to a teammate's message goes straight to that teammate; anything else, the channel's Mozart decides.
+   * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`, and where it is there). An
+   * @mention, "Name, …" or a reply to a teammate's message goes straight to that teammate; anything else, the
+   * channel's Mozart decides.
    */
-  userMessage(ch: Channel, text: string, replyToId?: string, opts: { via?: "slack" } = {}) {
+  userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef } = {}): Message {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
     const replyTo = target && { id: target.id, author: target.author, text: replyText(target).slice(0, 300) };
-    const meta = { ...(replyTo && { replyTo }), ...(opts.via && { via: opts.via }) };
+    const meta = { ...(replyTo && { replyTo }), ...(from.via && { via: from.via }), ...(from.slack && { slack: from.slack }) };
     const msg = this.post(ch, { author: "user", text, ...(Object.keys(meta).length && { meta }) });
     const named = mentions(text).filter((id) => id !== "user");
     // A reply to a teammate's message goes to that teammate (no Mozart), unless the reply names someone.
@@ -249,17 +251,18 @@ export class Team {
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
     if (named.length || atStart) {
       for (const id of named.length ? named : [atStart!]) this.wake(ch, id);
-      return;
+      return msg;
     }
     this.coordinate(ch, msg, waitingOn);
+    return msg;
   }
 
   /**
    * Someone else's message in a linked Slack conversation. It's context for the teammates and Mozart (they read it
    * with the rest of the channel), but it never wakes anyone: the teammates work for you.
    */
-  guestMessage(ch: Channel, name: string, text: string, slackId?: string) {
-    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) }, via: "slack" } });
+  guestMessage(ch: Channel, name: string, text: string, slackId?: string, slack?: SlackRef) {
+    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) }, via: "slack", ...(slack && { slack }) } });
   }
 
   /** The channel's Mozart decides who answers `msg`, after any decision still running there. Nothing shows meanwhile. */
@@ -671,7 +674,8 @@ export class Team {
    * The user's feedback on a teammate's message: posted in the channel as a reply to it, then a job where that
    * teammate reviews how its rules led to the message and amends its own instructions (feedback-rules.md).
    */
-  feedback(ch: Channel, messageId: string, text: string): string | undefined {
+  /** `from.via`: given in Slack (a DM after a ⚠️), so the bridge keeps it out of the Slack conversation. */
+  feedback(ch: Channel, messageId: string, text: string, from: { via?: "slack" } = {}): string | undefined {
     const all = messages.get(ch.id) ?? [];
     const i = all.findIndex((m) => m.id === messageId);
     const target = all[i];
@@ -681,7 +685,7 @@ export class Team {
     this.post(ch, {
       author: "user",
       text,
-      meta: { replyTo: { id: target.id, author: agentId, text: replyText(target).slice(0, 300) }, feedbackFor: agentId },
+      meta: { replyTo: { id: target.id, author: agentId, text: replyText(target).slice(0, 300) }, feedbackFor: agentId, ...(from.via && { via: from.via }) },
     });
     const t = teammate(agentId)!;
     const prompt = fill(RULES.feedback, {
@@ -702,11 +706,11 @@ export class Team {
       jobRules: jobPrompt(ch, agentId),
     });
     const title = `Feedback: ${text.replace(/\s+/g, " ").slice(0, 60)}`;
-    this.startJob(ch, agentId, { title, brief: text }, prompt);
+    this.startJob(ch, agentId, { title, brief: text, feedback: true }, prompt);
   }
 
   /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string }, prompt?: string): string {
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string; feedback?: boolean }, prompt?: string): string {
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
@@ -721,6 +725,7 @@ export class Team {
       startedAt: Date.now(),
       cost: 0,
       allowed: [...(prev?.allowed ?? [])],
+      ...(input.feedback && { feedback: true }),
     };
     ch.jobs.push(job);
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
