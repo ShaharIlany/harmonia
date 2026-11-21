@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import indexHtml from "./public/index.html" with { type: "file" };
 import appJs from "./public/app.js" with { type: "file" };
 import agentPageJs from "./public/agent-page.js" with { type: "file" };
-import teamsPageJs from "./public/teams-page.js" with { type: "file" };
+import slackPageJs from "./public/slack-page.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
@@ -14,7 +14,7 @@ import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
-import { MOZART, TeamsBridge, type TeamsEvent } from "./teams";
+import { SlackBridge, type SlackEvent } from "./slack";
 
 const PORT = Number(process.env.PORT ?? 4747);
 // The page's files, embedded in the compiled app.
@@ -22,7 +22,7 @@ const PUBLIC: Record<string, string> = {
   "index.html": indexHtml,
   "app.js": appJs,
   "agent-page.js": agentPageJs,
-  "teams-page.js": teamsPageJs,
+  "slack-page.js": slackPageJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
 };
@@ -32,31 +32,30 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
 
 const sockets = new Set<ServerWebSocket<unknown>>();
-let toTeams: ((e: Event) => void) | undefined; // the Teams bridge (below) follows every channel event
-const broadcast = (e: Event | TeamsEvent | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "appUpdate"; update: UpdateStatus }) => {
+let toSlack: ((e: Event) => void) | undefined; // the Slack bridge (below) follows every channel event
+const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "appUpdate"; update: UpdateStatus }) => {
   const data = JSON.stringify(e);
   for (const s of sockets) s.send(data);
-  if ("channelId" in e) toTeams?.(e);
+  if ("channelId" in e) toSlack?.(e);
 };
 mkdirSync(TEAM_AGENTS, { recursive: true });
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
 
-// Microsoft Teams (teams.ts): teammates and Mozart as Teams bots, 1:1 chats, and linked channels and group chats.
-const teams = new TeamsBridge({
+// Slack (slack.ts): one Slack app the teammates talk through, your DM with it, and linked channels and group DMs.
+const slack = new SlackBridge({
   emit: broadcast,
-  post: (ch, text) => team.userMessage(ch, text, undefined, { via: "teams" }),
-  guest: (ch, name, text, aadId) => team.guestMessage(ch, name, text, aadId),
-  note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "teams" } }),
+  post: (ch, text) => team.userMessage(ch, text, undefined, { via: "slack" }),
+  guest: (ch, name, text, slackId) => team.guestMessage(ch, name, text, slackId),
+  note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "slack" } }),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
-  activityFor: (channelId) => team.activityFor(channelId),
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
 });
-toTeams = (e) => teams.onEvent(e);
-teams.start();
+toSlack = (e) => slack.onEvent(e);
+slack.start();
 
 if (!channels.size) createChannel("general", DEFAULT_CWD);
 
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (teams.stop(), process.exit(0)));
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (slack.stop(), process.exit(0)));
 
 // Over-the-air updates from git (updates.ts). An install waits until no teammate or job is working.
 const working = () => team.sessions().filter((s) => s.busyIn).length + allChannels().reduce((n, c) => n + c.jobs.filter((j) => j.status === "running").length, 0);
@@ -94,8 +93,8 @@ const state = () => ({
   update: updateStatus(),
   usage,
   sessions: team.sessions(),
-  teams: teams.status(),
-  teamsLinks: teams.linkViews(),
+  slack: slack.status(),
+  slackLinks: slack.linkViews(),
   defaultCwd: DEFAULT_CWD,
   stub: !!setting("STUB"),
   channels: allChannels(),
@@ -209,35 +208,22 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
       }
 
-      // ----- Microsoft Teams -----
-      if (p === "/api/teams" && !post) return json({ bots: teams.status(), links: teams.linkViews() });
-      if (p === "/api/teams/cli" && !post) return json(await teams.cliStatus());
-      if ((p === "/api/teams/cli/install" || p === "/api/teams/cli/login") && post) {
-        const r = await inTerminal(p.endsWith("install") ? "npm install -g @microsoft/teams.cli" : "teams login");
-        return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
-      }
-      if (p === "/api/teams/admin" && !post) return json(await teams.adminStatus());
-      if (p === "/api/teams/unlink" && post) {
-        const err = teams.unlink(String(body.conversationId ?? ""));
-        return err ? json({ error: err }, 404) : json({ bots: teams.status(), links: teams.linkViews() });
-      }
-      const tb = p.match(/^\/api\/teams\/bots\/([a-z0-9_-]+)\/(create|import|enabled|remove|permissions)$/);
-      if (tb && post) {
-        const [, id, action] = tb;
-        if (!teammate(id) && id !== MOZART) return json({ error: "No such teammate." }, 404);
-        if (action === "permissions" && id !== MOZART) return json({ error: "Only Mozart has permissions to set." }, 400);
-        if (setting("STUB") && (action === "create" || action === "import")) return json({ error: "Not in the stub: it would make a real bot." }, 409);
+      // ----- Slack -----
+      const slackState = () => ({ slack: slack.status(), links: slack.linkViews() });
+      if (p === "/api/slack" && !post) return json(slackState());
+      const sa = p.match(/^\/api\/slack\/(connect|enabled|remove|repair|unlink)$/);
+      if (sa && post) {
         let err: string | undefined;
         try {
-          if (action === "create") err = await teams.create(id, { color: String(body.color ?? ""), outline: String(body.outline ?? "") });
-          else if (action === "import") err = await teams.importEnv(id, String(body.path ?? "").trim(), String(body.teamsAppId ?? "").trim() || undefined);
-          else if (action === "permissions") err = await teams.grantMozart();
-          else if (action === "enabled") err = teams.setEnabled(id, Boolean(body.enabled));
-          else err = await teams.remove(id);
+          if (sa[1] === "connect") err = await slack.connectApp(String(body.botToken ?? ""), String(body.appToken ?? ""));
+          else if (sa[1] === "enabled") err = slack.setEnabled(Boolean(body.enabled));
+          else if (sa[1] === "repair") err = slack.repair();
+          else if (sa[1] === "unlink") err = slack.unlink(String(body.conversationId ?? ""));
+          else err = await slack.remove();
         } catch (e) {
           err = (e as Error).message;
         }
-        return err ? json({ error: err, bots: teams.status() }, 400) : json({ bots: teams.status(), links: teams.linkViews() });
+        return err ? json({ error: err, ...slackState() }, 400) : json(slackState());
       }
 
       if (p === "/api/channels" && post) {

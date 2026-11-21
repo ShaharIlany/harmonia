@@ -244,8 +244,9 @@
     if (m.author === "system") return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}</span></div>`;
     const t = byId(m.author);
     const isUser = m.author === "user";
-    // Someone else in a linked Microsoft Teams chat: shown, read by the teammates, but never wakes them.
+    // Someone else in a linked Slack conversation (or, before it, a Teams chat): shown, read by the teammates, but never wakes them.
     const guest = m.author === "guest" ? (m.meta && m.meta.guest) || { name: "Someone" } : null;
+    const guestWhere = m.meta && m.meta.via === "teams" ? "Teams" : "Slack";
     const name = isUser ? S.user : t ? t.name : guest ? guest.name : m.author;
     // A run of messages from one person within a few minutes, on one day, shares one name and one bubble tail.
     const cont = prev && prev.author === m.author && m.ts - prev.ts < 5 * 60e3 && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
@@ -297,11 +298,11 @@
         <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button>${t ? `
         <button class="m-btn" data-feedback="${m.id}" title="Feedback for ${esc(name)}: ${esc(name)} updates its rules" aria-label="Feedback for ${esc(name)}">✎</button>` : ""}</div>`;
     return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
-      ${isUser ? "" : cont ? `<span class="m-av"></span>` : guest ? `<span class="m-av" title="${esc(name)}, in Microsoft Teams" style="--c:#888">👤</span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
+      ${isUser ? "" : cont ? `<span class="m-av"></span>` : guest ? `<span class="m-av" title="${esc(name)}, in ${guestWhere}" style="--c:#888">👤</span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
       <div class="m-col">
         <div class="bubble ${wide ? "wide" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
           <button class="m-more" data-msg-menu="${m.id}" aria-label="Message menu" title="More">⌄</button>
-          ${!isUser && !cont ? (guest ? `<div class="b-name"><span>${esc(name)}</span><span class="b-role">in Teams</span></div>` : `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>`) : ""}
+          ${!isUser && !cont ? (guest ? `<div class="b-name"><span>${esc(name)}</span><span class="b-role">in ${guestWhere}</span></div>` : `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>`) : ""}
           ${body}${foot}
         </div>
         ${m.meta && m.meta.reactions && m.meta.reactions.length ? reactionsHtml(m.id, m.meta.reactions) : ""}
@@ -329,6 +330,7 @@
       `${d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })} ${fmtTime(m.ts)}`,
       m.meta && m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`,
       m.meta && m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% cached`,
+      m.meta && m.meta.via === "slack" && "from Slack",
       m.meta && m.meta.via === "teams" && "from Microsoft Teams",
     ].filter(Boolean).join(" · ");
   }
@@ -406,7 +408,7 @@
   }
 
   // ---------- Replies ----------
-  const authorName = (id) => (id === "user" ? S.user : id === "guest" ? "Someone in Teams" : byId(id)?.name || id);
+  const authorName = (id) => (id === "user" ? S.user : id === "guest" ? "Someone in Slack" : byId(id)?.name || id);
   const snippet = (text) => {
     const s = plain(text || "").replace(/\s+/g, " ").trim();
     return s.length > 140 ? s.slice(0, 139) + "…" : s;
@@ -873,11 +875,11 @@
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
-    $("agent-view").hidden = view === "channel" || view === "teams";
-    $("teams-view").hidden = view !== "teams";
+    $("agent-view").hidden = view === "channel" || view === "slack";
+    $("slack-view").hidden = view !== "slack";
     $("app").classList.remove("nav-open");
     renderSidebar();
-    renderTeamsStatus();
+    renderSlackStatus();
   }
 
   async function openChannel(id) {
@@ -988,10 +990,11 @@
     const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
     const el = $("ch-folder");
     el.classList.toggle("typing-now", typing.length > 0);
-    const link = (S.teamsLinks || []).find((l) => l.channelId === c.id);
+    const link = (S.slackLinks || []).find((l) => l.channelId === c.id);
+    const where = link && (link.kind === "dm" ? "your Slack DM" : link.kind === "group" ? "a Slack group DM" : `Slack #${link.name || "channel"}`);
     el.textContent = typing.length
       ? `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
-      : `${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to Teams${link.name ? `: ${link.name}` : ""}` : ""}`;
+      : `${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to ${where}` : ""}`;
     el.title = c.cwd;
   }
 
@@ -1015,31 +1018,38 @@
     window.AgentPage.render(id);
   }
 
-  // ---------- Microsoft Teams bridge (teams.ts): its light at the bottom left, and its page ----------
-  function renderTeamsStatus() {
-    const el = $("teams-status");
-    const all = S.teams || [];
-    const on = all.filter((b) => b.enabled);
-    const name = (id) => (id === "mozart" ? "Mozart" : (S.roster.find((t) => t.id === id) || {}).name || id);
-    const names = (list) => list.map((b) => name(b.agentId)).join(", ");
+  // ---------- Slack bridge (slack.ts): its light at the bottom left, and its page ----------
+  /** The bridge's latest view (from the WebSocket or an answer), unless a newer one already came. */
+  function setSlack(slack, links) {
+    if (slack && S.slack && slack.rev < S.slack.rev) return;
+    S.slack = slack || null;
+    S.slackLinks = links || [];
+  }
+  function renderSlackStatus() {
+    const el = $("slack-status");
+    const s = S.slack || { configured: false };
     let cls, text;
-    if (!on.length) [cls, text] = ["off", all.length ? "Teams bridge off" : "Teams bridge off · set up"];
-    else if (on.some((b) => b.state === "failed")) [cls, text] = ["bad", `Teams bridge: ${names(on.filter((b) => b.state === "failed"))} needs you`];
-    else if (on.every((b) => b.state === "ready")) [cls, text] = ["ok", `Teams bridge on · ${names(on)}`];
-    else [cls, text] = ["wait", "Teams bridge connecting…"];
-    el.className = `teams-status ${cls}`;
-    el.setAttribute("aria-current", S.view === "teams" ? "page" : "false");
-    el.title = on.length
-      ? on.map((b) => `${name(b.agentId)}: ${b.state}${b.detail && b.state !== "ready" ? ` (${b.detail})` : ""}${b.paired ? "" : ", waiting for your Teams chat"}`).join("\n")
-      : "Chat with your teammates from Microsoft Teams. Click to set it up.";
+    if (!s.configured) [cls, text] = ["off", "Slack bridge off · set up"];
+    else if (!s.enabled) [cls, text] = ["off", "Slack bridge off"];
+    else if (s.state === "failed") [cls, text] = ["bad", "Slack bridge needs you"];
+    else if (s.state !== "ready") [cls, text] = ["wait", "Slack bridge connecting…"];
+    else if (!s.paired) [cls, text] = ["wait", "Slack bridge: pair it in Slack"];
+    else [cls, text] = ["ok", `Slack bridge on${s.team ? ` · ${s.team}` : ""}`];
+    el.className = `bridge-status ${cls}`;
+    el.setAttribute("aria-current", S.view === "slack" ? "page" : "false");
+    el.title = !s.configured
+      ? "Talk to your teammates from Slack. Click to set it up."
+      : [s.team && `Workspace: ${s.team}`, `Connection: ${s.enabled ? s.state : "off"}${s.detail && s.state !== "ready" ? ` (${s.detail})` : ""}`, s.paired ? `Works for ${s.ownerName || "you"}` : "Not paired yet: send the app the code on the Slack page"]
+          .filter(Boolean)
+          .join("\n");
     el.innerHTML = `<span class="cli-dot ${cls}" aria-hidden="true"></span><span class="ts-text">${esc(text)}</span>`;
   }
-  function openTeams() {
-    showView("teams");
-    renderTeamsStatus();
-    window.TeamsPage.render();
+  function openSlack() {
+    showView("slack");
+    renderSlackStatus();
+    window.SlackPage.render();
   }
-  $("teams-status").addEventListener("click", openTeams);
+  $("slack-status").addEventListener("click", openSlack);
 
   // ---------- Plan usage (top of the sidebar) ----------
   // Same pacing as the usage-limits-band mod (~/.claude/mods/usage-limits-band): the marker is where usage
@@ -1399,12 +1409,11 @@
       if (e.channelId === S.current) renderSessions();
       renderSidebar();
       if (S.view !== "channel") window.AgentPage.refreshSession?.();
-    } else if (e.type === "teams") {
-      S.teams = e.teams;
-      S.teamsLinks = e.links || [];
-      renderTeamsStatus();
+    } else if (e.type === "slack") {
+      setSlack(e.slack, e.links);
+      renderSlackStatus();
       renderSubtitle();
-      window.TeamsPage.update();
+      window.SlackPage.update();
     } else if (e.type === "appUpdate") {
       renderUpdate(e.update);
     } else if (e.type === "usage") {
@@ -1466,9 +1475,8 @@
     S.previews = st.previews || {};
     S.defaultCwd = st.defaultCwd;
     setRoster(st.roster);
-    S.teams = st.teams || [];
-    S.teamsLinks = st.teamsLinks || [];
-    renderTeamsStatus();
+    setSlack(st.slack, st.slackLinks);
+    renderSlackStatus();
     S.activity = {};
     for (const [cid, list] of Object.entries(st.activity)) S.activity[cid] = Object.fromEntries(list.map((a) => [a.agentId, a.status]));
     $("stub-badge").hidden = !st.stub;
@@ -1482,7 +1490,7 @@
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, renderTeamsStatus };
+  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);
