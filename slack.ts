@@ -20,15 +20,22 @@
 // internet. The Slack user who sends the app the pairing code from the Slack page is the only one who wakes the
 // teammates.
 //
-// Kept in the data folder: slack.json (the workspace, the app, who it works for, the linked conversations). The bot
-// token and the app-level token are in the Keychain.
+// Teammates as Slack members: each teammate can have its own small Slack app (a bot that only posts), so it's a real
+// member you can @mention in Slack. Harmonia makes them with an app configuration token you generate once
+// (apps.manifest.create, apps.icon.set: the token isn't kept); you install each one and paste its bot token. In a
+// linked channel, Harmonia invites them and their answers go out from their own bot. Everything still comes in through
+// the Harmonia app (an @mention of Emily is "@Emily" to the teammates). Cards with buttons, your DM with Harmonia and
+// group DMs stay with Harmonia, posting under the teammate's name.
+//
+// Kept in the data folder: slack.json (the workspace, the app, who it works for, the linked conversations, the
+// teammates' apps). The bot tokens and the app-level token are in the Keychain.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA, DEFAULT_CWD } from "./paths";
-import { USER_NAME, nameOf, teammate } from "./roster";
+import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
 import { channels, createChannel, messages, saveMessages, type Channel, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
-import { SlackError, SlackSocket, isAuthError, slackAuth, slackCall, type Envelope, type SocketState } from "./slack-socket";
+import { SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
 
 const FILE = join(DATA, "slack.json");
 const KEYCHAIN_SERVICE = "Harmonia Slack";
@@ -101,6 +108,26 @@ export function manifest() {
 /** Opens Slack's "create an app" page with the manifest filled in. */
 export const CREATE_LINK = `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest()))}`;
 
+/** A teammate's own app only posts (under its name and avatar): the Harmonia app hears everything. */
+export const MATE_SCOPES = ["chat:write", "chat:write.customize"];
+
+/** The manifest of a teammate's own Slack app: a bot named after it, nothing to DM, no events. */
+export function mateManifest(t: Pick<Teammate, "name" | "role" | "color">, socketMode = false) {
+  return {
+    display_information: {
+      name: t.name.slice(0, 35),
+      description: `${t.role || "Teammate"}, answering from ${APP_NAME}`.slice(0, 140),
+      background_color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : "#24292f",
+    },
+    features: {
+      app_home: { home_tab_enabled: false, messages_tab_enabled: false, messages_tab_read_only_enabled: false },
+      bot_user: { display_name: t.name, always_online: true },
+    },
+    oauth_config: { scopes: { bot: MATE_SCOPES } },
+    settings: { org_deploy_enabled: false, socket_mode_enabled: socketMode, token_rotation_enabled: false },
+  };
+}
+
 type Config = {
   teamId: string;
   teamName?: string;
@@ -114,6 +141,31 @@ type Config = {
   scopes?: string[]; // what the bot token was granted, last time Slack was asked
   enabled: boolean;
   createdAt: number;
+  teammates?: Record<string, MateApp>; // teammate id → its own Slack app
+};
+
+/** A teammate's own Slack app. Its bot token is in the Keychain once you've installed it and pasted it. */
+type MateApp = {
+  appId: string;
+  name: string; // the name it was made (or last updated) with
+  botUserId?: string; // set once connected: its messages are skipped, @mentions of it are "@Name"
+  botId?: string;
+  iconError?: string; // its icon didn't go up
+  createdAt: number;
+};
+
+/** A teammate on the Slack page: has it a Slack app of its own, and is it connected? */
+export type MateView = {
+  id: string;
+  name: string;
+  avatar: string;
+  color: string;
+  state: "none" | "created" | "connected" | "failed";
+  detail?: string;
+  appLink?: string;
+  installLink?: string;
+  slackName?: string; // the app's name in Slack, when the teammate was renamed since
+  gone?: boolean; // no longer on the team
 };
 
 /** A ⚠️ question in your DM: thread replies to it are feedback on that message. */
@@ -142,13 +194,15 @@ export type SlackView = {
   pairCode?: string;
   missingScopes: string[]; // the app was made from an older manifest: update it
   createLink: string;
+  teammates: MateView[];
+  making: boolean; // the teammates' apps are being made
 };
 
 export type LinkView = { conversationId: string; kind: Link["kind"]; channelId: string; name?: string; url?: string };
 
 export type SlackEvent = { type: "slack"; slack: SlackView; links: LinkView[] };
 
-type Look = { name: string; avatar: string };
+type Look = { id?: string; name: string; avatar: string };
 /** What a Slack message says: the teammates' Markdown, or the app's own mrkdwn text with blocks (cards, buttons). */
 type Content = { markdown: string } | { text: string; blocks: unknown[] };
 
@@ -203,6 +257,10 @@ export class SlackBridge {
   private sending: Promise<void> = Promise.resolve();
   private inbound: Promise<unknown> = Promise.resolve(); // Slack messages are taken in one at a time, in order
   private rev = 0;
+  private mateTokens = new Map<string, string>(); // teammate id → its own app's bot token
+  private mateIn = new Set<string>(); // "teammate id:conversation": its bot is in that channel
+  private mateProblems = new Map<string, string>(); // teammate id → why its app can't post now
+  private making = false; // the teammates' apps are being made
 
   constructor(private deps: Deps) {
     const saved = readJson<{ config?: Config; links?: Record<string, Link>; asks?: Record<string, Ask> }>(FILE, {});
@@ -242,7 +300,32 @@ export class SlackBridge {
       pairCode: c && !c.ownerId ? c.pairCode : undefined,
       missingScopes: c?.scopes ? BOT_SCOPES.filter((s) => !c.scopes!.includes(s)) : [],
       createLink: CREATE_LINK,
+      teammates: c ? this.mateViews() : [],
+      making: this.making,
     };
+  }
+
+  /** Every teammate (and any app left over from one no longer on the team), and where its own Slack app is at. */
+  private mateViews(): MateView[] {
+    const apps = this.config?.teammates ?? {};
+    const ids = [...ROSTER.map((t) => t.id), ...Object.keys(apps).filter((id) => !teammate(id))];
+    return ids.map((id) => {
+      const t = teammate(id);
+      const a = apps[id];
+      const problem = a && this.mateProblems.get(id);
+      return {
+        id,
+        name: t?.name ?? a?.name ?? id,
+        avatar: t?.avatar ?? "👤",
+        color: t?.color ?? "#6b7280",
+        state: !a ? "none" : problem ? "failed" : a.botUserId ? "connected" : "created",
+        detail: problem ?? a?.iconError,
+        appLink: a && `https://api.slack.com/apps/${a.appId}`,
+        installLink: a && `https://api.slack.com/apps/${a.appId}/install-on-team`,
+        slackName: a && t && a.name !== t.name ? a.name : undefined,
+        gone: !t || undefined,
+      };
+    });
   }
 
   linkViews(): LinkView[] {
@@ -291,8 +374,11 @@ export class SlackBridge {
     const was = this.config;
     const same = was?.teamId === auth.team_id;
     if (was && !same) {
-      await deleteTokens(was.teamId);
+      await deleteTokens(was.teamId, Object.keys(was.teammates ?? {}));
       this.links = {}; // another workspace's conversations mean nothing here
+      this.mateTokens.clear();
+      this.mateIn.clear();
+      this.mateProblems.clear();
     }
     this.config = {
       teamId: String(auth.team_id),
@@ -307,6 +393,7 @@ export class SlackBridge {
       scopes: auth.scopes,
       enabled: true,
       createdAt: same ? was!.createdAt : Date.now(),
+      teammates: same ? was?.teammates : undefined,
     };
     this.save();
     await this.connect();
@@ -343,12 +430,187 @@ export class SlackBridge {
   async remove(): Promise<string | undefined> {
     if (!this.config) return "Slack isn't set up.";
     this.stop();
-    await deleteTokens(this.config.teamId);
+    await deleteTokens(this.config.teamId, Object.keys(this.config.teammates ?? {}));
     this.botToken = "";
     this.config = undefined;
     this.links = {};
+    this.mateTokens.clear();
+    this.mateIn.clear();
+    this.mateProblems.clear();
     this.save();
     this.changed();
+  }
+
+  // ---------- Teammates as Slack members: an app of their own ----------
+
+  /**
+   * Makes a Slack app for every teammate that hasn't one, and brings the others' names, roles and icons up to date,
+   * with an app configuration token (api.slack.com/apps → Your App Configuration Tokens). The token isn't kept.
+   * `icons`: teammate id → a 512 px PNG of its avatar (base64), drawn by the page.
+   */
+  async makeMateApps(token: string, icons: Record<string, string> = {}): Promise<string | undefined> {
+    const c = this.config;
+    if (!c) return "Slack isn't set up.";
+    token = token.trim();
+    if (/^xoxe-\d/.test(token)) return "That's the refresh token. Copy the access token above it (it starts with xoxe.xoxp-).";
+    if (!token.startsWith("xoxe.xoxp-")) return "The configuration token starts with xoxe.xoxp-. Generate one at the top of api.slack.com/apps, under Your App Configuration Tokens.";
+    if (this.making) return "Harmonia is already making them.";
+    this.making = true;
+    this.changed();
+    const apps = (c.teammates ??= {});
+    const failed: string[] = [];
+    try {
+      for (const t of ROSTER) {
+        let app: MateApp | undefined = apps[t.id];
+        try {
+          if (app) {
+            try {
+              await slackCall(token, "apps.manifest.update", { app_id: app.appId, manifest: mateManifest(t) });
+            } catch (e) {
+              // Gone from Slack, most likely. Left to you: Forget makes room for a new one.
+              if (e instanceof SlackError && ["invalid_app_id", "invalid_app", "app_not_found"].includes(e.code))
+                throw new SlackError(e.code, `Slack doesn't know its app (${e.code}). If you deleted it there, Forget it here and make it again`);
+              throw e;
+            }
+          } else {
+            const made = await createMateApp(token, t);
+            app = apps[t.id] = { appId: String(made.app_id), name: t.name, createdAt: Date.now() };
+            this.deps.log("slack.teammate_app_made", { teammate: t.id, app: app.appId });
+          }
+          app.name = t.name;
+        } catch (e: any) {
+          const stop = configTokenProblem(e);
+          if (stop) return stop;
+          failed.push(`${t.name} (${e.message})`);
+          continue;
+        } finally {
+          this.save();
+          this.changed();
+        }
+        const png = icons[t.id];
+        if (!png) continue;
+        try {
+          await slackUpload(token, "apps.icon.set", { app_id: app.appId }, { name: `${t.id}.png`, type: "image/png", data: new Uint8Array(Buffer.from(png, "base64")) });
+          delete app.iconError;
+        } catch (e: any) {
+          app.iconError = `Its icon didn't go up (${e.code ?? e.message}): add it in the app's settings, under Basic Information → Display Information.`;
+        }
+        this.save();
+        this.changed();
+      }
+    } finally {
+      this.making = false;
+      this.save();
+      this.changed();
+    }
+    if (failed.length) return `Couldn't make every app: ${failed.join("; ")}`;
+  }
+
+  /** Checks a teammate's bot token (its own app's, installed), keeps it in the Keychain, and invites it to the linked channels. */
+  async connectMate(id: string, token: string): Promise<string | undefined> {
+    const c = this.config;
+    const app = c?.teammates?.[id];
+    const t = teammate(id);
+    if (!c || !app || !t) return "Make its Slack app first.";
+    token = token.trim();
+    if (!token.startsWith("xoxb-")) return `Paste ${t.name}'s Bot User OAuth Token (xoxb-…). It's on its app's Install App page, once it's installed.`;
+    let auth: any;
+    try {
+      auth = await slackAuth(token);
+    } catch (e: any) {
+      return `Slack didn't accept the token: ${e.message}`;
+    }
+    if (auth.team_id !== c.teamId) return `That token is for another workspace${auth.team ? ` (${auth.team})` : ""}. Install ${t.name} in ${c.teamName ?? "the workspace Harmonia is in"}.`;
+    if (auth.user_id === c.botUserId) return `That's ${APP_NAME}'s own token. Copy the one on ${t.name}'s app's page.`;
+    const other = Object.entries(c.teammates!).find(([k, a]) => k !== id && a.botUserId === auth.user_id);
+    if (other) return `That's ${nameOf(other[0])}'s token. Copy the one on ${t.name}'s app's page.`;
+    const bot = auth.bot_id ? await this.api("bots.info", { bot: auth.bot_id }).then((j) => j.bot ?? {}, () => ({})) : {};
+    if (bot.app_id && bot.app_id !== app.appId) return `That token is another app's. Copy the one on ${t.name}'s app's page.`;
+    if (auth.scopes && !auth.scopes.includes("chat:write")) return `That token can't post (no chat:write). Copy the Bot User OAuth Token on ${t.name}'s app's page.`;
+    const err = await saveMateToken(c.teamId, id, token);
+    if (err) return err;
+    app.botUserId = String(auth.user_id);
+    app.botId = auth.bot_id;
+    this.mateTokens.set(id, token);
+    this.mateProblems.delete(id);
+    for (const key of this.mateIn) if (key.startsWith(`${id}:`)) this.mateIn.delete(key);
+    this.save();
+    this.changed();
+    this.deps.log("slack.teammate_connected", { teammate: id, app: app.appId });
+    void this.inviteMates(this.channelLinks(), [id]);
+  }
+
+  /** Forgets a teammate's own app here (its token leaves the Keychain). The app stays in Slack until you delete it there. */
+  async forgetMate(id: string): Promise<string | undefined> {
+    if (!this.config?.teammates?.[id]) return "It has no Slack app here.";
+    await this.dropMate(id);
+    this.save();
+    this.changed();
+  }
+
+  private async dropMate(id: string) {
+    const c = this.config!;
+    await deleteMateToken(c.teamId, id);
+    delete c.teammates?.[id];
+    this.mateTokens.delete(id);
+    this.mateProblems.delete(id);
+    for (const key of this.mateIn) if (key.startsWith(`${id}:`)) this.mateIn.delete(key);
+  }
+
+  /** The linked channels (public and private): where the teammates' own bots can be. */
+  private channelLinks(): string[] {
+    return Object.values(this.links)
+      .filter((l) => l.kind === "channel" || l.kind === "private")
+      .map((l) => l.conversationId);
+  }
+
+  /** Invites the teammates' bots (all connected ones, or `ids`) to channels Harmonia is in. */
+  private async inviteMates(conversations: string[], ids = [...this.mateTokens.keys()]) {
+    for (const conversation of conversations) for (const id of ids) await this.mateJoin(id, conversation);
+  }
+
+  /** Makes sure a teammate's bot is in a channel (Harmonia invites it). False when it can't be. */
+  private async mateJoin(id: string, conversation: string): Promise<boolean> {
+    const user = this.config?.teammates?.[id]?.botUserId;
+    if (!user) return false;
+    const key = `${id}:${conversation}`;
+    if (this.mateIn.has(key)) return true;
+    try {
+      await this.api("conversations.invite", { channel: conversation, users: user });
+    } catch (e: any) {
+      if (!(e instanceof SlackError && e.code === "already_in_channel")) {
+        this.deps.log("slack.teammate_invite_failed", { teammate: id, conversation, error: e?.message });
+        return false;
+      }
+    }
+    this.mateIn.add(key);
+    return true;
+  }
+
+  /** The token a teammate's answer goes out with in a conversation: its own bot's, in a channel it's (now) in. */
+  private async mateToken(id: string | undefined, conversation: string): Promise<string | undefined> {
+    const token = id && this.mateTokens.get(id);
+    const kind = this.links[conversation]?.kind;
+    if (!token || (kind !== "channel" && kind !== "private")) return undefined;
+    return (await this.mateJoin(id, conversation)) ? token : undefined;
+  }
+
+  /** A teammate's bot couldn't post: Harmonia posts for it this time. A token Slack won't take any more needs you. */
+  private mateFailed(id: string, conversation: string, e: any): undefined {
+    this.deps.log("slack.teammate_post_failed", { teammate: id, conversation, error: e?.message });
+    if (e instanceof SlackError && ["not_in_channel", "channel_not_found"].includes(e.code)) this.mateIn.delete(`${id}:${conversation}`);
+    if (isAuthError(e)) {
+      this.mateTokens.delete(id);
+      this.mateProblems.set(id, `Slack doesn't take its token any more (${e.code}): was it uninstalled? Install it again and paste the new token.`);
+      this.changed();
+    }
+    return undefined;
+  }
+
+  /** The teammate whose own bot is this Slack user, by name. */
+  private mateName(userId: string): string | undefined {
+    const hit = Object.entries(this.config?.teammates ?? {}).find(([, a]) => a.botUserId === userId);
+    return hit && nameOf(hit[0]);
   }
 
   /** Forgets who the app works for (if anyone): a new pairing code, for the next person who sends it, and fresh tries for everyone. */
@@ -384,6 +646,13 @@ export class SlackBridge {
     }
     this.failed = undefined;
     this.botToken = tokens.bot;
+    this.mateTokens.clear();
+    for (const [id, a] of Object.entries(c.teammates ?? {})) {
+      if (!a.botUserId) continue;
+      const token = await readMateToken(c.teamId, id);
+      if (token) this.mateTokens.set(id, token);
+      else this.mateProblems.set(id, "Its token is missing from the Keychain. Paste it again (its app's Install App page).");
+    }
     this.socket = new SlackSocket(
       tokens.app,
       (e) => void this.onEnvelope(e).catch((err) => this.deps.log("slack.event_failed", { error: err?.message })),
@@ -671,18 +940,21 @@ export class SlackBridge {
     this.deps.note(ch, `Linked to Slack: ${kind === "dm" ? `your DM with @${APP_NAME}` : kind === "group" ? "a group DM" : `#${name ?? "a channel"}`}${this.config?.teamName ? ` in ${this.config.teamName}` : ""}.`);
     this.changed();
     this.deps.log("slack.linked", { conversation: link.conversationId, channelId: ch.id, kind });
+    if (kind === "channel" || kind === "private") void this.inviteMates([link.conversationId]);
     return link;
   }
 
-  /** The message as the teammates read it: Slack's markup as text, people as @Name, the app's own @mention dropped. */
+  /** The message as the teammates read it: Slack's markup as text, people (and teammates' bots) as @Name, the app's own @mention dropped. */
   private async chatText(raw: string): Promise<string> {
     const me = this.config?.botUserId;
     for (const [, id] of raw.matchAll(USER_MENTION)) if (id !== me) await this.nameOf(id);
-    return slackToText(raw, (id) => (id === me ? "" : `@${this.names.get(id) ?? id}`));
+    return slackToText(raw, (id) => (id === me ? "" : `@${this.mateName(id) ?? this.names.get(id) ?? id}`));
   }
 
-  /** The name a Slack user goes by: their display name, else their full name. */
+  /** The name a Slack user goes by: their display name, else their full name. A teammate's bot goes by the teammate's name. */
   private async nameOf(id: string): Promise<string> {
+    const mate = this.mateName(id);
+    if (mate) return mate;
     const known = this.names.get(id);
     if (known) return known;
     try {
@@ -728,7 +1000,8 @@ export class SlackBridge {
         unknown.push(email);
       }
     }
-    return { ids: [...ids].filter((id) => id !== this.config?.ownerId), unknown };
+    // The teammates' own bots come in with the rest of them (inviteMates), not with the people.
+    return { ids: [...ids].filter((id) => id !== this.config?.ownerId && !this.mateName(id)), unknown };
   }
 
   /** `new channel` / `new private channel`: a Slack channel with you (and anyone named) in it, linked to a new Harmonia channel. */
@@ -761,6 +1034,7 @@ export class SlackBridge {
     this.postAs(undefined, link.conversationId, {
       markdown: `This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${cmd.private ? " Only the people in it see it." : ""}`,
     });
+    void this.inviteMates([link.conversationId]);
     this.deps.note(ch, `Created from Slack: the ${cmd.private ? "private " : ""}channel #${name}, linked to this channel.`);
     if (inviteError) this.deps.note(ch, `Couldn't invite everyone to #${name} in Slack: ${inviteError}`);
     this.say(ev.channel, `Created <#${made.id}>, linked to *#${ch.name}* in Harmonia.${inviteError ? ` I couldn't invite everyone: ${inviteError}` : ""}`);
@@ -862,17 +1136,28 @@ export class SlackBridge {
       unfurl_links: false,
       unfurl_media: false,
     };
-    return this.queue(async () => {
-      if (look) Object.assign(params, await slackLook(look));
-      let r: any;
+    const send = async (token?: string) => {
+      const call = () => (token ? slackCall(token, "chat.postMessage", params) : this.api("chat.postMessage", params));
       try {
-        r = await this.api("chat.postMessage", params);
+        return await call();
       } catch (e) {
         // A workspace or client that won't take the markdown block gets the mrkdwn text alone.
         if (!(e instanceof SlackError && e.code === "invalid_blocks" && md !== undefined && params.blocks)) throw e;
         delete params.blocks;
-        r = await this.api("chat.postMessage", params);
+        return call();
       }
+    };
+    return this.queue(async () => {
+      if (look) Object.assign(params, await slackLook(look));
+      // A teammate's words (not a card: its buttons answer to the Harmonia app) go out from its own bot, if it has one.
+      // A bot taken out of the channel since is invited back for a second go; else Harmonia posts for it.
+      let r: any;
+      for (let i = 0; i < 2 && !r; i++) {
+        const mate = md !== undefined ? await this.mateToken(look?.id, channel) : undefined;
+        if (!mate) break;
+        r = await send(mate).catch((e) => this.mateFailed(look!.id!, channel, e));
+      }
+      r ??= await send();
       if (opts.ref && r?.ts) {
         (opts.ref.message.meta ??= {}).slack = { channel, ts: String(r.ts), ...(opts.thread && { thread: opts.thread }) };
         saveMessages(opts.ref.channelId);
@@ -924,6 +1209,25 @@ const ignore = (code: string) => (e: unknown) => {
 function retryable(e: unknown) {
   if (!(e instanceof SlackError)) return true;
   return e.code.startsWith("http_5") || ["ratelimited", "internal_error", "fatal_error", "service_unavailable", "request_timeout"].includes(e.code);
+}
+
+/** A teammate's Slack app, made from its manifest with an app configuration token. */
+async function createMateApp(token: string, t: Teammate): Promise<any> {
+  try {
+    return await slackCall(token, "apps.manifest.create", { manifest: mateManifest(t) });
+  } catch (e) {
+    // Some workspaces want every new app on Socket Mode. The teammates' apps don't listen to anything anyway.
+    if (!(e instanceof SlackError && e.code === "socket_mode_not_enabled")) throw e;
+    return slackCall(token, "apps.manifest.create", { manifest: mateManifest(t, true) });
+  }
+}
+
+/** What's wrong with the configuration token itself, when that's why a call failed: then there's no point going on. */
+function configTokenProblem(e: unknown): string | undefined {
+  if (!(e instanceof SlackError)) return;
+  if (e.code === "token_expired") return "The configuration token has expired (they last 12 hours). Generate a new one and paste it.";
+  if (e.code === "invalid_auth" || e.code === "not_authed" || e.code === "token_revoked") return "Slack didn't accept the configuration token. Generate a new one and paste its access token (xoxe.xoxp-…).";
+  if (e.code === "missing_scope" || e.code === "not_allowed_token_type") return "That isn't an app configuration token. Generate one at the top of api.slack.com/apps, under Your App Configuration Tokens.";
 }
 
 const newPairCode = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
@@ -1249,9 +1553,12 @@ async function run(cmd: string[], timeoutMs: number) {
 const keychain = (args: string[]) => run(["security", ...args], 15_000);
 const onMac = process.platform === "darwin";
 
+type Secrets = { teamId?: string; bot?: string; app?: string; mates?: Record<string, string> };
+
 async function saveTokens(teamId: string, bot: string, app: string): Promise<string | undefined> {
   if (!onMac) {
-    writeFileSync(SECRETS_FILE, JSON.stringify({ teamId, bot, app }), { mode: 0o600 });
+    const was = readJson<Secrets>(SECRETS_FILE, {});
+    writeFileSync(SECRETS_FILE, JSON.stringify({ teamId, bot, app, ...(was.teamId === teamId && was.mates && { mates: was.mates }) }), { mode: 0o600 });
     return;
   }
   for (const [kind, token] of [["bot", bot], ["app", app]]) {
@@ -1269,10 +1576,42 @@ async function readTokens(teamId: string): Promise<{ bot: string; app: string } 
   return bot.code === 0 && app.code === 0 && bot.out && app.out ? { bot: bot.out, app: app.out } : undefined;
 }
 
-async function deleteTokens(teamId: string) {
+async function deleteTokens(teamId: string, mates: string[] = []) {
   if (!onMac) {
     writeFileSync(SECRETS_FILE, "{}", { mode: 0o600 });
     return;
   }
-  for (const kind of ["bot", "app"]) await keychain(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", `${teamId}:${kind}`]);
+  for (const kind of ["bot", "app", ...mates.map((id) => `mate:${id}`)]) await keychain(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", `${teamId}:${kind}`]);
+}
+
+/** A teammate's own bot token: in the Keychain as "<team>:mate:<teammate id>". */
+async function saveMateToken(teamId: string, id: string, token: string): Promise<string | undefined> {
+  if (!onMac) {
+    const s = readJson<Secrets>(SECRETS_FILE, {});
+    if (s.teamId !== teamId) return "Harmonia's own Slack tokens are missing. Remove the connection and connect again.";
+    writeFileSync(SECRETS_FILE, JSON.stringify({ ...s, mates: { ...s.mates, [id]: token } }), { mode: 0o600 });
+    return;
+  }
+  const r = await keychain(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", `${teamId}:mate:${id}`, "-w", token]);
+  if (r.code !== 0) return `Couldn't save the token in the Keychain: ${clip(r.err)}`;
+}
+
+async function readMateToken(teamId: string, id: string): Promise<string | undefined> {
+  if (!onMac) {
+    const s = readJson<Secrets>(SECRETS_FILE, {});
+    return s.teamId === teamId ? s.mates?.[id] : undefined;
+  }
+  const r = await keychain(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", `${teamId}:mate:${id}`, "-w"]);
+  return r.code === 0 && r.out ? r.out : undefined;
+}
+
+async function deleteMateToken(teamId: string, id: string) {
+  if (!onMac) {
+    const s = readJson<Secrets>(SECRETS_FILE, {});
+    if (s.mates?.[id] === undefined) return;
+    delete s.mates[id];
+    writeFileSync(SECRETS_FILE, JSON.stringify(s), { mode: 0o600 });
+    return;
+  }
+  await keychain(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", `${teamId}:mate:${id}`]);
 }
