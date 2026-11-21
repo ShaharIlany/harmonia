@@ -238,6 +238,20 @@ Bun.serve({
         }
         return err ? json({ error: err, ...slackState() }, 400) : json(slackState());
       }
+      // The teammates' own Slack apps: make them (with a configuration token), connect one (its bot token), forget one.
+      const sm = p.match(/^\/api\/slack\/teammates\/(make|connect|forget)$/);
+      if (sm && post) {
+        let err: string | undefined;
+        try {
+          const icons = body.icons && typeof body.icons === "object" ? Object.fromEntries(Object.entries(body.icons).map(([k, v]) => [k, String(v)])) : {};
+          if (sm[1] === "make") err = await slack.makeMateApps(String(body.configToken ?? ""), icons);
+          else if (sm[1] === "connect") err = await slack.connectMate(String(body.id ?? ""), String(body.botToken ?? ""));
+          else err = await slack.forgetMate(String(body.id ?? ""));
+        } catch (e) {
+          err = (e as Error).message;
+        }
+        return err ? json({ error: err, ...slackState() }, 400) : json(slackState());
+      }
 
       if (p === "/api/channels" && post) {
         const name = String(body.name ?? "").trim();

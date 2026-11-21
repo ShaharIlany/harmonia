@@ -6,7 +6,8 @@
 //   refresh    every few hours Slack sends "disconnect" (reason "warning", then "refresh_requested") before it drops a
 //              connection: a new one opens, and the old one closes once the new one said hello.
 //   liveness   a WebSocket ping every 15 s; a connection that hears nothing for 45 s is replaced.
-//   Web API    POST <api>/<method> with the bot token (xoxb-…), form-encoded. HTTP 429 means wait Retry-After seconds.
+//   Web API    POST <api>/<method> with the bot token (xoxb-…), form-encoded (multipart with a file, as for an app's
+//              icon). HTTP 429 means wait Retry-After seconds.
 import { setting } from "./env";
 
 /** Slack's Web API. HARMONIA_SLACK_API points it somewhere else (a local fake, for trying the bridge without Slack). */
@@ -53,9 +54,19 @@ export async function slackAuth(token: string): Promise<any> {
   return { ...json, scopes: scopes === null ? undefined : scopes.split(",").map((s) => s.trim()).filter(Boolean) };
 }
 
-async function request(token: string, method: string, params: Record<string, unknown> = {}): Promise<{ json: any; headers: Headers }> {
-  const body = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) body.set(k, typeof v === "string" ? v : JSON.stringify(v));
+/** A Web API call with a file (multipart), like apps.icon.set. */
+export async function slackUpload(token: string, method: string, params: Record<string, string>, file: { name: string; type: string; data: Uint8Array }): Promise<any> {
+  return (await request(token, method, params, file)).json;
+}
+
+async function request(token: string, method: string, params: Record<string, unknown> = {}, file?: { name: string; type: string; data: Uint8Array }): Promise<{ json: any; headers: Headers }> {
+  const fields = Object.entries(params).flatMap(([k, v]) => (v === undefined || v === null ? [] : [[k, typeof v === "string" ? v : JSON.stringify(v)] as const]));
+  let body: URLSearchParams | FormData = new URLSearchParams(fields as [string, string][]);
+  if (file) {
+    body = new FormData();
+    for (const [k, v] of fields) body.set(k, v);
+    body.set("file", new Blob([file.data], { type: file.type }), file.name);
+  }
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(`${SLACK_API}/${method}`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(20_000) });
     if (r.status === 429 && attempt < RATE_LIMIT_RETRIES) {
@@ -66,7 +77,9 @@ async function request(token: string, method: string, params: Record<string, unk
     if (!j) throw new SlackError(`http_${r.status}`, `Slack answered HTTP ${r.status} to ${method}`);
     if (!j.ok) {
       const code = String(j.error ?? "unknown_error");
-      throw new SlackError(code, `Slack refused ${method}: ${code}${j.needed ? ` (the app needs the ${j.needed} scope)` : ""}`);
+      // A manifest Slack won't take says where: [{ pointer: "/display_information/name", message: "…" }].
+      const why = Array.isArray(j.errors) ? j.errors.map((x: any) => `${x.pointer ?? ""} ${x.message ?? ""}`.trim()).filter(Boolean).join("; ") : "";
+      throw new SlackError(code, `Slack refused ${method}: ${code}${j.needed ? ` (the app needs the ${j.needed} scope)` : ""}${why ? ` (${why})` : ""}`);
     }
     return { json: j, headers: r.headers };
   }

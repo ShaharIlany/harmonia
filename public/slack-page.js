@@ -4,6 +4,7 @@
 
   let connecting = false; // the tokens are being checked with Slack
   let replacing = false; // the "replace tokens" form is open
+  let connectingMate = ""; // the teammate whose bot token is being checked
 
   const APP = "Harmonia"; // slack.ts APP_NAME: the app's name in Slack, and what the commands are written to
   const TINT = "#611f69";
@@ -80,6 +81,7 @@
       <h2>In Slack</h2>
       <ol class="sk-plain">
         <li>Write to <b>@${APP}</b> in a DM: it's <b>#slack</b> here. Mozart picks who answers, as in the app; start with <code>@Leo</code> to ask Leo.</li>
+        <li><b>@mention a teammate</b>: once it has its own app (above), Slack lists it when you type <code>@Le</code>. Without one, type <code>@Leo</code> in full, or start with <code>Leo,</code>: it reaches Leo all the same.</li>
         <li><code>/invite @${APP}</code> in a channel or private channel, then write there: it's linked to a new channel here.</li>
         <li><code>@${APP} new channel &lt;name&gt;</code> makes a Slack channel with you in it, linked to a new channel here. <code>new private channel &lt;name&gt;</code> makes one only its members see. @mention people (or write their email) to invite them too. No admin needed.</li>
         <li><b>Reply in a thread</b> to a teammate's message and it's a reply to that message here: it goes straight to them, and the answers come back in the thread.</li>
@@ -111,6 +113,97 @@
         })
         .join("")}</ul>
     </section>`;
+  }
+
+  // ---------- Teammates as Slack members: an app of their own ----------
+
+  const MATE_STATE = { none: ["off", "No app yet"], created: ["warn", "Install it"], connected: ["ok", "In Slack"], failed: ["bad", "Needs you"] };
+
+  function matesHtml() {
+    const s = slack();
+    const mates = (s.teammates || []).filter((m) => !m.gone || m.state !== "none");
+    if (!mates.length) return "";
+    const missing = mates.filter((m) => m.state === "none");
+    const made = mates.filter((m) => m.state !== "none");
+    const waiting = made.filter((m) => m.state !== "connected");
+    const workspace = s.team ? `<b>${esc(s.team)}</b>` : "your workspace";
+    const label = s.making ? "Making them…" : !missing.length ? "Update their names and icons" : made.length ? `Make the other ${missing.length}` : `Make their ${missing.length} apps`;
+    return `<section class="card">
+      <h2>Teammates as Slack members</h2>
+      <p class="hint">Give each teammate a Slack app of its own, so it's a member you can @mention in Slack, like <b>@Emily</b>, with its own profile. ${APP} invites them to the linked channels, and their answers there come from their own app. You still write through ${APP}, and only you wake them. In your DM with ${APP} and in group DMs they keep answering under ${APP}'s app, with their name and picture.</p>
+      <ol class="sk-steps">
+        <li class="sk-step ${missing.length ? "now" : "done"}">${tick(!missing.length)}<div class="sk-body">
+          <h3>${missing.length ? "Make their apps" : "Their apps are made"}</h3>
+          <p class="hint">On ${ext("https://api.slack.com/apps", "Slack's apps page")}, at the top: <b>Your App Configuration Tokens</b> → <b>Generate Token</b> → ${workspace} → <b>Generate</b>. Copy the <b>Access Token</b> (<code>xoxe.xoxp-…</code>) and paste it here. ${APP} uses it to make the apps, named after the teammates with their emoji as the icon, and doesn't keep it. ${missing.length ? "" : "Paste one again to bring the apps' names and icons up to date (after renaming a teammate, say)."}</p>
+          <form class="sk-form" data-make autocomplete="off">
+            <label>Configuration token<input name="configToken" type="password" placeholder="xoxe.xoxp-…" spellcheck="false" required></label>
+            <div class="row-btns"><button class="btn ${missing.length ? "primary" : ""}" ${s.making ? "disabled" : ""}>${label}</button></div>
+          </form>
+        </div></li>
+        <li class="sk-step ${!made.length ? "" : waiting.length ? "now" : "done"}">${tick(made.length > 0 && !waiting.length && !missing.length)}<div class="sk-body">
+          <h3>Install each one</h3>
+          <p class="hint"><b>Install in Slack</b> opens the teammate's app: <b>Install to ${s.team ? esc(s.team) : "Workspace"}</b> → <b>Allow</b>. That page then shows its <b>Bot User OAuth Token</b> (<code>xoxb-…</code>): copy it and paste it here. It goes to your Keychain. Some workspaces need an admin to approve each new app.</p>
+          <ul class="sk-list">${mates.map(mateRow).join("")}</ul>
+        </div></li>
+      </ol>
+    </section>`;
+  }
+
+  function mateRow(m) {
+    const [cls, label] = MATE_STATE[m.state] || ["off", m.state];
+    const links = [
+      m.appLink ? ext(m.appLink, "App settings") : "",
+      m.state !== "none" ? `<button type="button" class="sk-link danger" data-mate-forget="${esc(m.id)}">Forget</button>` : "",
+    ].filter(Boolean);
+    const notes = [
+      m.state === "connected" ? `<b>@${esc(m.name)}</b> in Slack` : "",
+      m.slackName ? `Still <b>${esc(m.slackName)}</b> in Slack: update the apps to rename it` : "",
+      m.gone ? "No longer on the team: forget it here, and delete its app in Slack (App settings → Delete App)" : "",
+      m.detail ? esc(m.detail) : "",
+      ...links,
+    ].filter(Boolean);
+    const form =
+      (m.state === "created" || m.state === "failed") && !m.gone
+        ? `<form class="sk-mate-form" data-mate-connect="${esc(m.id)}" autocomplete="off">
+            ${m.installLink ? ext(m.installLink, "Install in Slack ↗", "btn") : ""}
+            <input name="mate-${esc(m.id)}" type="password" placeholder="then its xoxb-… token" aria-label="${esc(m.name)}'s Bot User OAuth Token" spellcheck="false" required>
+            <button class="btn primary" ${connectingMate === m.id ? "disabled" : ""}>${connectingMate === m.id ? "Checking…" : "Connect"}</button>
+          </form>`
+        : "";
+    return `<li class="sk-item">
+      <span class="sk-av" style="--c:${esc(m.color)}">${esc(m.avatar)}</span>
+      <div class="sk-main">
+        <div class="sk-top"><b>${esc(m.name)}</b> <span class="pill ${cls}">${label}</span></div>
+        ${notes.length ? `<div class="hint">${notes.join(" · ")}</div>` : ""}
+        ${form}
+      </div>
+    </li>`;
+  }
+
+  /** A teammate's emoji as its Slack app's icon: a 512 px PNG (base64), drawn with this Mac's emoji font. */
+  function iconPng(emoji) {
+    try {
+      const size = 512;
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      const g = c.getContext("2d");
+      g.font = `400px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+      g.textAlign = "left";
+      g.textBaseline = "alphabetic";
+      const m = g.measureText(emoji);
+      const w = m.actualBoundingBoxLeft + m.actualBoundingBoxRight || m.width;
+      const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || 400;
+      const fit = 448 / Math.max(w, h, 1);
+      g.translate(size / 2, size / 2);
+      g.scale(fit, fit);
+      g.fillText(emoji, (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2, (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+      const px = g.getImageData(0, 0, size, size).data;
+      let drawn = false;
+      for (let i = 3; i < px.length && !drawn; i += 4 * 97) drawn = px[i] > 0;
+      return drawn ? c.toDataURL("image/png").split(",")[1] : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // ---------- Not set up: the steps ----------
@@ -161,7 +254,7 @@
 
   function body() {
     const s = slack();
-    return s.configured ? `${s.missingScopes && s.missingScopes.length ? updateHtml(s) : ""}${appHtml()}${linksHtml()}${usageHtml()}` : stepsHtml();
+    return s.configured ? `${s.missingScopes && s.missingScopes.length ? updateHtml(s) : ""}${appHtml()}${matesHtml()}${linksHtml()}${usageHtml()}` : stepsHtml();
   }
 
   function page() {
@@ -187,15 +280,17 @@
     </div>`;
   }
 
-  /** Redraws the live part, keeping half-typed tokens. */
+  /** Redraws the live part, keeping half-typed tokens (and where the cursor was). */
   function update() {
     if (S.view !== "slack") return;
-    const typed = [...view().querySelectorAll(".sk-form input")].map((i) => [i.name, i.value]);
+    const typed = [...view().querySelectorAll("#sk-body input[name]")].map((i) => [i.name, i.value]);
+    const focused = document.activeElement?.closest?.("#sk-body") ? document.activeElement.name : "";
     $("sk-body").innerHTML = body();
     for (const [name, value] of typed) {
-      const input = view().querySelector(`.sk-form input[name="${name}"]`);
+      const input = view().querySelector(`#sk-body input[name="${CSS.escape(name)}"]`);
       if (input && value) input.value = value;
     }
+    if (focused) view().querySelector(`#sk-body input[name="${CSS.escape(focused)}"]`)?.focus();
   }
 
   async function act(path, payload, done) {
@@ -243,6 +338,12 @@
       if (!confirm(`Remove the Slack app from Harmonia? Its tokens leave your Keychain and every Slack link goes (the channels here stay). The app stays in Slack until you delete it there.`)) return;
       return act("/api/slack/remove", {}, "The Slack app is removed.");
     }
+    const forget = t.closest("[data-mate-forget]");
+    if (forget) {
+      const m = (slack().teammates || []).find((x) => x.id === forget.dataset.mateForget);
+      if (!confirm(`Forget ${m ? m.name : "this teammate"}'s Slack app here? Its token leaves your Keychain and its answers go out under ${APP} again. The app stays in Slack until you delete it there (App settings → Delete App).`)) return;
+      return act("/api/slack/teammates/forget", { id: forget.dataset.mateForget }, "Forgotten.");
+    }
     const unlink = t.closest("[data-unlink]");
     if (unlink) {
       if (!confirm("Unlink this Slack conversation? Both sides keep their messages. If you write there again, it links to a new channel here.")) return;
@@ -251,6 +352,33 @@
   });
 
   view().addEventListener("submit", async (e) => {
+    const make = e.target.closest("[data-make]");
+    if (make) {
+      e.preventDefault();
+      const icons = {};
+      for (const m of slack().teammates || []) {
+        if (m.gone) continue;
+        const png = iconPng(m.avatar);
+        if (png) icons[m.id] = png;
+      }
+      const token = make.configToken.value;
+      const ok = await act("/api/slack/teammates/make", { configToken: token, icons }, "Done. Now install each one in Slack and paste its token.");
+      if (ok) for (const i of view().querySelectorAll("[data-make] input")) i.value = "";
+      return;
+    }
+    const mate = e.target.closest("[data-mate-connect]");
+    if (mate) {
+      e.preventDefault();
+      const id = mate.dataset.mateConnect;
+      const input = mate.querySelector("input");
+      connectingMate = id;
+      update();
+      const name = (slack().teammates || []).find((x) => x.id === id)?.name || "It";
+      await act("/api/slack/teammates/connect", { id, botToken: input.value }, `${name} is in Slack now: @${name} reaches it.`);
+      connectingMate = "";
+      update();
+      return;
+    }
     const form = e.target.closest("[data-connect]");
     if (!form) return;
     e.preventDefault();
