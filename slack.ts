@@ -806,12 +806,19 @@ export class SlackBridge {
     const host = new URL(url).hostname;
     if (!(host === "slack.com" || host.endsWith(".slack.com") || host === new URL(SLACK_API).hostname)) throw new Error(`it's not on Slack (${host})`);
     const r = await fetch(url, { headers: { authorization: `Bearer ${this.botToken}` }, signal: AbortSignal.timeout(FILE_TIMEOUT) });
+    // A token without files:read gets HTTP 403 (or Slack's sign-in page instead of the file). Slack is asked again what
+    // the token may do, in case the app was updated and reinstalled since the scopes were last checked.
+    const signIn = r.ok && /^text\/html/i.test(r.headers.get("content-type") ?? "") && !/html/i.test(type ?? "");
+    if (r.status === 401 || r.status === 403 || signIn) {
+      await r.body?.cancel().catch(() => {});
+      await this.checkScopes();
+      const scopes = this.config?.scopes;
+      if (scopes && !scopes.includes("files:read")) throw new SlackError("missing_scope", "the Slack app needs files:read");
+      throw new Error(signIn ? "Slack sent its sign-in page instead of the file" : `Slack refused it (HTTP ${r.status})`);
+    }
     if (!r.ok) throw new Error(`Slack answered HTTP ${r.status}`);
-    // Without files:read, Slack answers with its sign-in page instead of the file.
-    if (/^text\/html/i.test(r.headers.get("content-type") ?? "") && !/html/i.test(type ?? ""))
-      throw new SlackError("missing_scope", "the Slack app needs files:read");
     if (Number(r.headers.get("content-length")) > MAX_FILE) throw new Error(`over the ${fileSize(MAX_FILE)} limit`);
-    return saveAttachment(channelId, name, type, r);
+    return saveAttachment(channelId, name, type, r.body);
   }
 
   /** The message here that is `ts` in a Slack conversation. */

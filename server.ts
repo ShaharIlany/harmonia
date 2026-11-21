@@ -229,7 +229,7 @@ Bun.serve({
         name = decodeURIComponent(req.headers.get("x-file-name") ?? "") || name;
       } catch {}
       try {
-        const file = await saveAttachment(ch.id, name, req.headers.get("x-file-type") ?? undefined, new Response(req.body));
+        const file = await saveAttachment(ch.id, name, req.headers.get("x-file-type") ?? undefined, req.body);
         stage(ch.id, file);
         noteActivity();
         return json(file);

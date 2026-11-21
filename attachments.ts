@@ -76,22 +76,41 @@ export function fileSize(n: number): string {
 }
 
 /**
- * Saves a file for a channel and returns its record. `data` is the file itself, or a Response whose body is (a
- * download, or the page's upload): it's streamed to disk. Fails past MAX_FILE.
+ * Saves a file for a channel and returns its record. `body` is the file's bytes as they arrive (the page's upload, or
+ * a download from Slack): streamed to disk chunk by chunk, and stopped past MAX_FILE.
  */
-export async function saveAttachment(channelId: string, name: string, type: string | undefined, data: Blob | Response | Uint8Array): Promise<Attachment> {
+export async function saveAttachment(channelId: string, name: string, type: string | undefined, body: ReadableStream<Uint8Array> | null): Promise<Attachment> {
   const a = { id: newId(), name: safeName(name) };
   const dir = join(ATTACH_DIR, channelId, a.id);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, a.name);
   try {
-    const size = data instanceof Response ? await Bun.write(path, data) : await Bun.write(path, new Blob([data]));
-    if (size > MAX_FILE) throw new Error(`it's over ${fileSize(MAX_FILE)}`);
-    return { ...a, type: fileType(a.name, type), size };
+    return { ...a, type: fileType(a.name, type), size: await writeStream(path, body) };
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     throw e;
   }
+}
+
+/**
+ * Writes a stream to a file, chunk by chunk, and returns its size. Bun.write(path, new Response(req.body)) never
+ * finished for an upload from the page (nothing reached the disk), and the updater saw Bun.write(path, response) stall
+ * on a download inside the server too (updates.ts).
+ */
+async function writeStream(path: string, body: ReadableStream<Uint8Array> | null): Promise<number> {
+  const w = Bun.file(path).writer({ highWaterMark: 1024 * 1024 });
+  let size = 0;
+  try {
+    if (body)
+      for await (const chunk of body) {
+        size += chunk.byteLength;
+        if (size > MAX_FILE) throw new Error(`it's over ${fileSize(MAX_FILE)}`);
+        w.write(chunk);
+      }
+  } finally {
+    await w.end();
+  }
+  return size;
 }
 
 // ---------- Staged: uploaded from the page, not sent yet ----------
