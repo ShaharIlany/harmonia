@@ -627,7 +627,7 @@ a.task-link:hover { color: #9d8cff; }
 .sk-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #slack-view .card a:not(.btn) { color: var(--accent); }
 a.btn { text-decoration: none; color: var(--text); display: inline-flex; align-items: center; }
-a.btn.primary { color: #fff; }
+a.btn.primary { color: var(--accent-text); }
 
 .sk-steps { list-style: none; margin: 0; padding: 0; counter-reset: sk; }
 .sk-step { position: relative; display: flex; gap: 14px; padding: 0 0 18px; counter-increment: sk; opacity: 0.55; }
