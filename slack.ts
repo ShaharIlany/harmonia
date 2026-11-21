@@ -13,6 +13,11 @@
 // thread reply, or the box behind its button) is feedback, as ✎ gives it in the app. A teammate's request for a tool
 // (a connector) or a permission comes with buttons, and the card says what you decided, here or there.
 //
+// Files go both ways. One attached to a Slack message (yours, or someone else's in a linked channel) is fetched
+// (files:read) into the channel's attachments here, so the teammates can open it. One you attach in the app goes to
+// Slack (files:write) in a message from the app, with your words as its comment and your name at the top: Slack posts
+// a file message itself, so it can't carry your name and picture the way chat:write.customize does.
+//
 // `@Harmonia new channel <name>` (or `new private channel <name>`) creates a Slack channel with you and anyone you
 // @mention in it (conversations.create and conversations.invite: no admin needed) and a linked channel here.
 //
@@ -35,7 +40,8 @@ import { DATA, DEFAULT_CWD } from "./paths";
 import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
 import { channels, createChannel, messages, saveMessages, type Channel, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
-import { SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
+import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
+import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
 
 const FILE = join(DATA, "slack.json");
 const KEYCHAIN_SERVICE = "Harmonia Slack";
@@ -49,6 +55,7 @@ const PAIR_TRIES = 5; // wrong pairing codes one Slack user may send before the 
 const FEEDBACK = "warning"; // ⚠️: your reaction that asks for feedback on a teammate's message
 const FEEDBACK_VIEW = "harmonia:feedback"; // the feedback box (a modal)
 const ASKS_KEPT = 50; // feedback questions whose thread replies still count as feedback
+const FILE_TIMEOUT = 5 * 60_000; // one file's download from Slack, or upload to it
 
 /** The app's name in Slack. The commands are written to it: `@Harmonia new channel …`. */
 export const APP_NAME = "Harmonia";
@@ -56,7 +63,8 @@ const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
 
 /**
  * What the app may do, as bot scopes: read and write in the conversations it's in, post under the teammates' names,
- * create channels and invite you to them, react (👀) and read your reactions, and look up people by id or email.
+ * create channels and invite you to them, react (👀) and read your reactions, look up people by id or email, and fetch
+ * and send files.
  */
 export const BOT_SCOPES = [
   "app_mentions:read",
@@ -65,6 +73,8 @@ export const BOT_SCOPES = [
   "channels:read",
   "chat:write",
   "chat:write.customize",
+  "files:read",
+  "files:write",
   "groups:history",
   "groups:read",
   "groups:write",
@@ -208,10 +218,10 @@ type Content = { markdown: string } | { text: string; blocks: unknown[] };
 
 type Deps = {
   emit: (e: SlackEvent) => void;
-  /** Posts as you in a channel, exactly like typing it there (from Slack): maybe a reply to a message there. */
-  post: (ch: Channel, text: string, from: { replyTo?: string; slack: SlackRef }) => Message;
+  /** Posts as you in a channel, exactly like typing it there (from Slack): maybe a reply to a message there, maybe with files. */
+  post: (ch: Channel, text: string, from: { replyTo?: string; slack: SlackRef; files?: Attachment[] }) => Message;
   /** Someone else's message in a linked Slack conversation: context only. */
-  guest: (ch: Channel, name: string, text: string, slackId: string | undefined, slack: SlackRef) => void;
+  guest: (ch: Channel, name: string, text: string, slackId: string | undefined, slack: SlackRef, files?: Attachment[]) => void;
   /** A note in a channel (from Slack, so it isn't sent back there). */
   note: (ch: Channel, text: string) => void;
   /** Your reaction on a message (undefined takes it off), from Slack. */
@@ -736,18 +746,72 @@ export class SlackBridge {
       this.changed();
       return yours ? this.say(ev.channel, "Its Harmonia channel is gone. Write again to link this conversation to a new one.") : undefined;
     }
-    const files = (ev.files ?? []).map((f: any) => f.name || f.title).filter(Boolean);
+    if (yours && ch.status === "archived") return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`, thread);
+    const got = await this.fetchFiles(ch, Array.isArray(ev.files) ? ev.files : []);
     let text = await this.chatText(raw);
-    if (files.length) text = [text, `(attached in Slack: ${files.join(", ")})`].filter(Boolean).join("\n");
-    if (!text) return yours ? this.say(ev.channel, "I can only read text for now.", thread) : undefined;
+    if (got.missed.length) text = [text, `(attached in Slack, not fetched: ${got.missed.join("; ")})`].filter(Boolean).join("\n");
+    if (!text && !got.files.length) return yours ? this.say(ev.channel, "I can only read text and files for now.", thread) : undefined;
+    if (yours && got.noScope)
+      this.say(ev.channel, `I couldn't fetch your file${got.missed.length > 1 ? "s" : ""} for the teammates: the ${APP_NAME} app needs the files:read scope. Harmonia's Slack page shows how to update it.`, thread);
     const ref: SlackRef = { channel: ev.channel, ts: String(ev.ts), ...(thread && { thread }) };
-    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user, ref);
-    if (ch.status === "archived") return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`, thread);
+    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user, ref, got.files);
     // The answers go where you wrote: into the thread, or the channel itself.
     if (thread) this.threads.set(ch.id, thread);
     else this.threads.delete(ch.id);
     this.lastIn.set(ch.id, ref.ts);
-    this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref });
+    this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref, files: got.files });
+  }
+
+  /**
+   * The files on a Slack message, copied into the channel's attachments so the teammates can open them. What couldn't
+   * be (a link to Google Drive, a file deleted since, one too big) is named in `missed`, with why. `noScope`: the app
+   * was made before it could read files (files:read).
+   */
+  private async fetchFiles(ch: Channel, list: any[]): Promise<{ files: Attachment[]; missed: string[]; noScope?: boolean }> {
+    const files: Attachment[] = [];
+    const missed: string[] = [];
+    let noScope = false;
+    for (let f of list.slice(0, MAX_FILES)) {
+      if (!f || typeof f !== "object") continue;
+      // Some events carry only the file's id ("check_file_info"): files.info has the rest.
+      if (f.id && (f.file_access === "check_file_info" || (!f.url_private && !f.url_private_download && f.mode !== "external"))) {
+        try {
+          f = (await this.api("files.info", { file: f.id })).file ?? f;
+        } catch (e) {
+          if (e instanceof SlackError && e.code === "missing_scope") noScope = true;
+        }
+      }
+      const name = String(f.name || f.title || "file");
+      const url = f.url_private_download || f.url_private;
+      if (f.mode === "external" || f.is_external) missed.push(f.external_url || f.url_private ? `${name} (a link: ${f.external_url || f.url_private})` : name);
+      else if (f.mode === "tombstone" || f.mode === "hidden_by_limit") missed.push(`${name} (no longer in Slack)`);
+      else if (Number(f.size) > MAX_FILE) missed.push(`${name} (${fileSize(Number(f.size))}, over the ${fileSize(MAX_FILE)} limit)`);
+      else if (!url) missed.push(noScope ? `${name} (the Slack app needs files:read)` : name);
+      else {
+        try {
+          files.push({ ...(await this.download(ch.id, String(url), name, f.mimetype)), ...(f.id && { slack: String(f.id) }) });
+        } catch (e: any) {
+          if (e?.code === "missing_scope") noScope = true;
+          missed.push(`${name} (${e?.message ?? e})`);
+          this.deps.log("slack.file_fetch_failed", { file: f.id, error: e?.message });
+        }
+      }
+    }
+    if (list.length > MAX_FILES) missed.push(`${list.length - MAX_FILES} more file${list.length - MAX_FILES > 1 ? "s" : ""} (up to ${MAX_FILES} on a message)`);
+    return { files, missed, noScope };
+  }
+
+  /** One file from Slack, with the bot token. Slack's own hosts only: the token goes nowhere else. */
+  private async download(channelId: string, url: string, name: string, type?: string): Promise<Attachment> {
+    const host = new URL(url).hostname;
+    if (!(host === "slack.com" || host.endsWith(".slack.com") || host === new URL(SLACK_API).hostname)) throw new Error(`it's not on Slack (${host})`);
+    const r = await fetch(url, { headers: { authorization: `Bearer ${this.botToken}` }, signal: AbortSignal.timeout(FILE_TIMEOUT) });
+    if (!r.ok) throw new Error(`Slack answered HTTP ${r.status}`);
+    // Without files:read, Slack answers with its sign-in page instead of the file.
+    if (/^text\/html/i.test(r.headers.get("content-type") ?? "") && !/html/i.test(type ?? ""))
+      throw new SlackError("missing_scope", "the Slack app needs files:read");
+    if (Number(r.headers.get("content-length")) > MAX_FILE) throw new Error(`over the ${fileSize(MAX_FILE)} limit`);
+    return saveAttachment(channelId, name, type, r);
   }
 
   /** The message here that is `ts` in a Slack conversation. */
@@ -1062,6 +1126,7 @@ export class SlackBridge {
       if (root) this.threads.set(ch.id, root);
       else this.threads.delete(ch.id);
       this.lastIn.delete(ch.id); // you're writing in the app now: 👀 goes on nothing in Slack
+      if (m.meta?.files?.length) return void this.sendFiles(link, ch, m, root);
       return this.postAs(USER_LOOK, link.conversationId, { markdown: m.text }, { thread: root, ref });
     }
     const thread = this.threads.get(ch.id);
@@ -1163,6 +1228,58 @@ export class SlackBridge {
         saveMessages(opts.ref.channelId);
       }
     }, channel);
+  }
+
+  /**
+   * Files you attached in the app, in Slack: each one uploaded (files.getUploadURLExternal, then its bytes), then all
+   * shared in one message (files.completeUploadExternal) with your words as its comment. Slack posts that message from
+   * the app, so the comment starts with your name. If Slack won't take them (an app made before files:write), your words
+   * go as usual with the files' names, and a note here says why.
+   */
+  private async sendFiles(link: Link, ch: Channel, m: Message, thread?: string) {
+    const files = m.meta!.files!;
+    const conv = link.conversationId;
+    const comment = [`*${escapeSlack(USER_LOOK.name)}*`, m.text.trim() && mrkdwn(m.text)].filter(Boolean).join("\n");
+    let refused: unknown;
+    const done = await this.queue(async () => {
+      try {
+        const ids: { id: string; title: string }[] = [];
+        for (const f of files) {
+          const data = Bun.file(attachmentPath(ch.id, f));
+          const up = await this.api("files.getUploadURLExternal", { filename: f.name, length: data.size });
+          const r = await fetch(String(up.upload_url), { method: "POST", body: data, signal: AbortSignal.timeout(FILE_TIMEOUT) });
+          if (!r.ok) throw new SlackError(`http_${r.status}`, `Slack's upload answered HTTP ${r.status}`);
+          ids.push({ id: String(up.file_id), title: f.name });
+        }
+        const j = await this.api("files.completeUploadExternal", { files: ids, channel_id: conv, initial_comment: comment, ...(thread && { thread_ts: thread }) });
+        ids.forEach((x, i) => (files[i].slack = x.id));
+        return { ids, first: j.files?.[0] };
+      } catch (e) {
+        if (retryable(e)) throw e; // the queue tries again
+        refused = e;
+      }
+    }, conv);
+    if (!done) {
+      const why = refused instanceof SlackError && refused.code === "missing_scope"
+        ? `the ${APP_NAME} app needs the files:write scope (the Slack page shows how to update it)`
+        : String((refused as Error)?.message ?? "Slack didn't answer");
+      this.deps.note(ch, `Couldn't send ${files.map((f) => f.name).join(", ")} to Slack: ${why}.`);
+      const names = `_(attached in Harmonia: ${files.map((f) => f.name).join(", ")})_`;
+      return this.postAs(USER_LOOK, conv, { markdown: [m.text.trim(), names].filter(Boolean).join("\n\n") }, { thread, ref: { channelId: ch.id, message: m } });
+    }
+    saveMessages(ch.id);
+    // The message's ts (for thread replies and reactions on it in Slack) is in the file's shares, which Slack may fill
+    // in only a moment later.
+    const shared = (file: any) => (file?.shares?.public?.[conv] ?? file?.shares?.private?.[conv])?.[0]?.ts;
+    let ts = shared(done.first);
+    for (const wait of [1_000, 2_000, 4_000, 8_000]) {
+      if (ts) break;
+      await Bun.sleep(wait);
+      ts = shared((await this.api("files.info", { file: done.ids[0].id }).catch(() => ({}))).file);
+    }
+    if (!ts) return this.deps.log("slack.file_ts_unknown", { channelId: ch.id, file: done.ids[0].id });
+    (m.meta ??= {}).slack = { channel: conv, ts: String(ts), ...(thread && { thread }) };
+    saveMessages(ch.id);
   }
 
   /** The app's own words, in Slack's mrkdwn (in a thread when `thread` is set). */

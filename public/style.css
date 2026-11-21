@@ -338,7 +338,7 @@ dialog textarea { font: inherit; font-weight: 400; line-height: 1.45; padding: 8
    ========================================================= */
 [hidden] { display: none !important; }
 .ch-body { flex: 1; display: flex; min-height: 0; }
-.conversation { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.conversation { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
 
 .hdr-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; border-radius: 18px; padding: 7px 12px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); flex: none; }
 .hdr-btn:hover { background: var(--row-active); color: var(--text); }
@@ -658,3 +658,68 @@ a.btn.primary { color: var(--accent-text); }
 .sk-update { border-color: color-mix(in srgb, #e8912d 55%, var(--line)); }
 .sk-update .btn { padding-block: 2px; }
 .sk-manifest { width: 100%; min-height: 220px; margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ---------- Attached files ---------- */
+/* In a bubble: pictures in a grid, anything else as a card with a badge for its kind (click opens it in its app) */
+.files { display: flex; flex-direction: column; gap: 4px; }
+.bubble.has-files .files + .text { margin-top: 5px; }
+.bubble.only-files .b-meta { position: static; display: flex; justify-content: flex-end; margin-top: 3px; }
+.f-pics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3px; width: min(330px, 100%); }
+.f-pics[data-cols="1"] { grid-template-columns: 1fr; width: auto; max-width: min(330px, 100%); }
+.f-pics[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
+.f-pic { display: block; border: 0; padding: 0; border-radius: 6px; overflow: hidden; cursor: zoom-in; background: color-mix(in srgb, var(--text) 7%, transparent); }
+.f-pic img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.f-pics[data-cols="1"] .f-pic img { width: auto; max-width: 100%; max-height: 340px; min-width: 80px; min-height: 60px; aspect-ratio: auto; object-fit: contain; }
+.f-pics[data-cols="2"] .f-pic:last-child:nth-child(odd) { grid-column: span 2; }
+.f-pics[data-cols="2"] .f-pic:last-child:nth-child(odd) img { aspect-ratio: 2; }
+.f-pic:focus-visible, .f-doc:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.f-doc { display: flex; align-items: center; gap: 10px; width: min(330px, 100%); border: 0; border-radius: 6px; padding: 7px 10px 7px 8px; font: inherit; color: var(--text); text-align: start; cursor: pointer;
+  background: color-mix(in srgb, var(--text) 6%, transparent); }
+.out .f-doc { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.f-doc:hover { background: color-mix(in srgb, var(--text) 11%, transparent); }
+/* A page with its corner folded, in the kind's colour, with the extension on it */
+.f-ext { flex: none; width: 32px; height: 40px; border-radius: 4px; padding-bottom: 5px; display: grid; place-items: end center; background: var(--fc, #475569); color: #fff;
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.2px; clip-path: polygon(0 0, 68% 0, 100% 24%, 100% 100%, 0 100%); }
+.f-info { display: flex; flex-direction: column; min-width: 0; }
+.f-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-sub { font-size: 12px; color: var(--muted); }
+
+/* In the composer: the 📎 button, and the files waiting to go out with the next message */
+.attach-btn { flex: none; width: 42px; height: 42px; margin-inline-end: -4px; border: 0; border-radius: 50%; display: grid; place-items: center; background: none; color: var(--muted); cursor: pointer; }
+.attach-btn:hover { color: var(--text); background: var(--row-active); }
+.attach-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.attach-bar { display: flex; gap: 8px; padding: 10px 16px 0; background: var(--head); overflow-x: auto; }
+.att { position: relative; flex: none; display: flex; max-width: 250px; border-radius: 10px; background: var(--field); box-shadow: var(--bubble-shadow); }
+.att-main { display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: none; padding: 6px 30px 6px 6px; font: inherit; color: var(--text); text-align: start; cursor: default; border-radius: 10px; }
+.att-main[data-att-retry] { cursor: pointer; }
+.att img { flex: none; width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+.att-info { display: flex; flex-direction: column; min-width: 0; }
+.att-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att.uploading img, .att.uploading .f-ext { opacity: 0.55; }
+.att.uploading .att-sub { animation: blink 1.4s infinite; }
+.att.failed { box-shadow: 0 0 0 1px var(--error-text); }
+.att.failed .att-sub { color: var(--error-text); }
+.att-x { position: absolute; top: 3px; inset-inline-end: 3px; width: 24px; height: 24px; border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.att-x:hover { background: var(--line); color: var(--text); }
+@media (max-width: 760px) { .attach-bar { padding: 8px 10px 0; } }
+@media (prefers-reduced-motion: reduce) { .att.uploading .att-sub { animation: none; } }
+
+/* Dragging files over the channel */
+.drop-zone { position: absolute; inset: 8px; z-index: 6; display: grid; place-items: center; pointer-events: none; border: 2px dashed var(--accent); border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent); color: var(--text); font-size: 15px; }
+
+/* The picture viewer */
+.viewer { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: rgba(10, 11, 13, 0.93); color: #fff; }
+.viewer::backdrop { background: transparent; }
+.viewer[open] { display: flex; flex-direction: column; }
+.v-top { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
+.v-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.viewer .btn { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); color: #fff; }
+.viewer .btn:hover { background: rgba(255, 255, 255, 0.2); }
+.v-x { width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: #fff; font-size: 26px; line-height: 1; cursor: pointer; }
+.v-x:hover, .v-nav:hover { background: rgba(255, 255, 255, 0.2); }
+.v-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 0 16px 24px; }
+.v-body img { min-width: 0; max-width: calc(100% - 112px); max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5); }
+.v-nav { flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 28px; line-height: 1; cursor: pointer; }
+.viewer button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }

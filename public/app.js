@@ -30,6 +30,39 @@
     return rtl > ltr ? "rtl" : "ltr";
   };
   const fmtTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  // ---------- Attached files ----------
+  const fileSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
+  /** Pictures the page shows as they are; any other file is a card that opens in its app. */
+  const INLINE_IMAGE = /^image\/(png|jpeg|gif|webp|bmp|avif)$/;
+  const fileUrl = (chId, id) => `/api/channels/${chId}/files/${id}`;
+  const MAX_FILE = 100 * 1024 * 1024; // as attachments.ts
+  const MAX_FILES = 10;
+  /** What kind of file it is, for its card: a label, and a badge with its extension in a colour for the kind. */
+  function fileKind(name, type) {
+    const ext = ((name.match(/\.([a-z0-9]{1,8})$/i) || [])[1] || "").toLowerCase();
+    const is = (types, exts) => types.test(type) || exts.test(ext);
+    const [label, color] =
+      is(/pdf/, /^pdf$/) ? ["PDF", "#d93036"]
+      : is(/word|opendocument\.text|rtf|pages/, /^(docx?|pages|rtf|odt)$/) ? ["Document", "#2563eb"]
+      : is(/sheet|excel|csv|numbers/, /^(xlsx?|csv|tsv|numbers|ods)$/) ? ["Spreadsheet", "#15803d"]
+      : is(/presentation|powerpoint|keynote/, /^(pptx?|key|odp)$/) ? ["Slides", "#c2410c"]
+      : is(/zip|tar|gzip|7z|rar|compressed/, /^(zip|tar|gz|tgz|7z|rar)$/) ? ["Archive", "#4b5563"]
+      : /^image\//.test(type) ? ["Image", "#7e22ce"]
+      : /^video\//.test(type) ? ["Video", "#be185d"]
+      : /^audio\//.test(type) ? ["Audio", "#be185d"]
+      : /^text\/|json|xml|yaml|javascript|typescript/.test(type) ? ["Text", "#475569"]
+      : ["File", "#475569"];
+    return { label, color, ext: (ext || label).toUpperCase().slice(0, 4) };
+  }
+  const fileBadge = (name, type) => {
+    const k = fileKind(name, type);
+    return `<span class="f-ext" style="--fc:${k.color}" aria-hidden="true">${esc(k.ext)}</span>`;
+  };
+  /** A message's files in a line: "📷 Photo", "📷 3 photos", "📎 report.pdf", "📎 4 files". */
+  const filesLabel = (files) =>
+    !files || !files.length ? ""
+    : files.every((f) => /^image\//.test(f.type)) ? (files.length > 1 ? `📷 ${files.length} photos` : "📷 Photo")
+    : files.length > 1 ? `📎 ${files.length} files` : `📎 ${files[0].name}`;
   const fmtDay = (ts) => {
     const d = new Date(ts), today = new Date();
     const y = new Date(); y.setDate(today.getDate() - 1);
@@ -123,7 +156,7 @@
       tools: "🧰 asks for a tool",
       job: `⚙️ started a job`,
       error: `⚠️ ${snippet(m.text)}`,
-    }[m.kind] || snippet(m.text);
+    }[m.kind] || [filesLabel(m.meta && m.meta.files), snippet(m.text)].filter(Boolean).join(" ");
     return `${who ? `<span class="c-who"${t ? ` style="--c:${t.color}"` : ""}>${esc(who)}:</span> ` : ""}<span dir="auto">${esc(what)}</span>`;
   }
 
@@ -251,6 +284,7 @@
     // A run of messages from one person within a few minutes, on one day, shares one name and one bubble tail.
     const cont = prev && prev.author === m.author && m.ts - prev.ts < 5 * 60e3 && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
 
+    const hasFiles = !!(m.meta && m.meta.files && m.meta.files.length);
     let body;
     if (m.kind === "job") {
       body = jobCard(channelOf(m), m.meta.jobId);
@@ -284,6 +318,7 @@
         const again = t && !(m.meta && m.meta.retried) ? `<button class="btn" data-retry="${m.id}">Try again</button>` : "";
         if (fix || again) body += `<div class="err-action">${fix}${again}</div>`;
       }
+      if (hasFiles) body = filesHtml(m) + (m.text ? body : "");
     }
 
     if (m.meta && m.meta.replyTo) body = quoteHtml(m.meta.replyTo) + body;
@@ -300,7 +335,7 @@
     return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
       ${isUser ? "" : cont ? `<span class="m-av"></span>` : guest ? `<span class="m-av" title="${esc(name)}, in ${guestWhere}" style="--c:#888">👤</span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
       <div class="m-col">
-        <div class="bubble ${wide ? "wide" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
+        <div class="bubble ${wide ? "wide" : ""} ${hasFiles ? "has-files" : ""} ${hasFiles && !m.text ? "only-files" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
           <button class="m-more" data-msg-menu="${m.id}" aria-label="Message menu" title="More">⌄</button>
           ${!isUser && !cont ? (guest ? `<div class="b-name"><span>${esc(name)}</span><span class="b-role">in ${guestWhere}</span></div>` : `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>`) : ""}
           ${body}${foot}
@@ -311,6 +346,18 @@
       ${side}
     </div>`;
   }
+
+  /** A message's files: pictures in a grid (click for the viewer), anything else as a card that opens in its app. */
+  function filesHtml(m) {
+    const pics = m.meta.files.filter((f) => INLINE_IMAGE.test(f.type));
+    const docs = m.meta.files.filter((f) => !INLINE_IMAGE.test(f.type));
+    const cols = pics.length === 1 ? 1 : pics.length <= 4 ? 2 : 3;
+    const pic = (f) => `<button type="button" class="f-pic" data-file-view="${esc(f.id)}" data-mid="${m.id}" title="${esc(f.name)}"><img src="${fileUrl(S.current, f.id)}" alt="${esc(f.name)}" loading="lazy"></button>`;
+    const doc = (f) => `<button type="button" class="f-doc" data-file-open="${esc(f.id)}" title="Open ${esc(f.name)}">${fileBadge(f.name, f.type)}
+      <span class="f-info"><span class="f-name" dir="auto">${esc(f.name)}</span><span class="f-sub">${fileSize(f.size)} · ${esc(fileKind(f.name, f.type).label)}</span></span></button>`;
+    return `<div class="files">${pics.length ? `<div class="f-pics" data-cols="${cols}">${pics.map(pic).join("")}</div>` : ""}${docs.map(doc).join("")}</div>`;
+  }
+  const fileAction = (chId, id, action) => api(`${fileUrl(chId, id)}/${action}`, {}).catch((err) => toast(err.message));
 
   /** The line under a message: who the channel's Mozart (or, when it couldn't answer, a rule) woke after it. */
   function routedHtml(meta) {
@@ -432,7 +479,7 @@
     input.focus();
   }
   const replyTextOf = (m) =>
-    m.kind === "permission" ? `asks to use ${m.meta.permission.tool}` : m.kind === "tools" ? `asks for ${m.meta.toolRequest.tools.map((x) => x.name).join(", ")}` : m.text;
+    m.kind === "permission" ? `asks to use ${m.meta.permission.tool}` : m.kind === "tools" ? `asks for ${m.meta.toolRequest.tools.map((x) => x.name).join(", ")}` : m.text || filesLabel(m.meta && m.meta.files);
 
   function gotoMessage(id) {
     const el = document.querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
@@ -522,7 +569,13 @@
     const el = $("messages");
     return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
-  const toBottom = () => ($("messages").scrollTop = $("messages").scrollHeight);
+  let stuck = true; // the view is at the bottom: a picture that loads keeps it there
+  const toBottom = () => {
+    stuck = true;
+    $("messages").scrollTop = $("messages").scrollHeight;
+  };
+  $("messages").addEventListener("scroll", () => (stuck = nearBottom()), { passive: true });
+  $("messages").addEventListener("load", (e) => e.target.tagName === "IMG" && stuck && toBottom(), true);
 
   function renderMessages() {
     const list = S.msgs[S.current] || [];
@@ -622,11 +675,16 @@
     const archived = ch.status === "archived";
     const mine = (m.meta?.reactions || []).find((r) => r.by === "user");
     const job = m.kind === "job" && jobById(ch, m.meta.jobId);
+    const files = (m.meta && m.meta.files) || [];
     return [
       !archived && m.author !== "system" && { emojis: QUICK, current: mine && mine.emoji, run: (e) => react(m.id, e) },
       !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "↩", run: () => setReply(m) },
       t && !archived && { label: `Feedback for ${t.name}…`, icon: "✎", run: () => openFeedback(m) },
       m.text && { label: "Copy text", icon: "⧉", run: () => copy(m.text, "Text") },
+      files.length && { sep: true },
+      files.length === 1 && { label: `Open ${files[0].name}`, icon: "↗", run: () => fileAction(ch.id, files[0].id, "open") },
+      ...files.map((f) => ({ label: files.length === 1 ? "Show in Finder" : `Show ${f.name} in Finder`, icon: "📁", run: () => fileAction(ch.id, f.id, "reveal") })),
+      files.length && { sep: true },
       m.meta?.replyTo && { label: "Show the quoted message", icon: "↑", run: () => gotoMessage(m.meta.replyTo.id) },
       m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "↻", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
       job && { sep: true },
@@ -724,6 +782,10 @@
     }
     const rx = e.target.closest("[data-react]");
     if (rx) return react(rx.dataset.mid, rx.dataset.react);
+    const fv = e.target.closest("[data-file-view]");
+    if (fv) return openViewer(fv.dataset.mid, fv.dataset.fileView);
+    const fo = e.target.closest("[data-file-open]");
+    if (fo) return fileAction(S.current, fo.dataset.fileOpen, "open");
     const who = e.target.closest("[data-person]");
     if (who) return openAgent(who.dataset.person);
     const fb = e.target.closest("[data-feedback]");
@@ -894,6 +956,7 @@
     renderSubtitle();
     renderStatus();
     renderTask();
+    renderAttachBar();
     if (!S.msgs[id]) S.msgs[id] = await api(`/api/channels/${id}/messages`);
     renderSidebar();
     renderMessages();
@@ -962,6 +1025,7 @@
     const archived = c.status === "archived";
     $("archived-bar").hidden = !archived;
     $("composer").hidden = archived;
+    renderAttachBar();
     $("ch-status").hidden = !c.status;
     $("ch-status").innerHTML = c.status ? `<span class="status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}` : "";
     $("ch-name").textContent = c.name;
@@ -1146,7 +1210,7 @@
   function autosize() {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 220) + "px";
-    $("send").disabled = !input.value.trim();
+    $("send").disabled = !input.value.trim() && !pendingOf().length;
   }
 
   function mentionQuery() {
@@ -1216,21 +1280,196 @@
 
   $("composer").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const chId = S.current;
     const text = input.value.trim();
-    if (!text) return;
+    const files = pendingOf(chId);
+    if (!text && !files.length) return;
+    if (files.some((a) => a.status === "failed")) return toast("A file didn't upload. Click it to try again, or take it off.");
     const re = replyTo;
     input.value = "";
     autosize();
     setReply(null);
     if (notifyLevel !== "off" && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    // Files still uploading go out with the message once they're up.
+    if (files.some((a) => a.status === "uploading")) {
+      $("send").disabled = true;
+      await Promise.all(files.map((a) => a.upload));
+      if (files.some((a) => a.status === "failed")) {
+        if (!input.value) input.value = text;
+        autosize();
+        return toast("A file didn't upload. Click it to try again, or take it off.");
+      }
+    }
+    // A file attached meanwhile, still uploading, waits for the next message.
+    const ready = files.filter((a) => a.status === "ready");
+    pending[chId] = files.filter((a) => a.status !== "ready");
+    renderAttachBar();
+    if (!text && !ready.length) return;
     try {
-      await api(`/api/channels/${S.current}/messages`, { text, ...(re && { replyTo: re.id }) });
+      await api(`/api/channels/${chId}/messages`, { text, ...(re && { replyTo: re.id }), ...(ready.length && { files: ready.map((a) => a.id) }) });
+      ready.forEach(forget);
     } catch (err) {
-      if (re) setReply(S.msgs[S.current]?.find((x) => x.id === re.id) || null);
-      input.value = text;
-      autosize();
+      if (re) setReply(S.msgs[chId]?.find((x) => x.id === re.id) || null);
+      if (!input.value) input.value = text;
+      pending[chId] = [...ready, ...pendingOf(chId)];
+      renderAttachBar();
       toast(err.message);
     }
+  });
+
+  // ---------- Attaching files: 📎, drop them on the channel, or paste them ----------
+  // Each file uploads as soon as it's attached (it waits on the server for the message), so sending is quick. The
+  // files wait per channel: switch channels and they're still there when you come back.
+  const pending = {}; // channel id → [{ key, file, name, size, type, preview, status: "uploading" | "ready" | "failed", id, error, upload }]
+  const pendingOf = (chId = S.current) => (pending[chId] ||= []);
+  const forget = (a) => a.preview && URL.revokeObjectURL(a.preview);
+  let attachKey = 0;
+
+  function attach(fileList) {
+    const ch = currentChannel();
+    if (!ch || S.view !== "channel" || ch.status === "archived") return;
+    const list = pendingOf(ch.id);
+    const files = [...fileList].filter((f) => f && f.size !== undefined);
+    const room = MAX_FILES - list.length;
+    if (files.length > room) toast(`Up to ${MAX_FILES} files on one message.`);
+    for (const file of files.slice(0, Math.max(0, room))) {
+      if (file.size > MAX_FILE) {
+        toast(`${file.name} is ${fileSize(file.size)}. Files are up to ${fileSize(MAX_FILE)}.`);
+        continue;
+      }
+      const a = { key: ++attachKey, file, name: file.name || "file", size: file.size, type: file.type || "", preview: INLINE_IMAGE.test(file.type) ? URL.createObjectURL(file) : "" };
+      list.push(a);
+      upload(ch.id, a);
+    }
+    renderAttachBar();
+    autosize();
+    input.focus();
+  }
+
+  function upload(chId, a) {
+    a.status = "uploading";
+    a.error = "";
+    a.upload = fetch(`/api/channels/${chId}/upload`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(a.name), "x-file-type": a.type },
+      body: a.file,
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        Object.assign(a, { status: "ready", id: data.id, name: data.name, type: data.type });
+      })
+      .catch((err) => Object.assign(a, { status: "failed", error: err.message || "Upload failed" }))
+      .finally(() => chId === S.current && renderAttachBar());
+    renderAttachBar();
+  }
+
+  function renderAttachBar() {
+    const ch = currentChannel();
+    const list = ch && ch.status !== "archived" ? pendingOf(ch.id) : [];
+    const bar = $("attach-bar");
+    bar.hidden = !list.length;
+    bar.innerHTML = list
+      .map((a) => {
+        const sub = a.status === "uploading" ? "uploading…" : a.status === "failed" ? `${a.error} · click to try again` : fileSize(a.size);
+        return `<div class="att ${a.status}" title="${esc(a.status === "failed" ? `${a.name}: ${a.error}` : a.name)}">
+          <button type="button" class="att-main" ${a.status === "failed" ? `data-att-retry="${a.key}"` : "tabindex=\"-1\""}>${a.preview ? `<img src="${a.preview}" alt="">` : fileBadge(a.name, a.type)}
+            <span class="att-info"><span class="att-name" dir="auto">${esc(a.name)}</span><span class="att-sub">${esc(sub)}</span></span></button>
+          <button type="button" class="att-x" data-att-remove="${a.key}" aria-label="Take off ${esc(a.name)}" title="Take it off">×</button>
+        </div>`;
+      })
+      .join("");
+    autosize();
+  }
+  $("attach-bar").addEventListener("click", (e) => {
+    const list = pendingOf();
+    const rm = e.target.closest("[data-att-remove]");
+    if (rm) {
+      const i = list.findIndex((a) => a.key === Number(rm.dataset.attRemove));
+      if (i >= 0) forget(list.splice(i, 1)[0]);
+      renderAttachBar();
+      return input.focus();
+    }
+    const again = e.target.closest("[data-att-retry]");
+    const a = again && list.find((x) => x.key === Number(again.dataset.attRetry));
+    if (a) upload(S.current, a);
+  });
+
+  $("attach").addEventListener("click", () => $("file-input").click());
+  $("file-input").addEventListener("change", (e) => {
+    attach(e.target.files);
+    e.target.value = "";
+  });
+
+  // A file pasted in the composer (a screenshot, an image copied from a page, a file copied in the Finder) is attached.
+  // Text copied from Word or Excel also carries a picture of itself: then the text wins.
+  input.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    const text = e.clipboardData.getData("text/plain");
+    if (text.trim() && !files.some((f) => text.includes(f.name))) return;
+    e.preventDefault();
+    const at = new Date().toTimeString().slice(0, 8).replace(/:/g, ".");
+    attach(files.map((f) => (/^image\.\w+$/.test(f.name) ? new File([f], `Pasted image ${at}.${f.name.split(".").pop()}`, { type: f.type }) : f)));
+  });
+
+  // Drop files anywhere on the channel. A file dropped anywhere else does nothing (the window doesn't open it).
+  let dropHide;
+  const canDrop = () => S.view === "channel" && currentChannel() && currentChannel().status !== "archived";
+  const dragsFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  document.addEventListener("dragover", (e) => {
+    if (!dragsFiles(e)) return;
+    e.preventDefault();
+    const ok = canDrop() && !!e.target.closest?.("#channel-view");
+    e.dataTransfer.dropEffect = ok ? "copy" : "none";
+    if (ok) {
+      $("drop-where").textContent = `#${currentChannel().name}`;
+      $("drop-zone").hidden = false;
+    }
+    clearTimeout(dropHide);
+    dropHide = setTimeout(() => ($("drop-zone").hidden = true), 150);
+  });
+  document.addEventListener("drop", (e) => {
+    if (!dragsFiles(e)) return;
+    e.preventDefault();
+    $("drop-zone").hidden = true;
+    if (canDrop() && e.target.closest?.("#channel-view")) attach(e.dataTransfer.files);
+  });
+
+  // ---------- The picture viewer ----------
+  let viewing = null; // { ch, list: the message's pictures, i }
+  function openViewer(mid, fileId) {
+    const m = (S.msgs[S.current] || []).find((x) => x.id === mid);
+    const list = ((m && m.meta && m.meta.files) || []).filter((f) => INLINE_IMAGE.test(f.type));
+    const i = list.findIndex((f) => f.id === fileId);
+    if (i < 0) return;
+    viewing = { ch: S.current, list, i };
+    showViewed();
+    $("viewer").showModal();
+  }
+  function showViewed() {
+    const f = viewing.list[viewing.i];
+    $("viewer-img").src = fileUrl(viewing.ch, f.id);
+    $("viewer-img").alt = f.name;
+    $("viewer-name").textContent = viewing.list.length > 1 ? `${f.name} · ${viewing.i + 1} of ${viewing.list.length}` : f.name;
+    $("viewer").querySelectorAll(".v-nav").forEach((b) => (b.hidden = viewing.list.length < 2));
+  }
+  const stepViewer = (d) => {
+    if (!viewing || viewing.list.length < 2) return;
+    viewing.i = (viewing.i + d + viewing.list.length) % viewing.list.length;
+    showViewed();
+  };
+  $("viewer").addEventListener("click", (e) => {
+    if (e.target === $("viewer") || e.target.classList.contains("v-body")) return $("viewer").close();
+    const b = e.target.closest("[data-viewer]");
+    if (!b || !viewing) return;
+    const act = b.dataset.viewer;
+    if (act === "close") $("viewer").close();
+    else if (act === "prev" || act === "next") stepViewer(act === "next" ? 1 : -1);
+    else fileAction(viewing.ch, viewing.list[viewing.i].id, act);
+  });
+  $("viewer").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") (e.preventDefault(), stepViewer(e.key === "ArrowRight" ? 1 : -1));
   });
 
   // ---------- New channel ----------

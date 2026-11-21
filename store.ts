@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DATA } from "./paths";
+import type { Attachment } from "./attachments";
 
 export type Message = {
   id: string;
@@ -13,6 +14,7 @@ export type Message = {
     via?: "slack" | "teams"; // written in Slack (so the bridge doesn't send it back there), or in Microsoft Teams before it
     slack?: SlackRef; // the same message in the linked Slack conversation (for replies, reactions and cards there)
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
+    files?: Attachment[]; // files attached to it (attachments.ts): yours, from the app or Slack, or a guest's in Slack
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
     toolRequest?: {

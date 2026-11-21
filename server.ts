@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import indexHtml from "./public/index.html" with { type: "file" };
 import appJs from "./public/app.js" with { type: "file" };
 import agentPageJs from "./public/agent-page.js" with { type: "file" };
@@ -15,6 +16,7 @@ import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
+import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 4747);
 // The page's files, embedded in the compiled app.
@@ -52,8 +54,8 @@ function setReaction(ch: Channel, msg: Message, emoji: string | undefined) {
 // Slack (slack.ts): one Slack app the teammates talk through, your DM with it, and linked channels and group DMs.
 const slack = new SlackBridge({
   emit: broadcast,
-  post: (ch, text, from) => team.userMessage(ch, text, from.replyTo, { via: "slack", slack: from.slack }),
-  guest: (ch, name, text, slackId, ref) => team.guestMessage(ch, name, text, slackId, ref),
+  post: (ch, text, from) => team.userMessage(ch, text, from.replyTo, { via: "slack", slack: from.slack, files: from.files }),
+  guest: (ch, name, text, slackId, ref, files) => team.guestMessage(ch, name, text, slackId, ref, files),
   note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "slack" } }),
   react: setReaction,
   feedback: (ch, messageId, text) => team.feedback(ch, messageId, text, { via: "slack" }),
@@ -66,6 +68,7 @@ toSlack = (e) => slack.onEvent(e);
 slack.start();
 
 if (!channels.size) createChannel("general", DEFAULT_CWD);
+dropUnsent(messages);
 
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (slack.stop(), process.exit(0)));
 
@@ -90,7 +93,8 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 /** The chat list's line under each channel: its latest message, clipped. */
 const preview = (id: string) => {
   const m = (messages.get(id) ?? []).findLast((x: Message) => x.kind !== "status");
-  return m && { id: m.id, author: m.author, kind: m.kind ?? "text", text: m.text.slice(0, 200), ts: m.ts, meta: m.meta?.jobId ? { jobId: m.meta.jobId } : undefined };
+  const meta = { ...(m?.meta?.jobId && { jobId: m.meta.jobId }), ...(m?.meta?.files?.length && { files: m.meta.files.map((f) => ({ name: f.name, type: f.type })) }) };
+  return m && { id: m.id, author: m.author, kind: m.kind ?? "text", text: m.text.slice(0, 200), ts: m.ts, meta: Object.keys(meta).length ? meta : undefined };
 };
 const state = () => ({
   user: USER_NAME,
@@ -131,6 +135,29 @@ const run = async (cmd: string[]) => {
   await p.exited;
   return { code: p.exitCode, out };
 };
+
+/** Opens a file in its default app, or shows it in the Finder. */
+const openFile = async (path: string, reveal: boolean) => {
+  if (process.platform !== "darwin") return run(["xdg-open", reveal ? join(path, "..") : path]).catch(() => ({ code: 1, out: "" }));
+  return run(reveal ? ["open", "-R", path] : ["open", path]);
+};
+
+/**
+ * A file attached to a message, for the page (a picture's thumbnail). Only pictures show as they are; anything else
+ * downloads, and nothing in a file runs as the page (an HTML or SVG file someone attached in Slack, say).
+ */
+function serveFile(path: string, name: string, type: string) {
+  const inline = INLINE_IMAGE.test(type);
+  return new Response(Bun.file(path), {
+    headers: {
+      "content-type": inline ? type : "application/octet-stream",
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "content-security-policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, max-age=31536000, immutable",
+    },
+  });
+}
 
 /** Opens a CLI session in the Claude desktop app (it imports the session by id). */
 const openInClaude = (sessionId: string) => run(["open", `claude://resume?session=${sessionId}`]);
@@ -185,6 +212,30 @@ Bun.serve({
     if (turn && req.method === "POST") {
       const r = team.turnTool(turn[1], turn[2], await req.json().catch(() => ({})));
       return r.error ? json({ error: r.error }, 403) : json({ text: r.text });
+    }
+
+    // A file you attach in the composer: its bytes as the body (application/octet-stream, which no other site can send
+    // here without asking first), its name and type in headers. It waits for the message (attachments.ts).
+    const up = p.match(/^\/api\/channels\/([^/]+)\/upload$/);
+    if (up && req.method === "POST") {
+      if (!ORIGINS.has(req.headers.get("origin") ?? "") || !req.headers.get("content-type")?.includes("application/octet-stream")) return json({ error: "forbidden" }, 403);
+      const ch = channels.get(up[1]);
+      if (!ch) return json({ error: "not found" }, 404);
+      if (ch.status === "archived") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);
+      const size = Number(req.headers.get("content-length") ?? NaN);
+      if (size > MAX_FILE) return json({ error: `That file is ${fileSize(size)}. Files are up to ${fileSize(MAX_FILE)}.` }, 413);
+      let name = "file";
+      try {
+        name = decodeURIComponent(req.headers.get("x-file-name") ?? "") || name;
+      } catch {}
+      try {
+        const file = await saveAttachment(ch.id, name, req.headers.get("x-file-type") ?? undefined, new Response(req.body));
+        stage(ch.id, file);
+        noteActivity();
+        return json(file);
+      } catch (e) {
+        return json({ error: `Couldn't keep ${name}: ${(e as Error).message}` }, 400);
+      }
     }
 
     if (p.startsWith("/api/")) {
@@ -316,6 +367,19 @@ Bun.serve({
       }
 
       // ----- Channels -----
+      // A file on a message: shown (a picture), opened in its app, or shown in the Finder.
+      const f = p.match(/^\/api\/channels\/([^/]+)\/files\/([0-9a-f]{12})(?:\/(open|reveal))?$/);
+      const fch = f && channels.get(f[1]);
+      if (f) {
+        const file = fch && findAttachment(fch.id, messages.get(fch.id) ?? [], f[2]);
+        const path = file && attachmentPath(fch!.id, file);
+        if (!file || !path || !existsSync(path)) return json({ error: "That file is gone." }, 404);
+        if (!f[3] && !post) return serveFile(path, file.name, file.type);
+        if (!f[3] || !post) return json({ error: "not found" }, 404);
+        const r = await openFile(path, f[3] === "reveal");
+        return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
+      }
+
       const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
@@ -346,8 +410,10 @@ Bun.serve({
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);
       if (m[2] === "messages" && post) {
         const text = String(body.text ?? "").trim();
-        if (!text) return json({ error: "empty" }, 400);
-        team.userMessage(ch, text, body.replyTo ? String(body.replyTo) : undefined);
+        const files = takeStaged(ch.id, body.files);
+        if (typeof files === "string") return json({ error: files }, 400);
+        if (!text && !files.length) return json({ error: "empty" }, 400);
+        team.userMessage(ch, text, body.replyTo ? String(body.replyTo) : undefined, { files });
         return json({ ok: true });
       }
       // Your emoji on a message, like a teammate's. The same emoji again takes it off.
