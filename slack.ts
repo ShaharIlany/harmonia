@@ -847,12 +847,11 @@ export class SlackBridge {
   }
 
   /**
-   * A message in Slack under a teammate's name and emoji (chat:write.customize), or as the app itself (`look`
+   * A message in Slack under a teammate's name and avatar (chat:write.customize), or as the app itself (`look`
    * undefined), in a thread or not. The teammates write Markdown: it goes in a markdown block, with a mrkdwn copy as
    * the notification text. `ref`: the message here, which keeps the Slack ts (for replies, reactions and its card).
    */
   private postAs(look: Look | undefined, channel: string, content: Content, opts: { thread?: string; ref?: { channelId: string; message: Message } } = {}) {
-    const icon = look && slackEmoji(look.avatar);
     const md = "markdown" in content ? content.markdown : undefined;
     const params: Record<string, unknown> = {
       channel,
@@ -862,9 +861,9 @@ export class SlackBridge {
       ...(opts.thread && { thread_ts: opts.thread }),
       unfurl_links: false,
       unfurl_media: false,
-      ...(look && { username: icon ? look.name : `${look.avatar} ${look.name}`.trim(), ...(icon && { icon_emoji: `:${icon}:` }) }),
     };
     return this.queue(async () => {
+      if (look) Object.assign(params, await slackLook(look));
       let r: any;
       try {
         r = await this.api("chat.postMessage", params);
@@ -1126,6 +1125,52 @@ const SLACK_EMOJI = new Map(Object.entries(AVATAR_NAMES).map(([emoji, name]) => 
 
 /** The Slack emoji name for an avatar, when there's one. */
 export const slackEmoji = (avatar: string) => SLACK_EMOJI.get(bare(avatar.trim()));
+
+/**
+ * Apple's emoji as 64px images, named by their code points (emoji-datasource). An avatar is posted as its picture
+ * (icon_url), so it looks as it does in the app, skin tone and all: icon_emoji takes a name, and Slack's names have no
+ * skin tone.
+ */
+const EMOJI_IMAGES = "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@16.0.0/img/apple/64/";
+const EMOJI_LOOKUP_MS = 5_000;
+const avatarImages = new Map<string, Promise<string | undefined>>();
+
+/** The image of an avatar emoji, or undefined when the set has none (or it can't be reached right now). */
+export function avatarImage(avatar: string): Promise<string | undefined> {
+  const a = avatar.trim();
+  if (!/\p{Extended_Pictographic}/u.test(a)) return Promise.resolve(undefined);
+  let found = avatarImages.get(a);
+  if (!found) {
+    const hex = (s: string) => [...s].map((c) => c.codePointAt(0)!.toString(16)).join("-");
+    // The set names most emoji fully qualified (with U+FE0F), some without it.
+    const names = [...new Set([hex(a), hex(a.replace(/️/g, ""))])];
+    found = (async () => {
+      let unreachable = false;
+      for (const name of names) {
+        const url = `${EMOJI_IMAGES}${name}.png`;
+        try {
+          const r = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(EMOJI_LOOKUP_MS) });
+          if (r.ok) return url;
+          if (r.status !== 404) unreachable = true;
+        } catch {
+          unreachable = true;
+        }
+      }
+      if (unreachable) avatarImages.delete(a); // asked again next time
+      return undefined;
+    })();
+    avatarImages.set(a, found);
+  }
+  return found;
+}
+
+/** The name and avatar a message goes under in Slack: the avatar's picture, else its Slack emoji, else it goes before the name. */
+async function slackLook(look: Look): Promise<Record<string, string>> {
+  const image = await avatarImage(look.avatar);
+  if (image) return { username: look.name, icon_url: image };
+  const icon = slackEmoji(look.avatar);
+  return icon ? { username: look.name, icon_emoji: `:${icon}:` } : { username: `${look.avatar} ${look.name}`.trim() };
+}
 
 /** The emoji behind Slack's names for the reactions people use most (and the avatars above). */
 const REACTION_EMOJI = new Map<string, string>([

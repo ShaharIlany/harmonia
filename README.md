@@ -321,8 +321,12 @@ Jobs and memories stay.
   - **Channels:** `/invite @Harmonia` in a channel or private channel and
     write there: the first time, it's linked to a new channel here
     (`#slack-<name>`). Each teammate answers under its own name and emoji
-    (`chat:write.customize`: the avatar's Slack emoji when it has one, else the
-    avatar goes before the name). Answers, job starts and errors go to Slack
+    (`chat:write.customize`: the avatar as a picture, Apple's emoji from
+    `emoji-datasource-apple` on jsDelivr, so its skin tone shows as it does
+    here; when the picture can't be had, the avatar's Slack emoji, else the
+    avatar goes before the name). Teammates aren't Slack members, so Slack's @
+    menu doesn't list them: type `@Emily` in full, or start with `Emily, …`.
+    Answers, job starts and errors go to Slack
     where you last wrote: in the channel, or in the thread you replied in; the
     5-minute job status updates stay here. The teammates' Markdown goes in a
     Slack markdown block. What you type in the app goes to Slack as "Alex (in
