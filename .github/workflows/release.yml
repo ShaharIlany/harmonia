@@ -1,5 +1,7 @@
 # Builds Harmonia.app for every version tag (git tag v1.2.0 && git push origin v1.2.0) and publishes it as a GitHub
 # release. Installed apps update from the latest release (updates.ts), and install.sh installs it.
+# Every push to main gets the next patch tag from tag.yml, which starts this with workflow_dispatch on that tag
+# (a tag pushed by a workflow doesn't trigger the tag push below).
 #
 # Assets:
 #   Harmonia-arm64.zip (+ .sha256)   the app (stable name: releases/latest/download/… works)
@@ -10,6 +12,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch: # run on a tag (Use workflow from: v1.2.3); tag.yml does this for its tags
 
 permissions:
   contents: write
