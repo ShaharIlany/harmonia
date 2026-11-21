@@ -1,0 +1,64 @@
+# Tags every push to main as the next patch version (v2.1.1 -> v2.1.2) and starts a release build for it.
+#
+# A tag pushed with the workflow's own token doesn't start other workflows, so this starts release.yml itself
+# (workflow_dispatch on the new tag). Tags you push by hand still release on their own, as before.
+#
+# For a minor or major version, tag the commit yourself and push both at once:
+#   git tag v2.2.0 && git push --atomic origin main v2.2.0
+# A commit that already has a version tag is left alone, and the next patch counts up from the newest tag.
+# A push whose commit message has [skip ci] in it gets no tag and no release.
+name: Tag
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # push the tag
+  actions: write # start release.yml
+
+concurrency:
+  group: tag # one at a time, so two quick pushes don't both pick the same version
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # every tag
+
+      - name: Next patch version
+        id: next
+        run: |
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          existing=$(git tag --points-at "$GITHUB_SHA" --list 'v*' | grep -E "$semver" | head -n1 || true)
+          if [[ -n "$existing" ]]; then
+            echo "$GITHUB_SHA is already tagged $existing; nothing to do."
+            exit 0
+          fi
+          latest=$(git tag --list 'v*' --sort=-v:refname | grep -E "$semver" | head -n1 || true)
+          IFS=. read -r major minor patch <<< "${latest:-v0.0.0}"
+          tag="${major}.${minor}.$((patch + 1))"
+          echo "${latest:-no version tags yet} -> $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Push the tag
+        if: steps.next.outputs.tag
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "Harmonia ${TAG#v}"
+          git push origin "refs/tags/$TAG"
+
+      - name: Start the release
+        if: steps.next.outputs.tag
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
