@@ -5,12 +5,12 @@ import { DATA } from "./paths";
 export type Message = {
   id: string;
   ts: number;
-  author: string; // "user" | teammate id | "system" | "guest" (someone else in a linked Teams chat: context, never wakes anyone)
+  author: string; // "user" | teammate id | "system" | "guest" (someone else in a linked Slack conversation: context, never wakes anyone)
   text: string;
   kind?: "text" | "permission" | "error" | "job" | "status" | "tools";
   meta?: {
-    guest?: { name: string; aadId?: string }; // author "guest": who wrote it in Teams
-    via?: "teams"; // written in Microsoft Teams (so the bridge doesn't send it back there)
+    guest?: { name: string; slackId?: string; aadId?: string }; // author "guest": who wrote it (aadId: in Microsoft Teams, before the Slack bridge)
+    via?: "slack" | "teams"; // written in Slack (so the bridge doesn't send it back there), or in Microsoft Teams before it
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered

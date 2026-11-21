@@ -125,7 +125,7 @@ function line(m: Message): string {
   }
   if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
   if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
-  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in Teams): ${m.text}`;
+  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"}): ${m.text}`;
   const re = m.meta?.replyTo;
   const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
   return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}`;
@@ -232,10 +232,10 @@ export class Team {
   private coordinating = new Map<string, Promise<unknown>>(); // channel id → its Mozart decisions, one at a time
 
   /**
-   * A message from you: typed here, or in a linked Microsoft Teams chat (`via: "teams"`). An @mention, "Name, …" or
+   * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`). An @mention, "Name, …" or
    * a reply to a teammate's message goes straight to that teammate; anything else, the channel's Mozart decides.
    */
-  userMessage(ch: Channel, text: string, replyToId?: string, opts: { via?: "teams" } = {}) {
+  userMessage(ch: Channel, text: string, replyToId?: string, opts: { via?: "slack" } = {}) {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
     const replyTo = target && { id: target.id, author: target.author, text: replyText(target).slice(0, 300) };
     const meta = { ...(replyTo && { replyTo }), ...(opts.via && { via: opts.via }) };
@@ -255,11 +255,11 @@ export class Team {
   }
 
   /**
-   * Someone else's message in a linked Teams chat. It's context for the teammates and Mozart (they read it with the
-   * rest of the channel), but it never wakes anyone: the teammates work for you.
+   * Someone else's message in a linked Slack conversation. It's context for the teammates and Mozart (they read it
+   * with the rest of the channel), but it never wakes anyone: the teammates work for you.
    */
-  guestMessage(ch: Channel, name: string, text: string, aadId?: string) {
-    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(aadId && { aadId }) }, via: "teams" } });
+  guestMessage(ch: Channel, name: string, text: string, slackId?: string) {
+    return this.post(ch, { author: "guest", text, meta: { guest: { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) }, via: "slack" } });
   }
 
   /** The channel's Mozart decides who answers `msg`, after any decision still running there. Nothing shows meanwhile. */

@@ -48,11 +48,20 @@ To build it yourself instead (an Intel Mac, or to follow a branch):
 Team Chat updates itself to Harmonia like to any other release, and running
 the install script does the same. The app moves to `Harmonia.app`, its data
 folder to `~/Library/Application Support/Harmonia` (the old folder's name
-stays behind as a link to it), and Mozart's sessions, the Teams bots'
-secrets, your pinned and muted channels and the window's place come along.
+stays behind as a link to it), and Mozart's sessions, your pinned and muted
+channels and the window's place come along.
 Two things to do by hand: allow notifications again when macOS asks (they're
 per app, and the app's id changed), and put Harmonia back in the Dock if
 Team Chat was kept there.
+
+### Coming from the Microsoft Teams bridge
+
+The Teams bridge is gone: a Slack bridge took its place (see **Slack** below).
+The Teams bots stop answering when you update. The channels they made here
+(`#teams-<id>` and the linked ones) stay as ordinary channels with their
+messages. What's left to clean up, if you like: delete the bots' apps in the
+Teams Developer Portal, the `Harmonia Teams bot` items in your Keychain, and
+`teams.json` and `teams-links.json` in the data folder (nothing reads them).
 
 ## Releases
 
@@ -292,56 +301,50 @@ Jobs and memories stay.
 - **Safety:** the server listens on 127.0.0.1 only, and accepts API calls and
   the WebSocket only from its own page. Teammates draft emails and posts but
   don't send them without your OK.
-- **Microsoft Teams:** the teammates, and Mozart, can be Teams bots. Click the
-  **Teams bridge** light at the bottom left for a step-by-step page: get
-  Microsoft's Teams CLI (`npm install -g @microsoft/teams.cli`, `teams login`),
-  create a bot (`teams app create --messaging-mode socket`, for your
-  organization only, the secret in your Keychain), add it in Teams, and write.
-  The bots connect out over Teams Socket Mode (a preview feature), so nothing
-  listens on the internet; it works while Harmonia runs. The light is green
-  when every bot is connected.
-  - **1:1 chats:** your Teams chat with a teammate's bot mirrors the channel
-    `#teams-<id>`: your messages go there addressed to that teammate, and
-    their answers, job starts, errors and anything waiting for your OK come
-    back to Teams, with typing while they work.
-  - **Group chats and channels:** add the **Mozart** bot (the Teams page
-    creates it and sets its resource-specific consent with `teams app rsc
-    set`: reading messages in the chat or team, creating channels in the
-    team, seeing which apps are installed) and, if you like, the teammates' bots to a group chat or a
-    team. The first time you write there, it's linked to a new channel here.
-    Your messages land as yours and Mozart picks who answers, as in the app;
-    `@Leo` goes straight to Leo. A teammate answers with its own bot when
-    it's in that chat or team (typing included), else Mozart posts the answer
-    under its name. What you type in the app goes to Teams through Mozart
-    ("**Alex** (in Harmonia): …"). In a channel, every answer is a new
-    post, not a reply in your thread.
+- **Slack:** the teammates can talk in Slack, through one Slack app,
+  **Harmonia**. Click the **Slack bridge** light at the bottom left for a
+  step-by-step page: create the app from its manifest (one link sets up Socket
+  Mode, a bot you can DM, its scopes and its events), install it in your
+  workspace, make an app-level token with `connections:write`, and paste the
+  bot token (`xoxb-…`) and the app-level token (`xapp-…`) on the page.
+  Harmonia checks both with Slack and keeps them in your Keychain. The app
+  connects out over Slack's Socket Mode (`slack-socket.ts`), so nothing listens
+  on the internet; it works while Harmonia runs. The light is green when it's
+  connected and paired.
+  - **Pairing:** the page then shows a 6-digit code. Send it to the app in a
+    Slack DM: whoever sends it is the one the teammates work for. **Pair
+    someone else** makes a new code. After five wrong codes from one person,
+    the app stops answering them.
+  - **Your DM** with the app mirrors the channel `#slack`: what you write there
+    is posted as you, Mozart picks who answers (or `@Leo` goes straight to
+    Leo), and the answers come back to the DM.
+  - **Channels:** `/invite @Harmonia` in a channel or private channel and
+    write there: the first time, it's linked to a new channel here
+    (`#slack-<name>`). Each teammate answers under its own name and emoji
+    (`chat:write.customize`: the avatar's Slack emoji when it has one, else the
+    avatar goes before the name). Answers, job starts, errors and anything
+    waiting for your OK go to Slack as new messages, not thread replies; the
+    5-minute job status updates stay here. The teammates' Markdown goes in a
+    Slack markdown block. What you type in the app goes to Slack as "Alex (in
+    Harmonia)". While a teammate works on your Slack message, it carries 👀.
   - **Only you wake the teammates.** Other people's messages in a linked
-    chat or channel show here as "Bob · in Teams" and the teammates and
-    Mozart read them as context, but they never wake anyone: the teammates can
-    read your mail and calendar. Only you can run Mozart's commands.
-  - **New channels from Teams:** `@Mozart new channel <name>` in one of a
-    team's channels creates a standard channel in that team (Microsoft Graph,
-    with Mozart's `Channel.Create.Group` consent, which you grant by adding
-    Mozart to the team: no admin) and links it to a new channel here.
-    Everyone in the team sees it, so for the Harmonia feel make a private
-    team with only you in it. Teammates' bots added to the team are in every
-    standard channel. (Not private channels: bots can't post in them.)
-  - **New members-only chats from Teams:** `@Mozart new group chat <name>`
-    (in any chat with Mozart, your 1:1 included; also `new chat`) creates a
-    Teams **group chat**: only its members see it, and nobody can join on
-    their own. You're in it, plus anyone you @mention or write the email of
-    (`@Mozart new group chat Launch with @Dana and ron@corp.com`). Mozart
-    then installs itself and every teammate's bot in it and links it to a
-    new channel here, all through Microsoft Graph. A Microsoft 365 admin sets
-    this up once, with the
-    checklist on the Teams page: give Mozart's app the Graph application
-    permissions `Chat.Create`, `TeamsAppInstallation.ReadWriteAndConsentForChat.All`
-    and `AppCatalog.Read.All` with admin consent, and publish Mozart and the
-    teammates' bots to the organization's app catalog (Graph installs apps
-    only from there). Mozart says in the new chat which teammates it couldn't
-    add, and answers for them. `@Mozart help` lists the commands.
-  - The Teams page lists the linked channels and chats, with **Unlink**. Links
-    are in `teams-links.json` in the data folder; the bots in `teams.json`.
+    channel show here as "Bob · in Slack", and the teammates and Mozart read
+    them as context, but they never wake anyone: the teammates can read your
+    mail and calendar. Only you can run the app's commands, and a DM from
+    anyone else gets "Sorry, I only work for Alex."
+  - **New channels from Slack:** `@Harmonia new channel <name>` creates a Slack
+    channel with you in it and links it to a new channel here; `@Harmonia new
+    private channel <name>` (also `new group chat`) makes one only its members
+    see. @mention people, or write their email, to invite them too. No admin
+    needed, unless your workspace doesn't let apps create channels. In your DM
+    with the app, leave out the `@Harmonia`. `@Harmonia help` lists the
+    commands.
+  - Messages from Slack are read as text: mentions become `@Name`, and links
+    their label and address. Files stay in Slack (the teammates see their
+    names). The Slack page lists the linked conversations, with **Unlink**.
+    `slack.json` in the data folder holds the workspace, who the app works for
+    and the links; the tokens are in the Keychain (`Harmonia Slack`; off a Mac,
+    `slack-secrets.json` in the data folder, readable only by you).
 
 ## Files
 
@@ -367,17 +370,19 @@ Jobs and memories stay.
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
-| `teams.ts` | Teammates and Mozart as Microsoft Teams bots: setup through the Teams CLI, the Keychain, 1:1 mirrors, linked channels and group chats, `new channel` and `new group chat` |
-| `teams-socket.ts` | Teams Socket Mode without the SDK: bot token, negotiate, SignalR over a WebSocket, token rotation, sending |
-| `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `teams-page.js` Microsoft Teams) |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, the teammates' names and emoji, 👀, `new channel` |
+| `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
+| `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |
 | `docs/screenshots/` | The README screenshots, their demo data and the script that takes them |
 
 `HARMONIA_STUB=1` (`bun run stub`) gives canned replies, with no Claude runs,
 to try the UI. `HARMONIA_DATA` moves the data folder, `PORT` the port,
 `HARMONIA_CWD` the default working folder for new channels, and `HARMONIA_USER`
-the name the teammates call you (your login name by default). The `TEAM_CHAT_*`
-names from before the rename still work.
+the name the teammates call you (your login name by default), and
+`HARMONIA_SLACK_API` points the Slack bridge at another Web API (a local fake,
+to try it without Slack). The `TEAM_CHAT_*` names from before the rename still
+work.
 
 ## Brand
 

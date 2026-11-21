@@ -609,55 +609,45 @@ a.task-link:hover { color: #9d8cff; }
 .ticks.read { color: #2f9ee0; }
 @media (prefers-color-scheme: dark) { .ticks.read { color: #53bdeb; } }
 
-/* ---------- Microsoft Teams: the bridge's light (bottom left) and its page ---------- */
-.teams-status { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; font: inherit; font-size: 12px; color: var(--muted); text-align: start; cursor: pointer; }
-.teams-status:hover, .teams-status[aria-current="page"] { background: var(--hover); color: var(--text); }
-.teams-status .ts-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.teams-status.ok { color: var(--text); }
-.teams-status.bad .ts-text { color: #e01e5a; }
+/* ---------- Slack: the bridge's light (bottom left) and its page ---------- */
+.bridge-status { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; font: inherit; font-size: 12px; color: var(--muted); text-align: start; cursor: pointer; }
+.bridge-status:hover, .bridge-status[aria-current="page"] { background: var(--hover); color: var(--text); }
+.bridge-status .ts-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bridge-status.ok { color: var(--text); }
+.bridge-status.bad .ts-text { color: #e01e5a; }
 .cli-dot.wait { background: #e8912d; animation: ts-pulse 1.4s ease-in-out infinite; }
 .cli-dot.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
 @keyframes ts-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .cli-dot.wait { animation: none; } }
 
-.tm-bots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.tm-bot { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; flex-wrap: wrap; }
-.tm-av { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 24px; flex: none; background: color-mix(in srgb, var(--c) 22%, transparent); }
-.tm-bot-main { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 3px; }
-.tm-bot-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tm-bot a, .tm-steps a:not(.btn) { color: var(--accent); }
+.sk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sk-item { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; flex-wrap: wrap; }
+.sk-av { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 22px; font-weight: 800; flex: none; background: color-mix(in srgb, var(--c) 22%, transparent); }
+.sk-main { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 3px; }
+.sk-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#slack-view .card a:not(.btn) { color: var(--accent); }
 a.btn { text-decoration: none; color: var(--text); display: inline-flex; align-items: center; }
 a.btn.primary { color: #fff; }
 
-.tm-pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
-.tm-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 18px; padding: 4px 12px 4px 8px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
-.tm-chip span { font-size: 18px; line-height: 1; }
-.tm-chip:hover { background: var(--hover); }
-.tm-chip.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
-
-.tm-list { list-style: none; margin: 0; padding: 0; counter-reset: tm; }
-.tm-step { position: relative; display: flex; gap: 14px; padding: 0 0 18px; counter-increment: tm; opacity: 0.55; }
-.tm-step.now, .tm-step.done { opacity: 1; }
-.tm-step:not(:last-child)::after { content: ""; position: absolute; left: 13px; top: 30px; bottom: 4px; width: 2px; background: var(--line); }
-.tm-step > .tm-tick { width: 28px; height: 28px; font-size: 14px; }
-.tm-step > .tm-tick:empty::before { content: counter(tm); color: var(--muted); font-weight: 800; font-size: 13px; }
-.tm-step.now > .tm-tick { box-shadow: inset 0 0 0 2px var(--accent); }
-.tm-step.now > .tm-tick:empty::before { color: var(--accent); }
-.tm-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 3px; }
-.tm-body h3 { margin: 0; font-size: 15px; font-weight: 800; }
-.tm-body code, .tm-bot code { font-size: 12px; background: var(--code-bg); border: 1px solid var(--code-line); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
-.tm-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--hover); color: var(--muted); }
-.tm-tick.ok { background: #2bac76; color: #fff; }
-.tm-rows { display: flex; flex-direction: column; gap: 6px; }
-.tm-row { display: flex; align-items: center; gap: 10px; font-size: 14px; flex-wrap: wrap; }
-.tm-row > span:nth-child(2) { flex: 1; min-width: 180px; }
-.tm-check { margin: 0; font-size: 13px; color: var(--muted); }
-.tm-import { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
-.tm-import label { margin-bottom: 10px; }
-
-/* Microsoft Teams page: Mozart's how-to list */
-.tm-plain { margin: 6px 0 10px; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
-.tm-plain code { font-size: 12px; }
-#tm-mozart .row-btns { margin-top: 12px; }
-.tm-sub { margin: 18px 0 6px; font-size: 14px; font-weight: 700; }
-.tm-plain .tm-rows { margin: 6px 0; }
+.sk-steps { list-style: none; margin: 0; padding: 0; counter-reset: sk; }
+.sk-step { position: relative; display: flex; gap: 14px; padding: 0 0 18px; counter-increment: sk; opacity: 0.55; }
+.sk-step.now, .sk-step.done, .sk-step.open { opacity: 1; }
+.sk-step:not(:last-child)::after { content: ""; position: absolute; left: 13px; top: 30px; bottom: 4px; width: 2px; background: var(--line); }
+.sk-step > .sk-tick { width: 28px; height: 28px; font-size: 14px; }
+.sk-step > .sk-tick:empty::before { content: counter(sk); color: var(--muted); font-weight: 800; font-size: 13px; }
+.sk-step.now > .sk-tick { box-shadow: inset 0 0 0 2px var(--accent); }
+.sk-step.now > .sk-tick:empty::before { color: var(--accent); }
+.sk-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 3px; }
+.sk-body h3 { margin: 0; font-size: 15px; font-weight: 800; }
+#slack-view code { font-size: 12px; background: var(--code-bg); border: 1px solid var(--code-line); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+.sk-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--hover); color: var(--muted); }
+.sk-tick.ok { background: #2bac76; color: #fff; }
+.sk-form { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.sk-form label { margin-bottom: 10px; }
+.sk-form input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sk-plain { margin: 6px 0 10px; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
+.sk-pair { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 10px; padding: 12px 14px; margin: 4px 0 12px; }
+.sk-code { font: 800 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.18em; user-select: all; }
+.sk-pair .hint { flex: 1; min-width: 200px; margin: 0; }
+#slack-view .row-btns { margin-top: 10px; }
+#sk-body { display: flex; flex-direction: column; gap: 16px; }
