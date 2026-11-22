@@ -1497,6 +1497,8 @@ export function relayText(m: Message, ch?: Channel): string | undefined {
       const job = ch?.jobs.find((j) => j.id === m.meta?.jobId);
       return job?.feedback ? `🛠️ ${name} is amending its rules from ${USER_NAME}'s feedback (job ${job.id})` : `🛠️ ${name} ${m.text}`;
     }
+    case "status":
+      return m.text; // a running job's update every few minutes: "⏳ j2 · title · 5 min" and what's going on
     case "error":
       return `⚠️ ${m.text}`;
     case "permission":
@@ -1504,7 +1506,7 @@ export function relayText(m: Message, ch?: Channel): string | undefined {
     case "tools":
       return `🧰 ${name} asks for more tools in Harmonia: ${m.meta?.toolRequest?.reason ?? m.text}`;
     default:
-      return undefined; // job status updates stay in the app
+      return undefined;
   }
 }
 
