@@ -57,6 +57,7 @@ import type { Event } from "./team";
 import { claudeProjects, parentOf, projectOf, tilde, type Project } from "./projects";
 import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
+import { ChannelMarks } from "./slack-marks";
 
 const FILE = join(DATA, "slack.json");
 const KEYCHAIN_SERVICE = "Harmonia Slack";
@@ -88,10 +89,11 @@ const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
 /**
  * What the app may do, as bot scopes: read and write in the conversations it's in, post under the teammates' names,
  * create channels and invite you to them, read your reactions and react for a teammate without an app of its own, look
- * up people by id or email, and fetch and send files.
+ * up people by id or email, fetch and send files, and bookmark a channel's ClickUp task (slack-marks.ts).
  */
 export const BOT_SCOPES = [
   "app_mentions:read",
+  "bookmarks:write",
   "channels:history",
   "channels:manage",
   "channels:read",
@@ -308,6 +310,15 @@ export class SlackBridge {
   private rev = 0;
   private mateTokens = new Map<string, string>(); // teammate id → its own app's bot token
   private mateIn = new Set<string>(); // "teammate id:conversation": its bot is in that channel
+  // A channel's status and ClickUp task, in its Slack channel's topic and bookmarks.
+  private marks = new ChannelMarks({
+    api: (method, params) => this.api(method, params),
+    on: () => Boolean(this.config?.enabled && this.botToken),
+    links: () => Object.values(this.links),
+    botUserId: () => this.config?.botUserId,
+    canBookmark: () => Boolean(this.config?.scopes?.includes("bookmarks:write")),
+    log: (event, fields) => this.deps.log(event, fields),
+  });
   private mateProblems = new Map<string, string>(); // teammate id → why its app can't post now
   private noReact = new Map<string, number>(); // teammate id → when its app turned out to lack reactions:write
   private making = false; // the teammates' apps are being made
@@ -468,6 +479,7 @@ export class SlackBridge {
       this.config.scopes = auth.scopes;
       this.save();
       this.changed();
+      this.marks.all(); // with bookmarks:write now, the tasks get their bookmarks
     } catch (e: any) {
       return `Couldn't ask Slack: ${e.message}`;
     }
@@ -727,7 +739,7 @@ export class SlackBridge {
     );
     this.socket.start();
     this.changed();
-    void this.checkScopes();
+    void this.checkScopes().then(() => this.marks.all()); // what changed while Harmonia was off
   }
 
   private api(method: string, params: Record<string, unknown> = {}) {
@@ -1256,6 +1268,7 @@ export class SlackBridge {
     this.links[conversation] = link;
     this.save();
     this.changed();
+    this.marks.changed(ch); // an unarchived channel's status, in its new Slack channel
     if (ask && this.askProject(link, ch, { awaiting: true })) return inviteError;
     this.postAs(undefined, conversation, {
       markdown: `${lead}This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${isPrivate ? " Only the people in it see it." : ""}`,
@@ -1439,6 +1452,7 @@ export class SlackBridge {
 
   /** Every server event: what happens in a linked channel goes to its Slack conversation. */
   onEvent(e: Event) {
+    if (e.type === "channel") return this.marks.changed(e.channel); // its status or ClickUp task, in Slack's topic
     if (!this.config?.enabled || !this.botToken || !("channelId" in e)) return;
     const link = Object.values(this.links).find((l) => l.channelId === e.channelId);
     const ch = link && channels.get(link.channelId);

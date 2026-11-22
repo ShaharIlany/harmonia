@@ -39,7 +39,7 @@ let toSlack: ((e: Event) => void) | undefined; // the Slack bridge (below) follo
 const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROSTER } | { type: "usage"; usage: Usage } | { type: "appUpdate"; update: UpdateStatus }) => {
   const data = JSON.stringify(e);
   for (const s of sockets) s.send(data);
-  if ("channelId" in e) toSlack?.(e);
+  if ("channelId" in e || e.type === "channel") toSlack?.(e as Event); // "channel": its status and task, in Slack's topic
 };
 mkdirSync(TEAM_AGENTS, { recursive: true });
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);

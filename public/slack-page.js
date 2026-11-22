@@ -66,7 +66,7 @@
     } catch {}
     return `<section class="card sk-update">
       <h2>Update the Slack app</h2>
-      <p class="hint">It was made from an older ${APP} manifest, so some of what it does here won't work yet (like files, reading your reactions, or the buttons on a teammate's request). It's missing ${s.missingScopes.map((x) => `<code>${esc(x)}</code>`).join(", ")}.</p>
+      <p class="hint">It was made from an older ${APP} manifest, so some of what it does here won't work yet (like files, reading your reactions, the buttons on a teammate's request, or a channel's ClickUp task as a bookmark). It's missing ${s.missingScopes.map((x) => `<code>${esc(x)}</code>`).join(", ")}.</p>
       <ol class="sk-plain">
         <li>In ${s.appLink ? ext(s.appLink, "the app's settings") : "the app's settings"}, open <b>App Manifest</b>, replace what's there with ${APP}'s, and <b>Save Changes</b>. <button class="btn" data-copy-manifest>Copy the manifest</button></li>
         <li>Slack asks you to reinstall the app: <b>Install App</b> → <b>Reinstall to Workspace</b> → <b>Allow</b>. The tokens stay the same.</li>
@@ -86,6 +86,7 @@
         <li><code>@${APP} new channel &lt;name&gt;</code> makes a Slack channel with you in it, linked to a new channel here. <code>new private channel &lt;name&gt;</code> makes one only its members see. @mention people (or write their email) to invite them too. No admin needed.</li>
         <li><code>@${APP} status &lt;status&gt;</code> sets the channel's status here (<code>in progress</code>, <code>waiting</code>, <code>later</code>, <code>archived</code> or <code>none</code>). <code>@${APP} archive</code> archives it.</li>
         <li>A channel you make here gets a <b>private Slack channel</b>, with you and the teammates in it. Archive a channel and it leaves Slack (Slack archives one ${APP} made; ${APP} leaves one you brought it into). Unarchive it and it gets a new one.</li>
+        <li>In a Slack channel ${APP} made, the <b>topic</b> (next to the channel's name) shows the channel's status and ClickUp task, like <code>🔵 In progress · ClickUp ABC-123</code>, and the task is a <b>bookmark</b> under it. Slack can't badge channels in the sidebar, so this is where they show. A channel you brought ${APP} into keeps its own topic.</li>
         <li><b>Reply in a thread</b> to a teammate's message and it's a reply to that message here: it goes straight to them, and the answers come back in the thread.</li>
         <li><b>React</b> to a message and it's your reaction here too. <b>⚠️</b> on a teammate's message gets you a DM from ${APP} asking how it can be improved: answer in its thread, or press <b>Write feedback</b>. It's the same as ✎ here: the teammate amends its rules.</li>
         <li>When a teammate asks for a tool (a connector it doesn't have) or a permission, the message in Slack has <b>Approve</b> / <b>Deny</b> buttons. Decide there or here: both cards say what you chose.</li>

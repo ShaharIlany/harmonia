@@ -439,6 +439,12 @@ Jobs and memories stay.
     linked channel's status here (`in progress`, `waiting`, `later`,
     `archived` or `none`; `status` alone says what it is), and `@Harmonia
     archive` archives it.
+  - **Status and task in the topic:** in a Slack channel Harmonia made, the
+    topic shows the channel's status and ClickUp task (`🔵 In progress ·
+    ClickUp ABC-123`), and the task is a bookmark under the header. Slack
+    can't badge channels in the sidebar, so that's where they show. A channel
+    you brought Harmonia into keeps its own topic. The bookmark needs the
+    `bookmarks:write` scope: an app made before it asks you to update it.
   - **Every channel in Slack:** once the app is paired, a channel you make in
     the app gets a private Slack channel named after it, with you and the
     teammates' own bots in it. Archive a channel (here or from Slack) and it
