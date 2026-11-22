@@ -352,9 +352,10 @@ Jobs and memories stay.
   - **Your DM** with the app mirrors the channel `#slack`: what you write there
     is posted as you, Mozart picks who answers (or `@Leo` goes straight to
     Leo), and the answers come back to the DM.
-  - **Channels:** `/invite @Harmonia` in a channel or private channel and
-    write there: the first time, it's linked to a new channel here
-    (`#slack-<name>`). Each teammate answers under its own name and emoji
+  - **Channels:** `/invite @Harmonia` in a channel or private channel: it's
+    linked to a new channel here (`#slack-<name>`) and asks for its project
+    (below). One someone else added Harmonia to is linked the first time you
+    write there. Each teammate answers under its own name and emoji
     (`chat:write.customize`: the avatar as a picture, Apple's emoji from
     `emoji-datasource-apple` on jsDelivr, so its skin tone shows as it does
     here; when the picture can't be had, the avatar's Slack emoji, else the
@@ -425,6 +426,15 @@ Jobs and memories stay.
     needed, unless your workspace doesn't let apps create channels. In your DM
     with the app, leave out the `@Harmonia`. `@Harmonia help` lists the
     commands.
+  - **A project for each channel:** a new Slack channel (made with `new
+    channel`, or one you `/invite` Harmonia to) opens with a list of your
+    Claude projects: the folders your Claude Code sessions run in, as the Code
+    tab in the Claude app groups them (read from its session records and
+    `~/.claude/projects`). The teammates' bots join once you pick one, and
+    what you write before that waits for them. The channel's folder becomes
+    the project's, so the teammates' jobs, and their sessions in Claude, are
+    there. The list stays in the channel to change it, and `@Harmonia project`
+    brings it up again. In the app, New channel offers the same projects.
   - **Status and archive from Slack:** `@Harmonia status <status>` sets the
     linked channel's status here (`in progress`, `waiting`, `later`,
     `archived` or `none`; `status` alone says what it is), and `@Harmonia
@@ -481,10 +491,11 @@ Jobs and memories stay.
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
 | `runner.ts` | Runs `claude -p --agent …`, plus the stub used by `bun run stub` |
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
+| `projects.ts` | Your Claude projects (the folders your Claude Code sessions run in), for a channel's folder |
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
 | `attachments.ts` | Files on messages: where they're kept, their limits, uploads waiting for their message, the lines the teammates read |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, typing messages, `new channel`, `status` and `archive`, a Slack channel for every channel here |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, typing messages, `new channel`, `status`, `archive` and `project` (a new channel's project list), a Slack channel for every channel here |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |

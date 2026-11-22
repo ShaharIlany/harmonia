@@ -16,6 +16,7 @@ import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
+import { claudeProjects } from "./projects";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 4747);
@@ -63,6 +64,7 @@ const slack = new SlackBridge({
   decide: (ch, messageId, decision) => team.decide(ch, messageId, decision),
   openSession: (ch, jobId) => openJobSession(ch, jobId),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
+  channelChanged: (channel) => broadcast({ type: "channel", channel }),
   setStatus: (ch, status) => setStatus(ch, status),
   answering: (channelId, agentId) => team.answering(channelId, agentId).answers,
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
@@ -323,6 +325,9 @@ Bun.serve({
         }
         return err ? json({ error: err, ...slackState() }, 400) : json(slackState());
       }
+
+      // Your Claude projects (projects.ts), offered as a new channel's folder.
+      if (p === "/api/projects") return json(claudeProjects());
 
       if (p === "/api/channels" && post) {
         const name = String(body.name ?? "").trim();

@@ -137,8 +137,9 @@
     <form method="dialog" id="new-channel-form">
       <h2>New channel</h2>
       <label>Name<input name="name" required placeholder="abc-124" autofocus></label>
-      <label>Working folder<input name="cwd" id="new-channel-cwd"></label>
-      <p class="hint">The teammates work in this folder when they answer in this channel.</p>
+      <label>Working folder<input name="cwd" id="new-channel-cwd" list="new-channel-projects" autocomplete="off"></label>
+      <datalist id="new-channel-projects"></datalist>
+      <p class="hint">The teammates work in this folder when they answer in this channel. Pick one of your Claude projects, or type any folder.</p>
       <p class="error" id="new-channel-error"></p>
       <div class="dialog-btns">
         <!-- Create comes first, so Enter in a field creates the channel (the first submit button is the default). -->

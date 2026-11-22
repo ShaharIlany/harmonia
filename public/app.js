@@ -1481,6 +1481,11 @@
     $("new-channel-cwd").value = currentChannel()?.cwd || S.defaultCwd;
     $("new-channel-error").textContent = "";
     $("new-channel").showModal();
+    // Your Claude projects (the folders your Claude Code sessions run in), offered for the folder.
+    api("/api/projects").then(
+      (list) => ($("new-channel-projects").innerHTML = list.map((p) => `<option value="${esc(p.path)}" label="${esc(p.name)}"></option>`).join("")),
+      () => {},
+    );
   });
   $("new-channel-form").addEventListener("submit", async (e) => {
     if (e.submitter?.value !== "ok") return;

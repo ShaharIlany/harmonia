@@ -24,6 +24,12 @@
 // @mention in it (conversations.create and conversations.invite: no admin needed) and a linked channel here.
 // `@Harmonia status <status>` sets the linked channel's status, and `@Harmonia archive` archives it.
 //
+// A new Slack channel starts with a project. One Harmonia makes, or one you bring it into, opens with a list of your
+// Claude projects (projects.ts: the folders your Claude Code sessions run in). The teammates' bots come in once you
+// pick one, and the channel's folder is then that project's, so the teammates' jobs (and their sessions in Claude) are
+// there. What you write before that waits, and goes to the teammates once you've picked. The list stays at the top of
+// the channel to change it, and `@Harmonia project` brings it up again anywhere.
+//
 // Every channel you have going here has a Slack channel. One you make in the app gets a private Slack channel with you
 // and the teammates' bots in it. One you archive leaves Slack: a Slack channel Harmonia made is archived there too
 // (Slack doesn't let apps delete channels), and Harmonia leaves one you brought it into, since other people may use it.
@@ -46,8 +52,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA, DEFAULT_CWD } from "./paths";
 import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
-import { channels, createChannel, messages, saveMessages, type Channel, type ChannelStatus, type Message, type SlackRef } from "./store";
+import { channels, createChannel, messages, saveChannels, saveMessages, type Channel, type ChannelStatus, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
+import { claudeProjects, parentOf, projectOf, tilde, type Project } from "./projects";
 import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
 
@@ -68,6 +75,11 @@ const ASKS_KEPT = 50; // feedback questions whose thread replies still count as 
 const FILE_TIMEOUT = 5 * 60_000; // one file's download from Slack, or upload to it
 const NAME_TRIES = 20; // #name, #name-2 … #name-20: a Slack channel name for a channel made or unarchived in the app
 const NO_REACT_RETRY = 10 * 60_000; // a teammate's app that couldn't react is tried again after this (reinstalled since?)
+const PROJECT_PICK = "harmonia:project"; // the list of your Claude projects at the top of a new channel
+const PROJECTS_MAX = 100; // Slack's limit for a list's options
+const OPTION_MAX = 75; // … for an option's text
+const VALUE_MAX = 150; // … and its value (the project's folder)
+const HELD_MAX = 20; // your messages kept for the teammates while a channel waits for its project
 
 /** The app's name in Slack. The commands are written to it: `@Harmonia new channel …`. */
 export const APP_NAME = "Harmonia";
@@ -200,7 +212,12 @@ export type Link = {
   channelId: string; // the Harmonia channel
   name?: string;
   createdAt: number;
+  awaitingProject?: boolean; // a new channel whose project you haven't picked yet: no teammates in it so far
+  held?: Held[]; // what you wrote there meanwhile, for the teammates once you pick
 };
+
+/** Your message in a channel still waiting for its project: it goes to the teammates once you pick one. */
+type Held = { text: string; slack: SlackRef; files?: Attachment[] };
 
 export type SlackView = {
   rev: number; // goes up with every change, so the page never takes an older view over a newer one
@@ -250,6 +267,8 @@ type Deps = {
   openSession: (ch: Channel, jobId: string) => Promise<string | undefined>;
   /** Tells the page about a channel the bridge created. */
   channelCreated: (ch: Channel) => void;
+  /** Tells the page about a channel the bridge changed (its project). */
+  channelChanged: (ch: Channel) => void;
   /** Sets a channel's status (`@Harmonia status`, `@Harmonia archive`), as the page does. An error to show, if it can't. */
   setStatus: (ch: Channel, status: ChannelStatus | undefined) => string | undefined;
   /** The message a teammate at work in a channel is answering, if any: its typing message goes in that one's thread. */
@@ -597,10 +616,10 @@ export class SlackBridge {
     for (const key of this.mateIn) if (key.startsWith(`${id}:`)) this.mateIn.delete(key);
   }
 
-  /** The linked channels (public and private): where the teammates' own bots can be. */
+  /** The linked channels (public and private): where the teammates' own bots can be. Not one still waiting for its project. */
   private channelLinks(): string[] {
     return Object.values(this.links)
-      .filter((l) => l.kind === "channel" || l.kind === "private")
+      .filter((l) => (l.kind === "channel" || l.kind === "private") && !l.awaitingProject)
       .map((l) => l.conversationId);
   }
 
@@ -627,11 +646,14 @@ export class SlackBridge {
     return true;
   }
 
-  /** The token a teammate's answer goes out with in a conversation: its own bot's, in a channel it's (now) in. */
+  /**
+   * The token a teammate's answer goes out with in a conversation: its own bot's, in a channel it's (now) in. Not in a
+   * channel still waiting for its project: the teammates' bots come in once you pick it, and Harmonia posts till then.
+   */
   private async mateToken(id: string | undefined, conversation: string): Promise<string | undefined> {
     const token = id && this.mateTokens.get(id);
-    const kind = this.links[conversation]?.kind;
-    if (!token || (kind !== "channel" && kind !== "private")) return undefined;
+    const link = this.links[conversation];
+    if (!token || (link?.kind !== "channel" && link?.kind !== "private") || link.awaitingProject) return undefined;
     return (await this.mateJoin(id, conversation)) ? token : undefined;
   }
 
@@ -730,15 +752,28 @@ export class SlackBridge {
     return next;
   }
 
-  /** The app was added to a channel: it says what it does there. (Not in one it just made: that one gets a welcome.) */
+  /**
+   * The app was added to a channel. Brought in by you, it links the channel there and then, and asks for its project;
+   * by someone else, it says what it does there. (Not in one it just made: that one is linked already.)
+   */
   private async joined(ev: any) {
-    if (!this.config || ev.user !== this.config.botUserId) return;
+    const c = this.config;
+    if (!c || ev.user !== c.botUserId) return;
     await Bun.sleep(3_000); // a channel the app is creating is linked by then
-    if (this.links[ev.channel]) return;
-    this.say(
-      ev.channel,
-      `Hi, I'm ${APP_NAME} :musical_score:. I connect this channel to Harmonia: when ${USER_NAME} writes here, Mozart picks the teammate who answers (or start with @Leo to ask Leo). Write *@${APP_NAME} help* for what I can do.`,
-    );
+    // In line with the messages: if you write there straight away, the channel is still linked once, list first.
+    const next = this.inbound.then(async () => {
+      if (this.links[ev.channel]) return;
+      if (c.ownerId && ev.inviter === c.ownerId) {
+        await this.autoLink({ channel: ev.channel, channel_type: ev.channel_type === "G" ? "group" : "channel" });
+        return;
+      }
+      this.say(
+        ev.channel,
+        `Hi, I'm ${APP_NAME} :musical_score:. I connect this channel to Harmonia: when ${USER_NAME} writes here, Mozart picks the teammate who answers (or start with @Leo to ask Leo). Write *@${APP_NAME} help* for what I can do.`,
+      );
+    });
+    this.inbound = next.catch(() => {});
+    return next;
   }
 
   private async message(ev: any) {
@@ -791,9 +826,16 @@ export class SlackBridge {
       this.say(ev.channel, `I couldn't fetch your file${got.missed.length > 1 ? "s" : ""} for the teammates: the ${APP_NAME} app needs the files:read scope. Harmonia's Slack page shows how to update it.`, thread);
     const ref: SlackRef = { channel: ev.channel, ts: String(ev.ts), ...(thread && { thread }) };
     if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user, ref, got.files);
-    // The answers go where you wrote, into the thread or the channel itself: they answer this message (threadOf).
+    const waiting = this.links[ref.channel];
+    if (waiting?.awaitingProject) return this.hold(waiting, ch, { text, slack: ref, files: got.files });
+    this.forward(ch, { text, slack: ref, files: got.files });
+  }
+
+  /** Your message, to the teammates. The answers go where you wrote, into the thread or the channel itself: they answer this message (threadOf). */
+  private forward(ch: Channel, h: Held) {
     this.inSlack.add(ch.id);
-    this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref, files: got.files });
+    const thread = h.slack.thread;
+    this.deps.post(ch, h.text, { replyTo: thread ? this.bySlack(ch.id, h.slack.channel, thread)?.id : undefined, slack: h.slack, files: h.files });
   }
 
   /**
@@ -940,6 +982,13 @@ export class SlackBridge {
         this.ephemeral(where, user, `Only ${USER_NAME} can do that.`);
         continue;
       }
+      if (kind === "project") {
+        // In line with your messages: the ones held for the project go to the teammates before anything newer.
+        const next = this.inbound.then(() => this.chooseProject(where, a, p.message?.ts ?? p.container?.message_ts));
+        this.inbound = next.catch(() => {});
+        await next;
+        continue;
+      }
       const t = parse(a.value);
       const ch = channels.get(t.c);
       if (!ch) {
@@ -1052,7 +1101,8 @@ export class SlackBridge {
     this.deps.note(ch, `Linked to Slack: ${kind === "dm" ? `your DM with @${APP_NAME}` : kind === "group" ? "a group DM" : `#${name ?? "a channel"}`}${this.config?.teamName ? ` in ${this.config.teamName}` : ""}.`);
     this.changed();
     this.deps.log("slack.linked", { conversation: link.conversationId, channelId: ch.id, kind });
-    if (kind === "channel" || kind === "private") void this.inviteMates([link.conversationId]);
+    // A channel opens with the list of your projects, and the teammates come in once you've picked one.
+    if ((kind === "channel" || kind === "private") && !this.askProject(link, ch, { awaiting: true })) void this.inviteMates([link.conversationId]);
     return link;
   }
 
@@ -1111,7 +1161,8 @@ export class SlackBridge {
           `• *${at}new private channel <name>*: the same, but only the people in it see it.`,
           `• *${at}status <status>*: sets this channel's status in Harmonia: ${STATUS_CHOICES}.`,
           `• *${at}archive*: archives this channel in Harmonia. A Slack channel ${APP_NAME} made is archived too; one you brought me into, I leave.`,
-          `• \`/invite @${APP_NAME}\` in any channel: it's linked the first time you write there.`,
+          `• *${at}project*: this channel's Claude project, the folder the teammates' jobs run in. Pick another to change it.`,
+          `• \`/invite @${APP_NAME}\` in any channel: it's linked to a new Harmonia channel, and the teammates join once you pick its project.`,
           `• *${at}help*: this.`,
         ].join("\n"),
         thread,
@@ -1125,6 +1176,10 @@ export class SlackBridge {
     const link = this.links[ev.channel];
     const ch = link && channels.get(link.channelId);
     if (!ch) return this.say(ev.channel, `This conversation isn't linked to a Harmonia channel yet. Write here first, then try again.`, thread);
+    if (cmd.kind === "project") {
+      if (!this.askProject(link, ch, { thread })) this.say(ev.channel, "I found no Claude projects on this Mac. A folder you've worked in with Claude Code is one.", thread);
+      return;
+    }
     const name = `*#${escapeSlack(ch.name)}*`;
     const status = cmd.kind === "archive" ? "archived" : cmd.status;
     if (status === undefined) {
@@ -1177,32 +1232,109 @@ export class SlackBridge {
     }
     const ch = createChannel(name, DEFAULT_CWD);
     this.deps.channelCreated(ch);
-    const inviteError = await this.adopt(String(made.id), name, ch, cmd.private, people.ids);
+    const inviteError = await this.adopt(String(made.id), name, ch, cmd.private, people.ids, "", true);
     this.deps.note(ch, `Created from Slack: the ${cmd.private ? "private " : ""}channel #${name}, linked to this channel.`);
     if (inviteError) this.deps.note(ch, `Couldn't invite everyone to #${name} in Slack: ${inviteError}`);
-    this.say(ev.channel, `Created <#${made.id}>, linked to *#${ch.name}* in Harmonia.${inviteError ? ` I couldn't invite everyone: ${inviteError}` : ""}`);
+    const pick = this.links[made.id]?.awaitingProject ? " Pick its project there and the teammates join." : "";
+    this.say(ev.channel, `Created <#${made.id}>, linked to *#${ch.name}* in Harmonia.${pick}${inviteError ? ` I couldn't invite everyone: ${inviteError}` : ""}`);
     this.deps.log("slack.channel_created", { conversation: made.id, channelId: ch.id, private: cmd.private });
   }
 
   /**
    * A Slack channel Harmonia just made, for `ch`: you (and `people`) invited, linked, the teammates' bots invited, and a
-   * welcome (after `lead`, if any). An error, when not everyone could be invited.
+   * welcome (after `lead`, if any). With `ask`, the list of your projects instead: the teammates come in once you pick.
+   * An error, when not everyone could be invited.
    */
-  private async adopt(conversation: string, name: string, ch: Channel, isPrivate: boolean, people: string[] = [], lead = ""): Promise<string | undefined> {
+  private async adopt(conversation: string, name: string, ch: Channel, isPrivate: boolean, people: string[] = [], lead = "", ask = false): Promise<string | undefined> {
     let inviteError: string | undefined;
     try {
       await this.api("conversations.invite", { channel: conversation, users: [this.config!.ownerId, ...people].join(",") });
     } catch (e: any) {
       if (e.code !== "already_in_channel") inviteError = e.message;
     }
-    this.links[conversation] = { conversationId: conversation, kind: isPrivate ? "private" : "channel", channelId: ch.id, name, createdAt: Date.now() };
+    const link: Link = { conversationId: conversation, kind: isPrivate ? "private" : "channel", channelId: ch.id, name, createdAt: Date.now() };
+    this.links[conversation] = link;
     this.save();
     this.changed();
+    if (ask && this.askProject(link, ch, { awaiting: true })) return inviteError;
     this.postAs(undefined, conversation, {
       markdown: `${lead}This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${isPrivate ? " Only the people in it see it." : ""}`,
     });
     void this.inviteMates([conversation]);
     return inviteError;
+  }
+
+  // ---------- A channel's project ----------
+
+  /**
+   * Posts the list of your Claude projects in a linked conversation, with the channel's folder picked. `awaiting`: a new
+   * channel, where nothing is picked yet and the teammates come in once you do. False when there's nothing to pick from.
+   */
+  private askProject(link: Link, ch: Channel, opts: { awaiting?: boolean; thread?: string } = {}): boolean {
+    const projects = claudeProjects();
+    if (!projects.length) return false;
+    if (opts.awaiting) {
+      link.awaitingProject = true;
+      this.save();
+    }
+    const list = projectPicker(ch, projects, opts.awaiting ? undefined : ch.cwd);
+    const conversation = link.conversationId;
+    void this.queue(() => this.api("chat.postMessage", { channel: conversation, ...list, unfurl_links: false, ...(opts.thread && { thread_ts: opts.thread }) }), conversation);
+    return true;
+  }
+
+  /**
+   * You picked a project from the list: its folder becomes the channel's, so the teammates' jobs run there. The list
+   * stays, showing it. In a new channel the teammates' bots come in now, and what you wrote meanwhile goes to them.
+   */
+  private async chooseProject(conversation: string | undefined, a: any, ts: string | undefined) {
+    const owner = this.config?.ownerId;
+    const link = conversation ? this.links[conversation] : undefined;
+    const ch = link && channels.get(link.channelId);
+    const listFor = String(a.block_id ?? "").split(":")[1]; // the list's block is "harmonia-project:<channel id>"
+    if (!conversation || !link || !ch || (listFor && listFor !== ch.id)) return this.ephemeral(conversation, owner, "That list is for a channel that's gone from Harmonia.");
+    if (ch.status === "archived") return this.ephemeral(conversation, owner, `#${ch.name} is archived in Harmonia. Unarchive it there first.`);
+    const path = String(a.selected_option?.value ?? "");
+    const projects = claudeProjects();
+    const project = projects.find((p) => p.path === path) ?? (path && path === ch.cwd ? projectOf(path) : undefined);
+    if (!project) return this.ephemeral(conversation, owner, `I can't find that project any more. *@${APP_NAME} project* brings up the list again.`);
+
+    const changed = ch.cwd !== path;
+    if (changed) {
+      ch.cwd = path;
+      saveChannels();
+      this.deps.channelChanged(ch);
+    }
+    if (ts) void this.queue(() => this.api("chat.update", { channel: conversation, ts, ...projectPicker(ch, projects, path) }), conversation);
+    const first = Boolean(link.awaitingProject);
+    const held = link.held ?? [];
+    if (first) {
+      delete link.awaitingProject;
+      delete link.held;
+      this.save();
+      this.changed();
+    }
+    if (changed || first) this.deps.note(ch, `Project: ${project.name} (${tilde(path)}), picked in Slack. The teammates' jobs run there.`);
+    this.deps.log("slack.project_picked", { conversation, channelId: ch.id, first, held: held.length });
+    if (!first) return;
+    this.postAs(undefined, conversation, {
+      markdown: `This channel is **#${ch.name}** in Harmonia, for **${project.name}**, and the team is in. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${link.kind === "private" ? " Only the people in it see it." : ""}`,
+    });
+    await this.inviteMates([conversation]);
+    for (const h of held) this.forward(ch, h);
+  }
+
+  /** Your message in a channel still waiting for its project: kept for the teammates, with a word on why nobody answers yet. */
+  private hold(link: Link, ch: Channel, h: Held) {
+    const held = (link.held ??= []);
+    const where = h.slack.thread ?? h.slack.ts;
+    if (held.length >= HELD_MAX)
+      return this.say(h.slack.channel, `Pick this channel's project first (the list above, or *@${APP_NAME} project*). I keep only your first ${HELD_MAX} messages for the teammates till then.`, where);
+    held.push(h);
+    this.save();
+    this.deps.log("slack.held", { channelId: ch.id, held: held.length });
+    if (held.length === 1)
+      this.say(h.slack.channel, `Pick this channel's project first, from the list above: the teammates join once you do, and they'll get this then. (*@${APP_NAME} project* brings the list here.)`, where);
   }
 
   // ---------- Harmonia's channels, in Slack ----------
@@ -1677,6 +1809,46 @@ const button = (label: string, action_id: string, value: string, style?: "primar
 /** What a button acts on: a message in a Harmonia channel. */
 const target = (ch: Channel, m: Message) => JSON.stringify({ c: ch.id, m: m.id });
 
+/**
+ * The list of your Claude projects, as a Slack message: with `current` picked (the channel's project), or nothing yet
+ * (a new channel). The channel's own folder is on it even when Claude doesn't know it as a project.
+ */
+function projectPicker(ch: Channel, projects: Project[], current?: string): { text: string; blocks: unknown[] } {
+  const fits = (p: Project) => p.path.length <= VALUE_MAX; // an option's value is the folder
+  const list = projects.filter(fits).slice(0, PROJECTS_MAX);
+  const chosen = current ? (projects.find((p) => p.path === current) ?? projectOf(current)) : undefined;
+  if (chosen && fits(chosen) && !list.some((p) => p.path === chosen.path)) list.splice(PROJECTS_MAX - 1, 1, chosen);
+  const option = (p: Project) => ({ text: plain(optionText(p)), value: p.path });
+  const text = chosen
+    ? `:file_folder: *${escapeSlack(chosen.name)}* is this channel's project: the teammates' jobs run in \`${escapeSlack(tilde(chosen.path))}\`. Pick another to change it.`
+    : "*Which project is this channel for?* Pick one of your Claude projects. The teammates join once you do, and their jobs run in its folder.";
+  return {
+    text,
+    blocks: [
+      {
+        type: "section",
+        block_id: `harmonia-project:${ch.id}`,
+        text: { type: "mrkdwn", text },
+        accessory: {
+          type: "static_select",
+          action_id: PROJECT_PICK,
+          placeholder: plain("Choose a project"),
+          options: list.map(option),
+          ...(chosen && list.includes(chosen) && { initial_option: option(chosen) }),
+        },
+      },
+    ],
+  };
+}
+
+/** A project on the list: its name and where it is (team-chat · ~/GitRepos), clipped to fit. */
+function optionText(p: Project): string {
+  const where = parentOf(p.path);
+  const room = OPTION_MAX - p.name.length - 3;
+  if (room < 8) return p.name.slice(0, OPTION_MAX);
+  return `${p.name} · ${where.length > room ? "…" + where.slice(-(room - 1)) : where}`;
+}
+
 /** Text as a Slack quote: its first lines, clipped. */
 function quote(text: string): string {
   const t = text.trim();
@@ -1729,6 +1901,7 @@ export type Command =
   | { kind: "help" }
   | { kind: "newChannel"; name: string; private: boolean }
   | { kind: "archive" }
+  | { kind: "project" } // the list of your Claude projects, to see or change the channel's
   /** `status` undefined: show it (or, with `asked`, a status nobody knows); "" clears it. */
   | { kind: "status"; status?: ChannelStatus | ""; asked: string };
 
@@ -1756,7 +1929,8 @@ export const commandText = (raw: string) => slackToText(raw.replace(/<@[^>]+>/g,
 
 /**
  * The app's commands: "new channel <name>" (also "create channel …"), "new private channel <name>" (also "new group
- * chat …", "new chat …"), "status <status>" (just "status" says what it is), "archive" and "help". In a channel they
+ * chat …", "new chat …"), "status <status>" (just "status" says what it is), "archive", "project" (also "change
+ * project") and "help". In a channel they
  * only count when the app was @mentioned; in your DM with it, always. Emails and a trailing "with" (the people to
  * invite) aren't part of the name.
  */
@@ -1769,6 +1943,7 @@ export function parseCommand(text: string): Command | undefined {
   }
   if (/^(help|\?|commands)$/i.test(t)) return { kind: "help" };
   if (/^archive[.!]?$/i.test(t)) return { kind: "archive" };
+  if (/^(?:(?:change|set|switch|pick|choose)\s+(?:the\s+)?)?project[.!]?$/i.test(t)) return { kind: "project" };
   const st = t.match(/^status\b[\s:]*(.*?)[.!?]?$/is);
   if (st) {
     const asked = st[1].trim().replace(/^["“']+|["”']+$/g, "");

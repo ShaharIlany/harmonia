@@ -37,7 +37,9 @@ const real = (p: string) => {
   }
 };
 const inside = (p: string, dir: string) => p === dir || p.startsWith(dir + "/");
-const quote = (s: string) => `"${s.replace(/(["\\])/g, "\\$1")}"`;
+/** In a folder macOS protects: even looking at what's in it can bring up a permission prompt for Harmonia. */
+export const isProtected = (p: string) => PROTECTED.concat(NO_LOOKING).some((d) => inside(p, d));
+const quote =(s: string) => `"${s.replace(/(["\\])/g, "\\$1")}"`;
 
 function settings(): Record<string, any> {
   try {
@@ -51,8 +53,7 @@ function settings(): Record<string, any> {
 export function allowed(cwd: string): string[] {
   const list = settings().protectedAllow;
   const extra = Array.isArray(list) ? list.filter((p) => typeof p === "string" && p.trim()) : [];
-  return [...extra.map((p: string) => real(p.replace(/^~(?=\/|$)/, HOME))), real(cwd)]
-    .filter((p) => PROTECTED.concat(NO_LOOKING).some((d) => inside(p, d)));
+  return [...extra.map((p: string) => real(p.replace(/^~(?=\/|$)/, HOME))), real(cwd)].filter(isProtected);
 }
 
 /** The sandbox profile: everything, minus the protected folders, plus what's allowed. Later rules win. */
