@@ -61,6 +61,7 @@ const slack = new SlackBridge({
   feedback: (ch, messageId, text) => team.feedback(ch, messageId, text, { via: "slack" }),
   decideTools: (ch, messageId, decision) => team.decideTools(ch, messageId, decision),
   decide: (ch, messageId, decision) => team.decide(ch, messageId, decision),
+  openSession: (ch, jobId) => openJobSession(ch, jobId),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
 });
@@ -161,6 +162,13 @@ function serveFile(path: string, name: string, type: string) {
 
 /** Opens a CLI session in the Claude desktop app (it imports the session by id). */
 const openInClaude = (sessionId: string) => run(["open", `claude://resume?session=${sessionId}`]);
+
+/** A job's session in the Claude app (the page's button, and View in Claude in Slack). An error, if it couldn't. */
+async function openJobSession(ch: Channel, jobId: string): Promise<string | undefined> {
+  const sid = team.jobSession(ch, jobId);
+  if (!sid || !UUID.test(sid)) return "That session doesn't exist yet.";
+  return (await openInClaude(sid)).code === 0 ? undefined : "Couldn't open the Claude app.";
+}
 
 let authCache: { at: number; value: unknown } | undefined;
 async function cliAuth(fresh = false) {
@@ -454,10 +462,8 @@ Bun.serve({
       }
       if (m[2] === "stop-job" && post) return json({ message: team.stopJob(ch, String(body.jobId)) });
       if (m[2] === "open-session" && post) {
-        const sid = team.jobSession(ch, String(body.jobId));
-        if (!sid || !UUID.test(sid)) return json({ error: "That session doesn't exist yet." }, 404);
-        const r = await openInClaude(sid);
-        return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the Claude app." }, 500);
+        const err = await openJobSession(ch, String(body.jobId));
+        return err ? json({ error: err }, 500) : json({ ok: true });
       }
       return json({ error: "not found" }, 404);
     }

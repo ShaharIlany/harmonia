@@ -232,6 +232,8 @@ type Deps = {
   decideTools: (ch: Channel, messageId: string, decision: "approved" | "denied") => string | undefined;
   /** Allow once / always / Deny on a permission card. */
   decide: (ch: Channel, messageId: string, decision: "once" | "always" | "denied") => void;
+  /** View in Claude on a job's start: opens its session in the Claude app. An error to show, if it couldn't. */
+  openSession: (ch: Channel, jobId: string) => Promise<string | undefined>;
   /** Tells the page about a channel the bridge created. */
   channelCreated: (ch: Channel) => void;
   log: (event: string, fields?: Record<string, unknown>) => void;
@@ -916,6 +918,13 @@ export class SlackBridge {
         await this.openFeedback(p.trigger_id, ch, t.m, { dm: where, ts: p.message?.ts ?? p.container?.message_ts });
         continue;
       }
+      if (kind === "session") {
+        // Opens on the Mac Harmonia runs on, whichever device the button was clicked on. Archived channels too.
+        const err = await this.deps.openSession(ch, String(t.j));
+        if (err) this.ephemeral(where, user, err);
+        this.deps.log("slack.session_opened", { channelId: ch.id, jobId: t.j, error: err });
+        continue;
+      }
       if (ch.status === "archived") {
         this.ephemeral(where, user, `#${ch.name} is archived in Harmonia. Unarchive it there first.`);
         continue;
@@ -1383,7 +1392,8 @@ function quote(text: string): string {
 
 /**
  * A teammate's tool request (a connector it lacks) or permission card, as a Slack message: Approve / Deny (or Allow
- * once / always / Deny) buttons while it's pending, what was decided once it isn't. Undefined for anything else.
+ * once / always / Deny) buttons while it's pending, what was decided once it isn't. A job's start, with a View in
+ * Claude button that opens its session in the Claude app on this Mac. Undefined for anything else.
  */
 export function card(m: Message, ch: Channel): { text: string; blocks: unknown[] } | undefined {
   const name = escapeSlack(nameOf(m.author));
@@ -1404,6 +1414,12 @@ export function card(m: Message, ch: Channel): { text: string; blocks: unknown[]
       button(`Always in #${ch.name}`, "harmonia:perm:always", value),
       button("Deny", "harmonia:perm:denied", value),
     ]);
+  }
+  const job = m.kind === "job" ? ch.jobs.find((j) => j.id === m.meta?.jobId) : undefined;
+  if (job) {
+    const text = mrkdwn(relayText(m, ch) ?? m.text);
+    const open = button("View in Claude", "harmonia:session:open", JSON.stringify({ c: ch.id, j: job.id }));
+    return { text, blocks: [section(text), { type: "actions", elements: [open] }] };
   }
 }
 
