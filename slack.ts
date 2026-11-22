@@ -1047,6 +1047,25 @@ export class SlackBridge {
     }
   }
 
+  /**
+   * Who an @Name can tag in Slack (lowercase name → Slack user id): you (by your Harmonia name and your Slack one), the
+   * teammates with a Slack app of their own, and the people seen here. A name two of those people share tags nobody.
+   */
+  private mentionIds(): Map<string, string> {
+    const ids = new Map<string, string>();
+    const shared = new Set<string>();
+    for (const [id, name] of this.names) {
+      const k = name.trim().toLowerCase();
+      if (ids.has(k) && ids.get(k) !== id) shared.add(k);
+      else if (k && k !== id.toLowerCase()) ids.set(k, id);
+    }
+    for (const k of shared) ids.delete(k);
+    const c = this.config;
+    for (const [id, a] of Object.entries(c?.teammates ?? {})) if (a.botUserId && teammate(id)) ids.set(nameOf(id).toLowerCase(), a.botUserId);
+    if (c?.ownerId) for (const n of [c.ownerName, USER_NAME]) if (n?.trim()) ids.set(n.trim().toLowerCase(), c.ownerId);
+    return ids;
+  }
+
   // ---------- Commands ----------
 
   private async command(ev: any, raw: string, cmd: Command) {
@@ -1207,12 +1226,14 @@ export class SlackBridge {
    * the notification text. `ref`: the message here, which keeps the Slack ts (for replies, reactions and its card).
    */
   private postAs(look: Look | undefined, channel: string, content: Content, opts: { thread?: string; ref?: { channelId: string; message: Message } } = {}) {
-    const md = "markdown" in content ? content.markdown : undefined;
+    // @Name becomes a real Slack mention, in the block and in the mrkdwn copy (made first: it escapes the <).
+    const ids = "markdown" in content ? this.mentionIds() : undefined;
+    const md = "markdown" in content ? slackMentions(content.markdown, ids!) : undefined;
     const params: Record<string, unknown> = {
       channel,
       ...(md === undefined
         ? { text: (content as { text: string }).text.slice(0, TEXT_MAX), blocks: (content as { blocks: unknown[] }).blocks }
-        : { text: mrkdwn(md).slice(0, TEXT_MAX), ...(md.length <= MARKDOWN_BLOCK_MAX && { blocks: [{ type: "markdown", text: md }] }) }),
+        : { text: slackMentions(mrkdwn((content as { markdown: string }).markdown), ids!).slice(0, TEXT_MAX), ...(md.length <= MARKDOWN_BLOCK_MAX && { blocks: [{ type: "markdown", text: md }] }) }),
       ...(opts.thread && { thread_ts: opts.thread }),
       unfurl_links: false,
       unfurl_media: false,
@@ -1506,6 +1527,21 @@ export function slackToText(text = "", user: (id: string) => string = (id) => `@
     .replace(/[ \t]+/g, " ")
     .replace(/ *\n */g, "\n")
     .trim();
+}
+
+/**
+ * @Name as a real Slack mention (<@U…>) for everyone in `ids` (lowercase name → Slack user id), so Slack shows the tag
+ * and notifies them. The longest name wins ("@Dana Cohen" over "@Dana"). Code, links and Slack's <…> markup stay as
+ * they are, and so do emails and addresses (an @ right after a letter, digit or /).
+ */
+export function slackMentions(text: string, ids: Map<string, string>): string {
+  if (!ids.size || !text.includes("@")) return text;
+  const names = [...ids.keys()].sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const at = new RegExp(`(?<![\\p{L}\\p{N}_@/<|\`])@(${names.join("|")})(?![\\p{L}\\p{N}_])`, "giu");
+  return text
+    .split(/(```[\s\S]*?```|`[^`\n]+`|<[^<>\n]*>|\[[^\]\n]*\]\([^)\s]*\))/g)
+    .map((p, i) => (i % 2 ? p : p.replace(at, (_, name: string) => `<@${ids.get(name.toLowerCase())}>`)))
+    .join("");
 }
 
 /** & < > as Slack wants them in text. A > that starts a line stays: it's a quote. */
