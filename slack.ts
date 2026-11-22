@@ -5,7 +5,8 @@
 // is linked to a Harmonia channel the first time you write there. What you write lands in the linked channel as
 // your message; other people's messages land too, as context, but never wake a teammate: the teammates work for you
 // and can read your mail. What happens in the channel goes back to Slack: the teammates' answers, job starts, errors,
-// and what you type in the app. While a teammate works on your Slack message, it carries 👀.
+// and what you type in the app. While a teammate works on your Slack message, a "typing…" message from it says so,
+// deleted once its answer is out (the answer is a new message, so Slack notifies you of it).
 //
 // Every message is kept with its Slack ts (meta.slack), so Slack's own gestures work: a thread reply is a reply to that
 // message here (it wakes that teammate), and the answers follow you into the thread; your reaction on a message is
@@ -54,7 +55,9 @@ const KEYCHAIN_SERVICE = "Harmonia Slack";
 /** Off the Mac there's no Keychain (a run from the repo on Linux): the tokens go here, readable only by you. */
 const SECRETS_FILE = join(DATA, "slack-secrets.json");
 const SEND_RETRIES = [2_000, 5_000, 15_000];
-const WORKING = "eyes"; // the reaction on your Slack message while a teammate works on it
+const TYPING = "_typing…_"; // a teammate's message in Slack while it works on an answer: deleted once the answer is out
+const TYPING_AFTER = 1_500; // ms of work before it goes out, so a quick answer (or the next bubble) comes without one
+const QUEUED = /^busy in /; // the activity of a teammate still busy in another channel: it isn't typing here yet
 const MARKDOWN_BLOCK_MAX = 12_000; // Slack's limit for a markdown block
 const TEXT_MAX = 39_000; // chat.postMessage truncates text past 40,000 characters
 const PAIR_TRIES = 5; // wrong pairing codes one Slack user may send before the app stops listening to them
@@ -70,8 +73,7 @@ const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
 
 /**
  * What the app may do, as bot scopes: read and write in the conversations it's in, post under the teammates' names,
- * create channels and invite you to them, react (👀) and read your reactions, look up people by id or email, and fetch
- * and send files.
+ * create channels and invite you to them, read your reactions, look up people by id or email, and fetch and send files.
  */
 export const BOT_SCOPES = [
   "app_mentions:read",
@@ -91,7 +93,6 @@ export const BOT_SCOPES = [
   "mpim:history",
   "mpim:read",
   "reactions:read",
-  "reactions:write",
   "users:read",
   "users:read.email",
 ];
@@ -220,6 +221,8 @@ export type LinkView = { conversationId: string; kind: Link["kind"]; channelId: 
 export type SlackEvent = { type: "slack"; slack: SlackView; links: LinkView[] };
 
 type Look = { id?: string; name: string; avatar: string };
+/** A teammate's "typing…" message: waiting to go out (`timer`), or out (`ts`). `by`: the teammate whose own bot posted it. */
+type Typing = { channel: string; ts?: string; by?: string; timer?: ReturnType<typeof setTimeout> };
 /** What a Slack message says: the teammates' Markdown, or the app's own mrkdwn text with blocks (cards, buttons). */
 type Content = { markdown: string } | { text: string; blocks: unknown[] };
 
@@ -269,8 +272,9 @@ export class SlackBridge {
   private names = new Map<string, string>(); // Slack user id → the name they go by
   private pairTries = new Map<string, number>();
   private working = new Map<string, Set<string>>(); // Harmonia channel id → teammates working there
-  private lastIn = new Map<string, string>(); // Harmonia channel id → ts of your latest Slack message there
-  private watching = new Map<string, { channel: string; ts: string }>(); // Harmonia channel id → the message with 👀
+  private inSlack = new Set<string>(); // Harmonia channels where you last wrote from Slack (not the app)
+  private typing = new Map<string, Typing>(); // "channel id:teammate id" → the teammate's typing message there
+  private typed: Set<Typing>; // typing messages out in Slack and not deleted yet, kept in slack.json for after a restart
   private reacted = new Set<string>();
   private threads = new Map<string, string>(); // Harmonia channel id → the Slack thread the conversation is in now
   private cardsDone = new Set<string>(); // cards whose Slack message already says what was decided
@@ -285,10 +289,11 @@ export class SlackBridge {
   private channelWork: Promise<unknown> = Promise.resolve(); // Slack channels made and archived for Harmonia's, in order
 
   constructor(private deps: Deps) {
-    const saved = readJson<{ config?: Config; links?: Record<string, Link>; asks?: Record<string, Ask> }>(FILE, {});
+    const saved = readJson<{ config?: Config; links?: Record<string, Link>; asks?: Record<string, Ask>; typing?: Typing[] }>(FILE, {});
     this.config = saved.config;
     this.links = saved.links ?? {};
     this.asks = saved.asks ?? {};
+    this.typed = new Set(saved.typing ?? []);
   }
 
   /** Connects, when the app is set up and on. */
@@ -367,7 +372,8 @@ export class SlackBridge {
   };
 
   private save() {
-    writeFileSync(FILE, JSON.stringify({ config: this.config, links: this.links, asks: this.asks }, null, 1), { mode: 0o600 });
+    const typing = [...this.typed].map(({ channel, ts, by }) => ({ channel, ts, by }));
+    writeFileSync(FILE, JSON.stringify({ config: this.config, links: this.links, asks: this.asks, ...(typing.length > 0 && { typing }) }, null, 1), { mode: 0o600 });
   }
 
   // ---------- Setup ----------
@@ -649,9 +655,9 @@ export class SlackBridge {
   unlink(conversationId: string): string | undefined {
     const l = this.links[conversationId];
     if (!l) return "That Slack conversation isn't linked.";
-    void this.stopWatching(l.channelId);
+    for (const key of this.typing.keys()) if (key.startsWith(`${l.channelId}:`)) this.untype(key);
     this.working.delete(l.channelId);
-    this.lastIn.delete(l.channelId);
+    this.inSlack.delete(l.channelId);
     this.threads.delete(l.channelId);
     for (const key of this.mateIn) if (key.endsWith(`:${conversationId}`)) this.mateIn.delete(key);
     delete this.links[conversationId];
@@ -677,6 +683,9 @@ export class SlackBridge {
       if (token) this.mateTokens.set(id, token);
       else this.mateProblems.set(id, "Its token is missing from the Keychain. Paste it again (its app's Install App page).");
     }
+    // Typing messages an earlier run left in Slack: it stopped before the answers came.
+    const live = new Set(this.typing.values());
+    for (const t of this.typed) if (!live.has(t)) void this.queue(() => this.deleteTyping(t), t.channel);
     this.socket = new SlackSocket(
       tokens.app,
       (e) => void this.onEnvelope(e).catch((err) => this.deps.log("slack.event_failed", { error: err?.message })),
@@ -774,7 +783,7 @@ export class SlackBridge {
     // The answers go where you wrote: into the thread, or the channel itself.
     if (thread) this.threads.set(ch.id, thread);
     else this.threads.delete(ch.id);
-    this.lastIn.set(ch.id, ref.ts);
+    this.inSlack.add(ch.id);
     this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref, files: got.files });
   }
 
@@ -1305,7 +1314,7 @@ export class SlackBridge {
       const root = to && to.channel === link.conversationId ? (to.thread ?? to.ts) : undefined;
       if (root) this.threads.set(ch.id, root);
       else this.threads.delete(ch.id);
-      this.lastIn.delete(ch.id); // you're writing in the app now: 👀 goes on nothing in Slack
+      this.inSlack.delete(ch.id); // you're writing in the app now: no typing messages in Slack
       if (m.meta?.files?.length) return void this.sendFiles(link, ch, m, root);
       return this.postAs(USER_LOOK, link.conversationId, { markdown: m.text }, { thread: root, ref });
     }
@@ -1315,7 +1324,7 @@ export class SlackBridge {
     if (!t) return;
     const text = relayText(m, ch);
     const content: Content | undefined = card(m, ch) ?? (text ? { markdown: text } : undefined);
-    if (content) this.postAs(t, link.conversationId, content, { thread, ref });
+    if (content) this.postFor(t, link, content, { thread, ref });
   }
 
   /** A message changed: a teammate's emoji on yours, or a card that's decided now (here or by its buttons). */
@@ -1331,26 +1340,76 @@ export class SlackBridge {
     }, link.conversationId);
   }
 
-  /** 👀 on your latest Slack message while any teammate works in the channel. */
+  /** A teammate at work in the channel: a typing message from it in Slack (while you're writing there). */
   private activity(link: Link, agentId: string, status: string | null) {
     if (!teammate(agentId)) return;
     const set = this.working.get(link.channelId) ?? new Set<string>();
-    const before = set.size;
-    if (status) set.add(agentId);
-    else set.delete(agentId);
     this.working.set(link.channelId, set);
-    if (!before && set.size) {
-      const ts = this.lastIn.get(link.channelId);
-      if (!ts) return;
-      this.watching.set(link.channelId, { channel: link.conversationId, ts });
-      void this.queue(() => this.api("reactions.add", { channel: link.conversationId, timestamp: ts, name: WORKING }).catch(ignore("already_reacted")), link.conversationId);
-    } else if (before && !set.size) void this.stopWatching(link.channelId);
+    if (status && !QUEUED.test(status)) {
+      set.add(agentId);
+      return this.typeSoon(link, agentId);
+    }
+    set.delete(agentId);
+    // Its answer, if any, comes right after this and takes the typing message's place (postFor). With no answer, the
+    // typing message goes a moment later, unless the teammate is at work here again by then.
+    setTimeout(() => this.working.get(link.channelId)?.has(agentId) || this.untype(`${link.channelId}:${agentId}`));
   }
 
-  private stopWatching(channelId: string) {
-    const w = this.watching.get(channelId);
-    this.watching.delete(channelId);
-    if (w) return this.queue(() => this.api("reactions.remove", { channel: w.channel, timestamp: w.ts, name: WORKING }).catch(ignore("no_reaction")), w.channel);
+  /** The teammate's typing message, unless it has one: out once it has worked a moment (TYPING_AFTER). */
+  private typeSoon(link: Link, agentId: string) {
+    const key = `${link.channelId}:${agentId}`;
+    if (this.typing.has(key) || !this.inSlack.has(link.channelId)) return;
+    const t: Typing = { channel: link.conversationId };
+    t.timer = setTimeout(() => {
+      t.timer = undefined;
+      const look = teammate(agentId);
+      if (!look) return;
+      const posted = (ts: string, by?: string) => {
+        Object.assign(t, { ts, by });
+        this.typed.add(t);
+        this.save();
+      };
+      this.postAs(look, t.channel, { markdown: TYPING }, { thread: this.threads.get(link.channelId), posted });
+    }, TYPING_AFTER);
+    this.typing.set(key, t);
+  }
+
+  /** Done with a typing message: one still waiting never goes out, one out (or on its way) is deleted. */
+  private untype(key: string) {
+    const t = this.typing.get(key);
+    if (!t) return;
+    this.typing.delete(key);
+    if (t.timer) return clearTimeout(t.timer);
+    return this.queue(() => this.deleteTyping(t), t.channel);
+  }
+
+  /** Deletes a typing message, with the token that posted it. Run in the queue: one that was on its way is out by then. */
+  private async deleteTyping(t: Typing) {
+    const token = t.by ? this.mateTokens.get(t.by) : this.botToken;
+    if (t.ts && token) {
+      try {
+        await slackCall(token, "chat.delete", { channel: t.channel, ts: t.ts });
+      } catch (e: any) {
+        if (retryable(e)) throw e; // the queue tries again
+        if (!(e instanceof SlackError && e.code === "message_not_found")) this.deps.log("slack.typing_delete_failed", { channel: t.channel, error: e?.message });
+      }
+    }
+    if (this.typed.delete(t)) this.save();
+  }
+
+  /**
+   * A teammate's message, in place of its typing message: that's deleted once the message is out (not edited into it,
+   * so Slack notifies you of the answer). A teammate still at work (a hold-on line) gets a new one under it.
+   */
+  private postFor(t: Teammate, link: Link, content: Content, opts: { thread?: string; ref?: { channelId: string; message: Message } }) {
+    const key = `${link.channelId}:${t.id}`;
+    const typing = this.typing.get(key);
+    this.typing.delete(key);
+    clearTimeout(typing?.timer);
+    const sent = this.postAs(t, link.conversationId, content, opts);
+    if (typing && !typing.timer) void this.queue(() => this.deleteTyping(typing), typing.channel);
+    if (this.working.get(link.channelId)?.has(t.id)) this.typeSoon(link, t.id);
+    return sent;
   }
 
   /** A teammate's emoji-only answer lands as a reaction on your message here; in Slack it's a message under its name. */
@@ -1361,7 +1420,7 @@ export class SlackBridge {
       const t = teammate(x.by);
       if (!t || this.reacted.has(key)) continue;
       this.reacted.add(key);
-      this.postAs(t, link.conversationId, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
+      this.postFor(t, link, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
     }
   }
 
@@ -1369,8 +1428,14 @@ export class SlackBridge {
    * A message in Slack under a teammate's name and avatar (chat:write.customize), or as the app itself (`look`
    * undefined), in a thread or not. The teammates write Markdown: it goes in a markdown block, with a mrkdwn copy as
    * the notification text. `ref`: the message here, which keeps the Slack ts (for replies, reactions and its card).
+   * `posted`: told the message's ts once it's out, and the teammate whose own bot posted it (else the Harmonia app did).
    */
-  private postAs(look: Look | undefined, channel: string, content: Content, opts: { thread?: string; ref?: { channelId: string; message: Message } } = {}) {
+  private postAs(
+    look: Look | undefined,
+    channel: string,
+    content: Content,
+    opts: { thread?: string; ref?: { channelId: string; message: Message }; posted?: (ts: string, by?: string) => void } = {},
+  ) {
     // @Name becomes a real Slack mention, in the block and in the mrkdwn copy (made first: it escapes the <).
     const ids = "markdown" in content ? this.mentionIds() : undefined;
     const md = "markdown" in content ? slackMentions(content.markdown, ids!) : undefined;
@@ -1399,12 +1464,15 @@ export class SlackBridge {
       // A teammate's words (not a card: its buttons answer to the Harmonia app) go out from its own bot, if it has one.
       // A bot taken out of the channel since is invited back for a second go; else Harmonia posts for it.
       let r: any;
+      let by: string | undefined;
       for (let i = 0; i < 2 && !r; i++) {
         const mate = md !== undefined ? await this.mateToken(look?.id, channel) : undefined;
         if (!mate) break;
         r = await send(mate).catch((e) => this.mateFailed(look!.id!, channel, e));
+        if (r) by = look!.id;
       }
       r ??= await send();
+      if (r?.ts) opts.posted?.(String(r.ts), by);
       if (opts.ref && r?.ts) {
         (opts.ref.message.meta ??= {}).slack = { channel, ts: String(r.ts), ...(opts.thread && { thread: opts.thread }) };
         saveMessages(opts.ref.channelId);
@@ -1500,10 +1568,6 @@ const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const mentions = (raw: string, userId: string) => raw.includes(`<@${userId}>`) || raw.includes(`<@${userId}|`);
 
 /** Takes one Slack error as success (already reacted, nothing to take off); anything else still fails. */
-const ignore = (code: string) => (e: unknown) => {
-  if (!(e instanceof SlackError && e.code === code)) throw e;
-};
-
 /** Network trouble and Slack's own hiccups are worth another try; "not_in_channel" and the like aren't. */
 function retryable(e: unknown) {
   if (!(e instanceof SlackError)) return true;

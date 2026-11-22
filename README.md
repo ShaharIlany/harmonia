@@ -353,7 +353,9 @@ Jobs and memories stay.
     where you last wrote: in the channel, or in the thread you replied in; the
     5-minute job status updates stay here. The teammates' Markdown goes in a
     Slack markdown block. What you type in the app goes to Slack as "Alex (in
-    Harmonia)". While a teammate works on your Slack message, it carries 👀.
+    Harmonia)". While a teammate works on your Slack message, a "typing…"
+    message from it says so; it's deleted once the answer is out, and the
+    answer comes as a new message (so Slack notifies you of it).
   - **Teammates as Slack members:** on the Slack page, each teammate can get a
     Slack app of its own (a bot that only posts), so it's a member you can
     @mention from Slack's list, with its own profile. Generate an app
@@ -465,7 +467,7 @@ Jobs and memories stay.
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
 | `attachments.ts` | Files on messages: where they're kept, their limits, uploads waiting for their message, the lines the teammates read |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel`, `status` and `archive`, a Slack channel for every channel here |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, typing messages, `new channel`, `status` and `archive`, a Slack channel for every channel here |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |
