@@ -406,6 +406,19 @@ Jobs and memories stay.
     needed, unless your workspace doesn't let apps create channels. In your DM
     with the app, leave out the `@Harmonia`. `@Harmonia help` lists the
     commands.
+  - **Status and archive from Slack:** `@Harmonia status <status>` sets the
+    linked channel's status here (`in progress`, `waiting`, `later`,
+    `archived` or `none`; `status` alone says what it is), and `@Harmonia
+    archive` archives it.
+  - **Every channel in Slack:** once the app is paired, a channel you make in
+    the app gets a private Slack channel named after it, with you and the
+    teammates' own bots in it. Archive a channel (here or from Slack) and it
+    leaves Slack: a Slack channel Harmonia made is archived there (Slack
+    doesn't let apps delete channels; it's renamed `<name>-archived-<date>`
+    first, so the name is free again), and Harmonia leaves one you brought it
+    into, since other people may use it. Unarchive it and it gets a new
+    private Slack channel. Your DM with the app and group DMs can't go, so they
+    stay linked.
   - **Files:** a file on your Slack message (or on someone else's, in a
     linked channel) is fetched into the channel's attachments here
     (`files:read`), so it shows in the app and the teammates can open it. A
@@ -452,7 +465,7 @@ Jobs and memories stay.
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
 | `attachments.ts` | Files on messages: where they're kept, their limits, uploads waiting for their message, the lines the teammates read |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel` |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, 👀, `new channel`, `status` and `archive`, a Slack channel for every channel here |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |

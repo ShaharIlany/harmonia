@@ -10,7 +10,7 @@ import type { ServerWebSocket } from "bun";
 import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Channel, type Message } from "./store";
+import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
@@ -63,10 +63,19 @@ const slack = new SlackBridge({
   decide: (ch, messageId, decision) => team.decide(ch, messageId, decision),
   openSession: (ch, jobId) => openJobSession(ch, jobId),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
+  setStatus: (ch, status) => setStatus(ch, status),
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
 });
 toSlack = (e) => slack.onEvent(e);
 slack.start();
+
+/** A channel's status, from the page or from Slack. Slack follows: an archived channel leaves it, an unarchived one gets a new Slack channel. */
+function setStatus(ch: Channel, status: ChannelStatus | undefined): string | undefined {
+  const before = ch.status;
+  const err = team.setStatus(ch, status);
+  if (!err) slack.statusChanged(ch, before);
+  return err;
+}
 
 if (!channels.size) createChannel("general", DEFAULT_CWD);
 dropUnsent(messages);
@@ -319,6 +328,7 @@ Bun.serve({
         if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return json({ error: `No such folder: ${cwd}` }, 400);
         const ch = createChannel(name, cwd);
         broadcast({ type: "channel", channel: ch });
+        slack.channelAdded(ch); // a private Slack channel for it, when Slack is connected
         return json(ch);
       }
 
@@ -396,7 +406,7 @@ Bun.serve({
       if (m[2] === "status" && post) {
         const status = body.status || undefined;
         if (status !== undefined && !CHANNEL_STATUSES.includes(status)) return json({ error: "Unknown status." }, 400);
-        const err = team.setStatus(ch, status);
+        const err = setStatus(ch, status);
         return err ? json({ error: err }, 409) : json(ch);
       }
       if (m[2] === "task" && post) {

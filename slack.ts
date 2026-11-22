@@ -20,6 +20,12 @@
 //
 // `@Harmonia new channel <name>` (or `new private channel <name>`) creates a Slack channel with you and anyone you
 // @mention in it (conversations.create and conversations.invite: no admin needed) and a linked channel here.
+// `@Harmonia status <status>` sets the linked channel's status, and `@Harmonia archive` archives it.
+//
+// Every channel you have going here has a Slack channel. One you make in the app gets a private Slack channel with you
+// and the teammates' bots in it. One you archive leaves Slack: a Slack channel Harmonia made is archived there too
+// (Slack doesn't let apps delete channels), and Harmonia leaves one you brought it into, since other people may use it.
+// Unarchive it and it gets a new private Slack channel. Your DM with the app and group DMs can't go, so they stay linked.
 //
 // The app is made from a manifest (CREATE_LINK) and connects over Socket Mode (slack-socket.ts): nothing listens on the
 // internet. The Slack user who sends the app the pairing code from the Slack page is the only one who wakes the
@@ -38,7 +44,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA, DEFAULT_CWD } from "./paths";
 import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
-import { channels, createChannel, messages, saveMessages, type Channel, type Message, type SlackRef } from "./store";
+import { channels, createChannel, messages, saveMessages, type Channel, type ChannelStatus, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
 import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
@@ -56,6 +62,7 @@ const FEEDBACK = "warning"; // ⚠️: your reaction that asks for feedback on a
 const FEEDBACK_VIEW = "harmonia:feedback"; // the feedback box (a modal)
 const ASKS_KEPT = 50; // feedback questions whose thread replies still count as feedback
 const FILE_TIMEOUT = 5 * 60_000; // one file's download from Slack, or upload to it
+const NAME_TRIES = 20; // #name, #name-2 … #name-20: a Slack channel name for a channel made or unarchived in the app
 
 /** The app's name in Slack. The commands are written to it: `@Harmonia new channel …`. */
 export const APP_NAME = "Harmonia";
@@ -236,6 +243,8 @@ type Deps = {
   openSession: (ch: Channel, jobId: string) => Promise<string | undefined>;
   /** Tells the page about a channel the bridge created. */
   channelCreated: (ch: Channel) => void;
+  /** Sets a channel's status (`@Harmonia status`, `@Harmonia archive`), as the page does. An error to show, if it can't. */
+  setStatus: (ch: Channel, status: ChannelStatus | undefined) => string | undefined;
   log: (event: string, fields?: Record<string, unknown>) => void;
 };
 
@@ -273,6 +282,7 @@ export class SlackBridge {
   private mateIn = new Set<string>(); // "teammate id:conversation": its bot is in that channel
   private mateProblems = new Map<string, string>(); // teammate id → why its app can't post now
   private making = false; // the teammates' apps are being made
+  private channelWork: Promise<unknown> = Promise.resolve(); // Slack channels made and archived for Harmonia's, in order
 
   constructor(private deps: Deps) {
     const saved = readJson<{ config?: Config; links?: Record<string, Link>; asks?: Record<string, Ask> }>(FILE, {});
@@ -642,6 +652,8 @@ export class SlackBridge {
     void this.stopWatching(l.channelId);
     this.working.delete(l.channelId);
     this.lastIn.delete(l.channelId);
+    this.threads.delete(l.channelId);
+    for (const key of this.mateIn) if (key.endsWith(`:${conversationId}`)) this.mateIn.delete(key);
     delete this.links[conversationId];
     this.save();
     this.changed();
@@ -733,7 +745,8 @@ export class SlackBridge {
     if (ask) return this.feedbackReply(ev, raw, ask, thread!);
     if (yours && (dm || mentions(raw, c.botUserId))) {
       const cmd = parseCommand(commandText(raw));
-      if (cmd) return this.command(ev, raw, cmd);
+      // In your DM, "status of the build?" is a question for the teammates, not a status nobody knows.
+      if (cmd && !(dm && cmd.kind === "status" && cmd.asked && cmd.status === undefined)) return this.command(ev, raw, cmd, thread);
     }
 
     let link = this.links[ev.channel];
@@ -748,7 +761,8 @@ export class SlackBridge {
       this.changed();
       return yours ? this.say(ev.channel, "Its Harmonia channel is gone. Write again to link this conversation to a new one.") : undefined;
     }
-    if (yours && ch.status === "archived") return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there and write again.`, thread);
+    if (yours && ch.status === "archived")
+      return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there (or *${dm ? "" : `@${APP_NAME} `}status in progress* here) and write again.`, thread);
     const got = await this.fetchFiles(ch, Array.isArray(ev.files) ? ev.files : []);
     let text = await this.chatText(raw);
     if (got.missed.length) text = [text, `(attached in Slack, not fetched: ${got.missed.join("; ")})`].filter(Boolean).join("\n");
@@ -1068,22 +1082,47 @@ export class SlackBridge {
 
   // ---------- Commands ----------
 
-  private async command(ev: any, raw: string, cmd: Command) {
+  private async command(ev: any, raw: string, cmd: Command, thread?: string) {
+    const at = ev.channel_type === "im" ? "" : `@${APP_NAME} `;
     if (cmd.kind === "help") {
-      const at = ev.channel_type === "im" ? "" : `@${APP_NAME} `;
       return this.say(
         ev.channel,
         [
           `*${APP_NAME}* :musical_score: connects Slack to your teammates in Harmonia. Write as usual and Mozart picks who answers, or start with @Leo to ask Leo.`,
           `• *${at}new channel <name>*: a new channel with you in it, linked to a new Harmonia channel. @mention people to invite them too.`,
           `• *${at}new private channel <name>*: the same, but only the people in it see it.`,
+          `• *${at}status <status>*: sets this channel's status in Harmonia: ${STATUS_CHOICES}.`,
+          `• *${at}archive*: archives this channel in Harmonia. A Slack channel ${APP_NAME} made is archived too; one you brought me into, I leave.`,
           `• \`/invite @${APP_NAME}\` in any channel: it's linked the first time you write there.`,
           `• *${at}help*: this.`,
         ].join("\n"),
+        thread,
       );
     }
-    const err = await this.newChannel(ev, raw, cmd);
-    if (err) this.say(ev.channel, `Couldn't create it: ${err}`);
+    if (cmd.kind === "newChannel") {
+      const err = await this.newChannel(ev, raw, cmd);
+      if (err) this.say(ev.channel, `Couldn't create it: ${err}`);
+      return;
+    }
+    const link = this.links[ev.channel];
+    const ch = link && channels.get(link.channelId);
+    if (!ch) return this.say(ev.channel, `This conversation isn't linked to a Harmonia channel yet. Write here first, then try again.`, thread);
+    const name = `*#${escapeSlack(ch.name)}*`;
+    const status = cmd.kind === "archive" ? "archived" : cmd.status;
+    if (status === undefined) {
+      const now = ch.status ? `is *${STATUS_LABELS[ch.status]}*` : "has no status";
+      const lead = cmd.kind === "status" && cmd.asked ? `I don't know the status "${escapeSlack(cmd.asked)}". ` : "";
+      return this.say(ev.channel, `${lead}${name} ${now} in Harmonia. Set it with *${at}status <status>*: ${STATUS_CHOICES}.`, thread);
+    }
+    if ((ch.status ?? "") === status) return this.say(ev.channel, `${name} ${status ? `is already *${STATUS_LABELS[status]}*` : "has no status already"}.`, thread);
+    const err = this.deps.setStatus(ch, status || undefined);
+    if (err) return this.say(ev.channel, `Couldn't: ${escapeSlack(err)}`, thread);
+    this.deps.log("slack.status_set", { channelId: ch.id, status: status || null });
+    // An archived channel's Slack channel says goodbye itself, as it goes. Your DM and group DMs stay.
+    if (status === "archived" && (link.kind === "channel" || link.kind === "private")) return;
+    if (status === "archived")
+      return this.say(ev.channel, `:file_cabinet: ${name} is archived in Harmonia. This ${link.kind === "dm" ? "DM" : "group DM"} stays in Slack: *${at}status in progress* brings it back.`, thread);
+    this.say(ev.channel, status ? `:white_check_mark: ${name} is *${STATUS_LABELS[status]}* now.` : `:white_check_mark: ${name} has no status now.`, thread);
   }
 
   /** People named in a command: @mentions (not the app) and email addresses, as Slack user ids. */
@@ -1118,26 +1157,132 @@ export class SlackBridge {
       if (e.code === "restricted_action") return "this workspace doesn't let apps create channels. Make the channel yourself and `/invite` me there.";
       return e.message;
     }
-    let inviteError: string | undefined;
-    try {
-      await this.api("conversations.invite", { channel: made.id, users: [c.ownerId, ...people.ids].join(",") });
-    } catch (e: any) {
-      if (e.code !== "already_in_channel") inviteError = e.message;
-    }
     const ch = createChannel(name, DEFAULT_CWD);
     this.deps.channelCreated(ch);
-    const link: Link = { conversationId: String(made.id), kind: cmd.private ? "private" : "channel", channelId: ch.id, name, createdAt: Date.now() };
-    this.links[link.conversationId] = link;
-    this.save();
-    this.changed();
-    this.postAs(undefined, link.conversationId, {
-      markdown: `This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${cmd.private ? " Only the people in it see it." : ""}`,
-    });
-    void this.inviteMates([link.conversationId]);
+    const inviteError = await this.adopt(String(made.id), name, ch, cmd.private, people.ids);
     this.deps.note(ch, `Created from Slack: the ${cmd.private ? "private " : ""}channel #${name}, linked to this channel.`);
     if (inviteError) this.deps.note(ch, `Couldn't invite everyone to #${name} in Slack: ${inviteError}`);
     this.say(ev.channel, `Created <#${made.id}>, linked to *#${ch.name}* in Harmonia.${inviteError ? ` I couldn't invite everyone: ${inviteError}` : ""}`);
-    this.deps.log("slack.channel_created", { conversation: link.conversationId, channelId: ch.id, private: cmd.private });
+    this.deps.log("slack.channel_created", { conversation: made.id, channelId: ch.id, private: cmd.private });
+  }
+
+  /**
+   * A Slack channel Harmonia just made, for `ch`: you (and `people`) invited, linked, the teammates' bots invited, and a
+   * welcome (after `lead`, if any). An error, when not everyone could be invited.
+   */
+  private async adopt(conversation: string, name: string, ch: Channel, isPrivate: boolean, people: string[] = [], lead = ""): Promise<string | undefined> {
+    let inviteError: string | undefined;
+    try {
+      await this.api("conversations.invite", { channel: conversation, users: [this.config!.ownerId, ...people].join(",") });
+    } catch (e: any) {
+      if (e.code !== "already_in_channel") inviteError = e.message;
+    }
+    this.links[conversation] = { conversationId: conversation, kind: isPrivate ? "private" : "channel", channelId: ch.id, name, createdAt: Date.now() };
+    this.save();
+    this.changed();
+    this.postAs(undefined, conversation, {
+      markdown: `${lead}This channel is **#${ch.name}** in Harmonia. Write here and Mozart picks the teammate who answers, or start with @Leo to ask Leo.${isPrivate ? " Only the people in it see it." : ""}`,
+    });
+    void this.inviteMates([conversation]);
+    return inviteError;
+  }
+
+  // ---------- Harmonia's channels, in Slack ----------
+
+  /** A channel you made in the app: it gets a private Slack channel, with you and the teammates' bots in it. */
+  channelAdded(ch: Channel) {
+    this.inOrder(() => this.openFor(ch));
+  }
+
+  /** A channel's status changed (in the app, or from Slack): archived, it leaves Slack; unarchived, it gets a new Slack channel. */
+  statusChanged(ch: Channel, before: ChannelStatus | undefined) {
+    if (before !== "archived" && ch.status === "archived") this.inOrder(() => this.retire(ch));
+    else if (before === "archived" && ch.status !== "archived") this.inOrder(() => this.openFor(ch, true));
+  }
+
+  /** One channel change at a time: an archive and a quick unarchive land in that order. */
+  private inOrder(fn: () => Promise<unknown>) {
+    const next = this.channelWork.then(fn).catch((e) => this.deps.log("slack.channel_work_failed", { error: e?.message }));
+    this.channelWork = next;
+  }
+
+  /**
+   * A new private Slack channel for a Harmonia channel that has no Slack conversation: named after it (#name, or
+   * #name-2 when that's taken), with you and the teammates' bots in it. Only once the app works for someone: it invites you.
+   */
+  private async openFor(ch: Channel, unarchived = false) {
+    const c = this.config;
+    if (!c?.enabled || !this.botToken || !c.ownerId) return;
+    if (!channels.has(ch.id) || ch.status === "archived" || Object.values(this.links).some((l) => l.channelId === ch.id)) return;
+    const base = slackChannelName(ch.name) || "harmonia";
+    let made: any;
+    for (let i = 1; !made && i <= NAME_TRIES; i++) {
+      const name = i === 1 ? base : `${base.slice(0, 79 - String(i).length)}-${i}`;
+      try {
+        made = (await this.api("conversations.create", { name, is_private: true })).channel;
+      } catch (e: any) {
+        if (e instanceof SlackError && e.code === "name_taken") continue;
+        this.deps.log("slack.channel_open_failed", { channelId: ch.id, error: e?.message });
+        const why = e?.code === "restricted_action" ? "this workspace doesn't let apps create channels" : e?.message;
+        return this.deps.note(ch, `Couldn't make a Slack channel for it: ${why}.`);
+      }
+    }
+    if (!made) return this.deps.note(ch, `Couldn't make a Slack channel for it: #${base} and #${base}-2 to #${base}-${NAME_TRIES} are all taken.`);
+    const name = String(made.name ?? base);
+    const inviteError = await this.adopt(String(made.id), name, ch, true, [], unarchived ? `**#${ch.name}** is back from the archive in Harmonia. ` : "");
+    this.deps.note(ch, `${unarchived ? "Unarchived, so it" : "It"} has a private Slack channel now: #${name}${c.teamName ? ` in ${c.teamName}` : ""}.`);
+    if (inviteError) this.deps.note(ch, `Couldn't invite you to #${name} in Slack: ${inviteError}`);
+    this.deps.log("slack.channel_opened", { conversation: made.id, channelId: ch.id, unarchived });
+  }
+
+  /**
+   * An archived channel leaves Slack. Slack doesn't let apps delete channels, so a Slack channel Harmonia made is
+   * archived (renamed first, so a new one can have its name); one you brought Harmonia into is left, with the teammates'
+   * bots, since other people may use it. Either way it's unlinked. Your DM and group DMs can't go: they stay linked.
+   */
+  private async retire(ch: Channel) {
+    const link = Object.values(this.links).find((l) => l.channelId === ch.id && (l.kind === "channel" || l.kind === "private"));
+    const c = this.config;
+    if (!link || !c?.enabled || !this.botToken || ch.status !== "archived") return;
+    const conv = link.conversationId;
+    const info = await this.api("conversations.info", { channel: conv }).then(
+      (j) => j.channel,
+      (e) => (e instanceof SlackError && e.code === "channel_not_found" ? null : undefined),
+    );
+    if (info === null || info?.is_archived) {
+      this.unlink(conv);
+      return this.deps.note(ch, `#${link.name ?? "Its Slack channel"} is ${info ? "archived" : "gone"} in Slack already: unlinked. Unarchive it and it gets a new Slack channel.`);
+    }
+    const ours = info?.creator === c.botUserId;
+    await this.say(
+      conv,
+      ours
+        ? `:file_cabinet: *#${escapeSlack(ch.name)}* is archived in Harmonia, so this channel is archived too. Unarchive it in Harmonia and it gets a new channel.`
+        : `:file_cabinet: *#${escapeSlack(ch.name)}* is archived in Harmonia, so I'm leaving this channel. Unarchive it in Harmonia and it gets a new private channel.`,
+    );
+    // Once whatever was still on its way to Slack is there.
+    const call = (method: string, params: Record<string, unknown>) =>
+      this.queue(() => this.api(method, { channel: conv, ...params }).then(() => "ok" as const, (e) => (retryable(e) ? Promise.reject(e) : (e as SlackError))), conv);
+    let gone: string | undefined;
+    if (ours) {
+      const name = String(info.name ?? link.name ?? "");
+      if (name) {
+        const r = await call("conversations.rename", { name: `${name.slice(0, 60)}-archived-${new Date().toISOString().slice(0, 10)}` });
+        if (r !== "ok") this.deps.log("slack.rename_failed", { conversation: conv, error: r?.message });
+      }
+      const r = await call("conversations.archive", {});
+      if (r === "ok") gone = `#${name || link.name} is archived in Slack too`;
+      else this.deps.log("slack.archive_failed", { conversation: conv, error: r?.message });
+    }
+    if (!gone) {
+      for (const a of Object.values(c.teammates ?? {})) if (a.botUserId) await call("conversations.kick", { user: a.botUserId });
+      const r = await call("conversations.leave", {});
+      gone = r === "ok" ? `${APP_NAME} left #${link.name ?? "its Slack channel"}${ours ? " (Slack didn't let it archive the channel)" : ""}` : undefined;
+      if (r !== "ok") this.deps.log("slack.leave_failed", { conversation: conv, error: r?.message });
+    }
+    this.unlink(conv);
+    this.deps.note(ch, gone ? `${gone}. Unarchive it and it gets a new Slack channel.` : `Unlinked from #${link.name ?? "its Slack channel"}, but ${APP_NAME} couldn't archive or leave it there: do it in Slack.`);
+    this.deps.log("slack.channel_retired", { conversation: conv, channelId: ch.id, ours, gone: Boolean(gone) });
   }
 
   // ---------- Harmonia → Slack ----------
@@ -1449,15 +1594,40 @@ const decided = (text: string, done: string | undefined, buttons: unknown[]) => 
   blocks: [section(text), done ? { type: "context", elements: [{ type: "mrkdwn", text: done }] } : { type: "actions", elements: buttons }],
 });
 
-export type Command = { kind: "help" } | { kind: "newChannel"; name: string; private: boolean };
+export type Command =
+  | { kind: "help" }
+  | { kind: "newChannel"; name: string; private: boolean }
+  | { kind: "archive" }
+  /** `status` undefined: show it (or, with `asked`, a status nobody knows); "" clears it. */
+  | { kind: "status"; status?: ChannelStatus | ""; asked: string };
+
+/** The statuses as the app names them. */
+export const STATUS_LABELS: Record<ChannelStatus, string> = { inProgress: "In progress", waiting: "Waiting for response", later: "For later", archived: "Archived" };
+const STATUS_CHOICES = "*in progress*, *waiting*, *later*, *archived* or *none*";
+
+/** What you might call each status, letters only: "In progress", "in-progress", "waiting for response", "none". */
+const STATUS_WORDS: Record<string, ChannelStatus | ""> = {
+  inprogress: "inProgress", progress: "inProgress", active: "inProgress", working: "inProgress",
+  waiting: "waiting", wait: "waiting", waitingforresponse: "waiting", waitingforreply: "waiting",
+  later: "later", forlater: "later",
+  archived: "archived", archive: "archived",
+  none: "", nostatus: "", clear: "", channels: "",
+};
+
+/** A status as typed, or undefined when it isn't one. */
+export function parseStatus(text: string): ChannelStatus | "" | undefined {
+  const key = text.toLowerCase().replace(/[^a-z]/g, "");
+  return Object.hasOwn(STATUS_WORDS, key) ? STATUS_WORDS[key] : undefined;
+}
 
 /** A command as typed: Slack's markup as text, without any @mentions (the app's, or the people to invite). */
 export const commandText = (raw: string) => slackToText(raw.replace(/<@[^>]+>/g, " "));
 
 /**
  * The app's commands: "new channel <name>" (also "create channel …"), "new private channel <name>" (also "new group
- * chat …", "new chat …") and "help". In a channel they only count when the app was @mentioned; in your DM with it,
- * always. Emails and a trailing "with" (the people to invite) aren't part of the name.
+ * chat …", "new chat …"), "status <status>" (just "status" says what it is), "archive" and "help". In a channel they
+ * only count when the app was @mentioned; in your DM with it, always. Emails and a trailing "with" (the people to
+ * invite) aren't part of the name.
  */
 export function parseCommand(text: string): Command | undefined {
   const t = text.trim().replace(/^\/+/, "");
@@ -1467,6 +1637,12 @@ export function parseCommand(text: string): Command | undefined {
     return { kind: "newChannel", private: !/^channel$/i.test(m[1]), name: name.trim().replace(/^["“'#]+|["”']+$/g, "").trim() };
   }
   if (/^(help|\?|commands)$/i.test(t)) return { kind: "help" };
+  if (/^archive[.!]?$/i.test(t)) return { kind: "archive" };
+  const st = t.match(/^status\b[\s:]*(.*?)[.!?]?$/is);
+  if (st) {
+    const asked = st[1].trim().replace(/^["“']+|["”']+$/g, "");
+    return { kind: "status", status: asked ? parseStatus(asked) : undefined, asked };
+  }
 }
 
 /** A Slack channel name: lowercase letters, numbers, hyphens and underscores, at most 80 characters. */
