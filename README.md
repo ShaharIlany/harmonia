@@ -397,7 +397,8 @@ Jobs and memories stay.
   - **Reactions:** your reaction on a message in Slack is your reaction on it
     here, and taking it off takes it off (one at a time, as in the app; a
     custom emoji shows as `:name:`). Other people's reactions aren't read. A
-    teammate's reaction on your message is a reaction in Slack too: from its
+    teammate's reaction (on your message or another teammate's) is a reaction
+    in Slack too: from its
     own bot in a channel, from the Harmonia app in your DM and group DMs.
   - **⚠️ feedback:** react ⚠️ to a teammate's message and Harmonia DMs you:
     "How can Leo's message be improved?", quoting it. Answer in that DM's

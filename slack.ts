@@ -1423,11 +1423,10 @@ export class SlackBridge {
   }
 
   /**
-   * A teammate's emoji on your message (Mozart's reaction instead of a turn, or its emoji-only answer) is a reaction on
-   * it in Slack too. An emoji Slack has no name for goes as a message under its name.
+   * A teammate's emoji on a message (Mozart's reaction instead of a turn on yours, or its emoji-only answer to yours or
+   * to another teammate's) is a reaction on it in Slack too. An emoji Slack has no name for goes as a message under its name.
    */
   private reactions(link: Link, m: Message) {
-    if (m.author !== "user") return;
     for (const x of m.meta?.reactions ?? []) {
       const key = `${m.id}:${x.by}:${x.emoji}`;
       const t = teammate(x.by);
