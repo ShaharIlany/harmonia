@@ -359,14 +359,17 @@
   }
   const fileAction = (chId, id, action) => api(`${fileUrl(chId, id)}/${action}`, {}).catch((err) => toast(err.message));
 
-  /** The line under a message: who the channel's Mozart (or, when it couldn't answer, a rule) woke after it. */
+  /** The line under a message: who the channel's Mozart (or, when it couldn't answer, a rule) woke after it, and who just reacted. */
   function routedHtml(meta) {
-    const who = meta.routedTo.map((id) => byId(id)).filter(Boolean).map((x) => `${x.avatar} ${esc(x.name)}`).join(", ");
+    const names = (ids) => (ids || []).map((id) => byId(id)).filter(Boolean).map((x) => `${x.avatar} ${esc(x.name)}`).join(", ");
+    const who = names(meta.routedTo);
+    const reacted = names(meta.routeReact);
     const why = meta.routeWhy || "";
     const mozart = /^Mozart: /.test(why);
     const reason = esc(why.replace(/^Mozart: /, ""));
-    const text = mozart ? (who ? `🎼 Mozart → ${who}${reason ? ` · ${reason}` : ""}` : `🎼 Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
-    const tip = mozart ? "This channel's Mozart decided who answers." : "Mozart couldn't answer, so a simple rule chose: whoever you're talking with, else the teammate who takes new topics.";
+    const decided = `🎼 Mozart${who ? ` → ${who}` : ":"}${reacted ? `${who ? " ·" : ""} ${reacted} reacted instead` : ""}${reason ? ` · ${reason}` : ""}`;
+    const text = mozart ? (who || reacted ? decided : `🎼 Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
+    const tip = mozart ? "This channel's Mozart decided who answers, and whether a reaction is enough." : "Mozart couldn't answer, so a simple rule chose: whoever you're talking with, else the teammate who takes new topics.";
     return `<div class="routed" title="${tip}">${text}</div>`;
   }
 

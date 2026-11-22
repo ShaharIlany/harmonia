@@ -129,14 +129,14 @@
     const made = mates.filter((m) => m.state !== "none");
     const waiting = made.filter((m) => m.state !== "connected");
     const workspace = s.team ? `<b>${esc(s.team)}</b>` : "your workspace";
-    const label = s.making ? "Making them…" : !missing.length ? "Update their names and icons" : made.length ? `Make the other ${missing.length}` : `Make their ${missing.length} apps`;
+    const label = s.making ? "Making them…" : !missing.length ? "Update their apps" : made.length ? `Make the other ${missing.length}` : `Make their ${missing.length} apps`;
     return `<section class="card">
       <h2>Teammates as Slack members</h2>
-      <p class="hint">Give each teammate a Slack app of its own, so it's a member you can @mention in Slack, like <b>@Emily</b>, with its own profile. ${APP} invites them to the linked channels, and their answers there come from their own app. You still write through ${APP}, and only you wake them. In your DM with ${APP} and in group DMs they keep answering under ${APP}'s app, with their name and picture.</p>
+      <p class="hint">Give each teammate a Slack app of its own, so it's a member you can @mention in Slack, like <b>@Emily</b>, with its own profile. ${APP} invites them to the linked channels, and their answers and emoji reactions there come from their own app. You still write through ${APP}, and only you wake them. In your DM with ${APP} and in group DMs they keep answering under ${APP}'s app, with their name and picture.</p>
       <ol class="sk-steps">
         <li class="sk-step ${missing.length ? "now" : "done"}">${tick(!missing.length)}<div class="sk-body">
           <h3>${missing.length ? "Make their apps" : "Their apps are made"}</h3>
-          <p class="hint">On ${ext("https://api.slack.com/apps", "Slack's apps page")}, at the top: <b>Your App Configuration Tokens</b> → <b>Generate Token</b> → ${workspace} → <b>Generate</b>. Copy the <b>Access Token</b> (<code>xoxe.xoxp-…</code>) and paste it here. ${APP} uses it to make the apps, named after the teammates with their emoji as the icon, and doesn't keep it. ${missing.length ? "" : "Paste one again to bring the apps' names and icons up to date (after renaming a teammate, say)."}</p>
+          <p class="hint">On ${ext("https://api.slack.com/apps", "Slack's apps page")}, at the top: <b>Your App Configuration Tokens</b> → <b>Generate Token</b> → ${workspace} → <b>Generate</b>. Copy the <b>Access Token</b> (<code>xoxe.xoxp-…</code>) and paste it here. ${APP} uses it to make the apps, named after the teammates with their emoji as the icon, and doesn't keep it. ${missing.length ? "" : "Paste one again to bring the apps up to date: their names and icons (after renaming a teammate, say), and what they may do (reinstall an app Slack marks as changed)."}</p>
           <form class="sk-form" data-make autocomplete="off">
             <label>Configuration token<input name="configToken" type="password" placeholder="xoxe.xoxp-…" spellcheck="false" required></label>
             <div class="row-btns"><button class="btn ${missing.length ? "primary" : ""}" ${s.making ? "disabled" : ""}>${label}</button></div>

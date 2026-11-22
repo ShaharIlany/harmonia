@@ -134,8 +134,10 @@ function line(m: Message, channelId?: string): string {
   const files = m.meta?.files?.length ? (channelId ? filesLines(channelId, m.meta.files) : ` (attached: ${m.meta.files.map((f) => f.name).join(", ")})`) : "";
   if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"}): ${m.text}${files}`;
   const re = m.meta?.replyTo;
+  // A teammate's emoji on your message (instead of a turn, or as its whole answer): it's been answered.
+  const reacted = m.author === "user" ? (m.meta?.reactions ?? []).filter((x) => teammate(x.by)).map((x) => `${nameOf(x.by)} ${x.emoji}`) : [];
   const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
-  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}${files}`;
+  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
 }
 
 // First start with TeamAgents chat sessions: they're new, so each teammate re-reads each channel's recent messages.
@@ -240,8 +242,8 @@ export class Team {
 
   /**
    * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`, and where it is there), maybe
-   * with files (attachments.ts). An @mention, "Name, …" or a reply to a teammate's message goes straight to that
-   * teammate; anything else, the channel's Mozart decides.
+   * with files (attachments.ts). An @mention, "Name, …" or a reply to a teammate's message goes to that teammate;
+   * anything else, the channel's Mozart decides. Either way Mozart may make it a reaction instead of a turn.
    */
   userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef; files?: Attachment[] } = {}): Message {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
@@ -260,11 +262,7 @@ export class Team {
     ch.waitingOn = undefined;
     saveChannels();
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
-    if (named.length || atStart) {
-      for (const id of named.length ? named : [atStart!]) this.wake(ch, id);
-      return msg;
-    }
-    this.coordinate(ch, msg, waitingOn);
+    this.coordinate(ch, msg, waitingOn, named.length ? named : atStart ? [atStart] : undefined);
     return msg;
   }
 
@@ -277,19 +275,26 @@ export class Team {
     return this.post(ch, { author: "guest", text, meta: { guest, ...(files?.length && { files }), via: "slack", ...(slack && { slack }) } });
   }
 
-  /** The channel's Mozart decides who answers `msg`, after any decision still running there. Nothing shows meanwhile. */
-  private coordinate(ch: Channel, msg: Message, waitingOn?: string) {
+  /**
+   * The channel's Mozart decides who answers `msg` and who just reacts to it, after any decision still running there.
+   * `addressed`: the teammates your message names, who answer it unless a reaction is enough. Nothing shows meanwhile.
+   */
+  private coordinate(ch: Channel, msg: Message, waitingOn?: string, addressed?: string[]) {
     const prev = this.coordinating.get(ch.id) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (ch.status === "archived") return;
-      const d = await decide({ ch, all: messages.get(ch.id) ?? [], msg, line: (m) => line(m), waitingOn }).catch((e) => ({
-        to: msg.author === "user" ? [waitingOn ?? TRIAGE] : [],
+      const d = await decide({ ch, all: messages.get(ch.id) ?? [], msg, line: (m) => line(m), waitingOn, addressed }).catch((e) => ({
+        to: addressed ?? (msg.author === "user" ? [waitingOn ?? TRIAGE] : []),
+        react: [],
         why: `Mozart failed: ${String(e).slice(0, 80)}`,
         by: "rule" as const,
       }));
-      // A teammate's message that nobody needs to answer keeps no note: that's the usual case.
-      if (msg.author === "user" || d.to.length) {
+      for (const r of d.react) this.react(ch, msg.id, r.by, r.emoji);
+      // A message for a teammate by name that it answers, and a teammate's message nobody needs to answer, keep no note:
+      // that's the usual case.
+      if (d.react.length || (!addressed && (msg.author === "user" || d.to.length))) {
         msg.meta = { ...msg.meta, routedTo: d.to, routeWhy: d.by === "mozart" ? `Mozart: ${d.why}` : d.why };
+        if (d.react.length) msg.meta.routeReact = d.react.map((r) => r.by);
         saveMessages(ch.id);
         this.emit({ type: "update", channelId: ch.id, message: msg });
       }

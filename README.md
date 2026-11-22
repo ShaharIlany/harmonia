@@ -200,7 +200,7 @@ Jobs and memories stay.
 ## How it behaves
 
 - **Who answers: Mozart.** `@Name` anywhere, or `Name, …` at the start, goes
-  straight to that teammate, and so does a reply to a teammate's message.
+  to that teammate, and so does a reply to a teammate's message.
   Anything else, the channel's **Mozart** decides (`mozart.ts`,
   `mozart-rules.md`): one teammate, several, or nobody. Each channel has its
   own Mozart, a Claude Code session on Haiku 5.5 with no tools, so it knows
@@ -215,6 +215,16 @@ Jobs and memories stay.
   rule decides instead: a teammate waiting on your answer gets it, else the
   teammate you were just talking with, else Emily ("→ Emily · nobody in the
   conversation (Mozart failed)").
+- **A reaction instead of a turn.** Mozart also reads each message of yours
+  that names its teammate, and decides whether all it needs is an
+  acknowledgment: you thank a teammate, say "ok" to something finished, or
+  turn down an offer and that's the end of it. Then the teammate doesn't run:
+  its emoji (🙏, 👍, 🎉…) goes on your message, here and in Slack, and the line
+  under it says "🎼 Mozart: Elliot reacted instead · thanks Elliot". Anything
+  that also asks something, gives work, says yes to an offer or pushes back
+  gets an answer. For a message that names its teammate, the decision waits at
+  most 15 s; then the teammate answers as usual. The teammates read your
+  message later with "(reacted: Elliot 🙏)", so they don't answer it again.
 - **After a teammate's message, too.** A teammate's `@Name` wakes that
   teammate (a handoff), unless it's in the same sentence as a question to you,
   and a question to you waits for you. Otherwise Mozart reads the reply and
@@ -264,7 +274,8 @@ Jobs and memories stay.
   archive (also under ⋮ in the header). Pins, mutes and unread counts are kept
   per browser. A muted channel still notifies you when a teammate needs your OK.
 - **Reactions:** your emoji on any message (its menu, or ☺ beside it); click
-  your reaction to take it off. Teammates react by answering with only an emoji.
+  your reaction to take it off. Teammates react when Mozart says a reaction is
+  enough (above), or by answering with only an emoji.
 - **Files:** 📎 in the composer, drop files anywhere on the channel, or paste
   them (a screenshot, a picture copied from a page, a file copied in the
   Finder; text copied from Word or Excel still pastes as text). Up to 10 files
@@ -281,8 +292,9 @@ Jobs and memories stay.
   deleted the next time the server starts.
 - **Reply to a message:** hover a message → ↩ beside it, or Reply in its menu. The composer shows what
   you're answering (Esc cancels), and the posted message quotes it (click the
-  quote to jump there). A reply to a teammate's message wakes that teammate
-  directly, without Mozart; an @mention in the reply wins instead. The
+  quote to jump there). A reply to a teammate's message goes to that teammate
+  (Mozart only decides whether a reaction is enough); an @mention in the reply
+  wins instead. The
   teammate's turn shows `Alex (replying to Leo's message "…"): text`.
 - **Tool requests:** a teammate that lacks a tool calls `request_tool` (a
   team tool, like `start_job`). `tool-catalog.ts` resolves the names (built-ins
@@ -357,32 +369,36 @@ Jobs and memories stay.
     message from it says so; it's deleted once the answer is out, and the
     answer comes as a new message (so Slack notifies you of it).
   - **Teammates as Slack members:** on the Slack page, each teammate can get a
-    Slack app of its own (a bot that only posts), so it's a member you can
+    Slack app of its own (a bot that only posts and reacts), so it's a member you can
     @mention from Slack's list, with its own profile. Generate an app
     configuration token (api.slack.com/apps → **Your App Configuration
     Tokens**) and paste it: Harmonia makes the apps (`apps.manifest.create`,
-    scopes `chat:write` and `chat:write.customize`, nothing to DM), sets each
+    scopes `chat:write`, `chat:write.customize` and `reactions:write`, nothing
+    to DM), sets each
     icon to the teammate's emoji (a 512 px picture the page draws,
     `apps.icon.set`), and doesn't keep the token. Then install each app and
     paste its bot token: Harmonia checks it's that app's, keeps it in the
     Keychain, and invites the bot to the linked channels (and to new ones).
-    There, the teammate's answers go out from its own bot. Everything still
+    There, the teammate's answers and reactions go out from its own bot. Everything still
     comes in through the Harmonia app: `<@Emily's bot>` reads as `@Emily`.
     Cards with buttons (their clicks go to the Harmonia app), your DM with
     Harmonia and group DMs stay with Harmonia, under the teammate's name. A bot
     taken out of a channel is invited back; one whose token Slack stops taking
     (uninstalled) shows **Needs you**, and Harmonia posts for it meanwhile.
-    Pasting a configuration token again updates the apps' names, descriptions
-    and icons (after a rename, say); **Forget** drops one here (delete the app
+    Pasting a configuration token again updates the apps' names, descriptions,
+    icons and scopes (after a rename, say; an app made before teammates reacted
+    needs a reinstall after that, and Harmonia reacts for it until then); **Forget** drops one here (delete the app
     in Slack yourself).
   - **Replies:** reply in a Slack thread to a message and it's a reply to that
-    message here: a reply to a teammate goes straight to them (no Mozart), and
+    message here: a reply to a teammate goes to them, and
     the answers come back in the thread. A reply you type in the app goes in
     that message's Slack thread. Every message keeps its Slack ts
     (`meta.slack`) for this.
   - **Reactions:** your reaction on a message in Slack is your reaction on it
     here, and taking it off takes it off (one at a time, as in the app; a
-    custom emoji shows as `:name:`). Other people's reactions aren't read.
+    custom emoji shows as `:name:`). Other people's reactions aren't read. A
+    teammate's reaction on your message is a reaction in Slack too: from its
+    own bot in a channel, from the Harmonia app in your DM and group DMs.
   - **⚠️ feedback:** react ⚠️ to a teammate's message and Harmonia DMs you:
     "How can Leo's message be improved?", quoting it. Answer in that DM's
     thread, or press **Write feedback** for a box. Either way it's the same as

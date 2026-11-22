@@ -32,10 +32,10 @@
 // internet. The Slack user who sends the app the pairing code from the Slack page is the only one who wakes the
 // teammates.
 //
-// Teammates as Slack members: each teammate can have its own small Slack app (a bot that only posts), so it's a real
-// member you can @mention in Slack. Harmonia makes them with an app configuration token you generate once
+// Teammates as Slack members: each teammate can have its own small Slack app (a bot that only posts and reacts), so
+// it's a real member you can @mention in Slack. Harmonia makes them with an app configuration token you generate once
 // (apps.manifest.create, apps.icon.set: the token isn't kept); you install each one and paste its bot token. In a
-// linked channel, Harmonia invites them and their answers go out from their own bot. Everything still comes in through
+// linked channel, Harmonia invites them and their answers (and their emoji on your messages) go out from their own bot. Everything still comes in through
 // the Harmonia app (an @mention of Emily is "@Emily" to the teammates). Cards with buttons, your DM with Harmonia and
 // group DMs stay with Harmonia, posting under the teammate's name.
 //
@@ -66,6 +66,7 @@ const FEEDBACK_VIEW = "harmonia:feedback"; // the feedback box (a modal)
 const ASKS_KEPT = 50; // feedback questions whose thread replies still count as feedback
 const FILE_TIMEOUT = 5 * 60_000; // one file's download from Slack, or upload to it
 const NAME_TRIES = 20; // #name, #name-2 … #name-20: a Slack channel name for a channel made or unarchived in the app
+const NO_REACT_RETRY = 10 * 60_000; // a teammate's app that couldn't react is tried again after this (reinstalled since?)
 
 /** The app's name in Slack. The commands are written to it: `@Harmonia new channel …`. */
 export const APP_NAME = "Harmonia";
@@ -73,7 +74,8 @@ const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
 
 /**
  * What the app may do, as bot scopes: read and write in the conversations it's in, post under the teammates' names,
- * create channels and invite you to them, read your reactions, look up people by id or email, and fetch and send files.
+ * create channels and invite you to them, read your reactions and react for a teammate without an app of its own, look
+ * up people by id or email, and fetch and send files.
  */
 export const BOT_SCOPES = [
   "app_mentions:read",
@@ -93,6 +95,7 @@ export const BOT_SCOPES = [
   "mpim:history",
   "mpim:read",
   "reactions:read",
+  "reactions:write",
   "users:read",
   "users:read.email",
 ];
@@ -126,8 +129,8 @@ export function manifest() {
 /** Opens Slack's "create an app" page with the manifest filled in. */
 export const CREATE_LINK = `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest()))}`;
 
-/** A teammate's own app only posts (under its name and avatar): the Harmonia app hears everything. */
-export const MATE_SCOPES = ["chat:write", "chat:write.customize"];
+/** A teammate's own app only posts (under its name and avatar) and reacts: the Harmonia app hears everything. */
+export const MATE_SCOPES = ["chat:write", "chat:write.customize", "reactions:write"];
 
 /** The manifest of a teammate's own Slack app: a bot named after it, nothing to DM, no events. */
 export function mateManifest(t: Pick<Teammate, "name" | "role" | "color">, socketMode = false) {
@@ -285,6 +288,7 @@ export class SlackBridge {
   private mateTokens = new Map<string, string>(); // teammate id → its own app's bot token
   private mateIn = new Set<string>(); // "teammate id:conversation": its bot is in that channel
   private mateProblems = new Map<string, string>(); // teammate id → why its app can't post now
+  private noReact = new Map<string, number>(); // teammate id → when its app turned out to lack reactions:write
   private making = false; // the teammates' apps are being made
   private channelWork: Promise<unknown> = Promise.resolve(); // Slack channels made and archived for Harmonia's, in order
 
@@ -346,7 +350,12 @@ export class SlackBridge {
         avatar: t?.avatar ?? "👤",
         color: t?.color ?? "#6b7280",
         state: !a ? "none" : problem ? "failed" : a.botUserId ? "connected" : "created",
-        detail: problem ?? a?.iconError,
+        detail:
+          problem ??
+          a?.iconError ??
+          (this.noReact.has(id)
+            ? `Its emoji go out from ${APP_NAME} for now: its app can't react yet. Update the apps above, then reinstall it (App settings → Install App → Reinstall).`
+            : undefined),
         appLink: a && `https://api.slack.com/apps/${a.appId}`,
         installLink: a && `https://api.slack.com/apps/${a.appId}/install-on-team`,
         slackName: a && t && a.name !== t.name ? a.name : undefined,
@@ -561,6 +570,7 @@ export class SlackBridge {
     app.botId = auth.bot_id;
     this.mateTokens.set(id, token);
     this.mateProblems.delete(id);
+    this.noReact.delete(id);
     for (const key of this.mateIn) if (key.startsWith(`${id}:`)) this.mateIn.delete(key);
     this.save();
     this.changed();
@@ -1412,7 +1422,10 @@ export class SlackBridge {
     return sent;
   }
 
-  /** A teammate's emoji-only answer lands as a reaction on your message here; in Slack it's a message under its name. */
+  /**
+   * A teammate's emoji on your message (Mozart's reaction instead of a turn, or its emoji-only answer) is a reaction on
+   * it in Slack too. An emoji Slack has no name for goes as a message under its name.
+   */
   private reactions(link: Link, m: Message) {
     if (m.author !== "user") return;
     for (const x of m.meta?.reactions ?? []) {
@@ -1420,8 +1433,42 @@ export class SlackBridge {
       const t = teammate(x.by);
       if (!t || this.reacted.has(key)) continue;
       this.reacted.add(key);
-      this.postFor(t, link, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
+      const name = reactionName(x.emoji);
+      if (!name) {
+        this.postFor(t, link, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
+        continue;
+      }
+      void this.queue(async () => {
+        const at = m.meta?.slack; // read now: your message may have gone to Slack only just before
+        if (at) await this.reactAs(t.id, at.channel, at.ts, name);
+      }, link.conversationId);
     }
+  }
+
+  /**
+   * A teammate's reaction on a Slack message: from its own bot in a channel it's in (its app needs reactions:write),
+   * else from the Harmonia app, which is all a DM or group DM allows.
+   */
+  private async reactAs(id: string, channel: string, ts: string, name: string) {
+    const params = { channel, timestamp: ts, name };
+    const lacked = this.noReact.get(id);
+    const mate = !lacked || Date.now() - lacked > NO_REACT_RETRY ? await this.mateToken(id, channel) : undefined;
+    if (mate) {
+      try {
+        await slackCall(mate, "reactions.add", params).catch(ignore("already_reacted"));
+        if (this.noReact.delete(id)) this.changed();
+        return;
+      } catch (e: any) {
+        if (retryable(e)) throw e; // the queue tries again
+        if (e instanceof SlackError && e.code === "missing_scope") {
+          // An app made before teammates reacted: Harmonia reacts for it, and the Slack page says how to update it.
+          if (!this.noReact.has(id)) this.deps.log("slack.teammate_cant_react", { teammate: id });
+          this.noReact.set(id, Date.now());
+          this.changed();
+        } else this.mateFailed(id, channel, e);
+      }
+    }
+    await this.api("reactions.add", params).catch(ignore("already_reacted"));
   }
 
   /**
@@ -1568,6 +1615,10 @@ const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const mentions = (raw: string, userId: string) => raw.includes(`<@${userId}>`) || raw.includes(`<@${userId}|`);
 
 /** Takes one Slack error as success (already reacted, nothing to take off); anything else still fails. */
+const ignore = (code: string) => (e: unknown) => {
+  if (!(e instanceof SlackError && e.code === code)) throw e;
+};
+
 /** Network trouble and Slack's own hiccups are worth another try; "not_in_channel" and the like aren't. */
 function retryable(e: unknown) {
   if (!(e instanceof SlackError)) return true;
@@ -1934,6 +1985,11 @@ const REACTION_EMOJI = new Map<string, string>([
     sos: "🆘", up: "🆙", soon: "🔜", top: "🔝", heavy_dollar_sign: "💲", hammer_and_wrench: "🛠️", date: "📅", memo: "📝",
   }),
 ]);
+
+/** Slack's reaction name for an emoji (its first name in the table, without the skin tone), when there's one. */
+const REACTION_NAMES = new Map<string, string>();
+for (const [name, emoji] of REACTION_EMOJI) if (!REACTION_NAMES.has(bare(emoji))) REACTION_NAMES.set(bare(emoji), name);
+export const reactionName = (emoji: string) => REACTION_NAMES.get(bare(emoji.trim()));
 
 /** A reaction's name without its skin tone ("+1::skin-tone-3" → "+1"). */
 const bareName = (name: string) => name.replace(/::skin-tone-\d$/, "");
