@@ -82,9 +82,11 @@ dropUnsent(messages);
 
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (slack.stop(), process.exit(0)));
 
-// Over-the-air updates from git (updates.ts). An install waits until no teammate or job is working.
+// Over-the-air updates (updates.ts). "Restart to update" restarts now: whatever is working is written down first and
+// picked up again by the next build. An automatic install waits until no teammate or job is working.
 const working = () => team.sessions().filter((s) => s.busyIn).length + allChannels().reduce((n, c) => n + c.jobs.filter((j) => j.status === "running").length, 0);
-startUpdates({ notify: (update) => broadcast({ type: "appUpdate", update }), busy: working });
+startUpdates({ notify: (update) => broadcast({ type: "appUpdate", update }), busy: working, beforeRestart: () => team.closeForRestart() });
+team.resumeAfterRestart();
 
 // Plan usage (5-hour and weekly windows): every run reports it, and a tiny probe fills it in when nothing ran lately.
 let usage: Usage | undefined;

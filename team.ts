@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
@@ -149,9 +149,30 @@ if (firstChatSessions) {
 
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
 type ChatTools = { startJob(input: any): string; checkJobs(): string; stopJob(jobId: string): string; requestTool(input: any): string };
+/** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
+type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[] };
+
+/**
+ * What was working when an update restarted the app (Team.closeForRestart), for the next build to pick up
+ * (Team.resumeAfterRestart): chat turns cut off mid-reply, channels waiting for a teammate, job reports not yet read,
+ * and running jobs.
+ */
+type Resume = {
+  at: number;
+  turns: { channelId: string; agentId: string; seen?: number; events: string[] }[];
+  queue: Record<string, string[]>;
+  events: Record<string, string[]>;
+  turnsLeft: Record<string, number>;
+  jobs: { channelId: string; jobId: string }[];
+};
+const RESUME_FILE = join(DATA, "resume.json");
+/** A resume file older than this is from a restart that went wrong long ago: its work stays stopped. */
+const RESUME_WITHIN = 60 * 60_000;
+const JOB_RESUME_PROMPT =
+  "Harmonia restarted for an app update while you were working, and your run was cut off. Continue the job from where you stopped. Check what's already done (files, commands, anything you sent) before you redo any of it.";
 
 export class Team {
-  private busy = new Map<string, { channelId: string; stop: () => void; activity?: string }>(); // teammate id → its chat turn
+  private busy = new Map<string, Busy>(); // teammate id → its chat turn
   private queue = new Map<string, string[]>(); // teammate id → channels waiting for its chat session
   private again = new Set<string>(); // `${channelId}:${agentId}`: new messages came in while it answered there
   private events = new Map<string, string[]>(); // `${channelId}:${agentId}` → job reports etc. for the next turn
@@ -160,6 +181,7 @@ export class Team {
   private turns = new Map<string, Turn>(); // per-turn token → the turn its job tools act for
   private jobRuns = new Map<string, Run>(); // `${channelId}:${jobId}`
   private stopping = new Set<string>();
+  private closing = false; // an update is restarting the app: runs that end now leave no trace, and nobody is woken
 
   constructor(
     private emit: Emit,
@@ -398,6 +420,92 @@ export class Team {
     this.emitSessions();
   }
 
+  // ---------- Restarting for an update ----------
+
+  /**
+   * An update is about to restart the app. Writes down what's working (resume.json, right away: the process exits
+   * next) and stops it, so the next build picks it all up (resumeAfterRestart). Without the stop, a teammate's Claude
+   * Code could outlive the server and still be writing to the session the next build resumes.
+   */
+  closeForRestart() {
+    const r: Resume = {
+      at: Date.now(),
+      turns: [...this.busy].map(([agentId, b]) => ({ channelId: b.channelId, agentId, seen: b.seen, events: b.events })),
+      queue: Object.fromEntries([...this.queue].filter(([, q]) => q.length)),
+      events: Object.fromEntries(this.events),
+      turnsLeft: Object.fromEntries(this.turnsLeft),
+      jobs: [...channels.values()].flatMap((c) => c.jobs.filter((j) => j.status === "running").map((j) => ({ channelId: c.id, jobId: j.id }))),
+    };
+    writeFileSync(RESUME_FILE, JSON.stringify(r, null, 1));
+    this.closing = true;
+    for (const b of this.busy.values()) b.stop();
+    for (const run of this.jobRuns.values()) run.stop();
+  }
+
+  /** On start: picks up what an update's restart cut off (closeForRestart). */
+  resumeAfterRestart() {
+    if (!existsSync(RESUME_FILE)) return;
+    let r: Resume;
+    try {
+      r = JSON.parse(readFileSync(RESUME_FILE, "utf8"));
+    } catch {
+      r = { at: 0 } as Resume;
+    }
+    rmSync(RESUME_FILE, { force: true });
+    if (Date.now() - r.at > RESUME_WITHIN) return;
+
+    const picked = new Map<string, string[]>(); // channel id → what's picked up there, for its note
+    const note = (channelId: string, what: string) => picked.set(channelId, [...(picked.get(channelId) ?? []), what]);
+    for (const [id, n] of Object.entries(r.turnsLeft ?? {})) this.turnsLeft.set(id, n);
+    for (const [key, lines] of Object.entries(r.events ?? {})) this.events.set(key, lines);
+    const jobs = (r.jobs ?? []).flatMap((ref) => {
+      const ch = channels.get(ref.channelId);
+      const job = ch?.jobs.find((j) => j.id === ref.jobId);
+      return ch && job && job.status !== "running" ? [{ ch, job }] : [];
+    });
+    // A reply cut off mid-way: the teammate reads the same messages again, and is told why.
+    for (const t of r.turns ?? []) {
+      const ch = channels.get(t.channelId);
+      if (!ch || !teammate(t.agentId)) continue;
+      if (t.seen === undefined) delete ch.lastSeen[t.agentId];
+      else ch.lastSeen[t.agentId] = t.seen;
+      const key = `${ch.id}:${t.agentId}`;
+      const going = jobs.filter((j) => j.ch === ch && j.job.agentId === t.agentId).map((j) => `${j.job.id} "${j.job.title}"`);
+      const cut =
+        `[${time(Date.now())}] (event) Harmonia restarted for an app update while you were answering here, so that reply never went out. Anything you did with tools before the restart did happen.` +
+        (going.length ? ` Your job${going.length > 1 ? "s" : ""} ${going.join(", ")} carr${going.length > 1 ? "y" : "ies"} on: don't start ${going.length > 1 ? "them" : "it"} again.` : "");
+      this.events.set(key, [...t.events, ...(this.events.get(key) ?? []), cut]);
+      this.turnsLeft.set(ch.id, Math.max(this.turnsLeft.get(ch.id) ?? 0, 1) + 1);
+      note(ch.id, `${nameOf(t.agentId)}'s reply`);
+    }
+    for (const { ch, job } of jobs) {
+      note(ch.id, `${nameOf(job.agentId)}'s job ${job.id}`);
+      this.runJob(ch, job, JOB_RESUME_PROMPT, true, job.brief);
+    }
+    saveChannels();
+    for (const [channelId, what] of picked) {
+      const ch = channels.get(channelId)!;
+      // App only (via "slack" keeps it out of the linked Slack conversation): a restart is nobody's business there.
+      this.post(ch, { author: "system", text: `Harmonia restarted for an update. Picking up where it stopped: ${what.join(", ")}.`, meta: { via: "slack" } });
+    }
+    // Interrupted turns first, then the channels that were waiting for a teammate, then unread job reports.
+    for (const t of r.turns ?? []) {
+      const ch = channels.get(t.channelId);
+      if (ch) this.wake(ch, t.agentId);
+    }
+    for (const [agentId, ids] of Object.entries(r.queue ?? {})) {
+      for (const id of ids) {
+        const ch = channels.get(id);
+        if (ch && teammate(agentId)) this.wake(ch, agentId);
+      }
+    }
+    for (const key of Object.keys(r.events ?? {})) {
+      const [channelId, agentId] = key.split(":");
+      const ch = channels.get(channelId);
+      if (ch && teammate(agentId)) this.wake(ch, agentId);
+    }
+  }
+
   // ---------- Chat turns (the six TeamAgents sessions) ----------
 
   private queueEvent(ch: Channel, agentId: string, text: string) {
@@ -408,7 +516,7 @@ export class Team {
 
   /** Asks a teammate to read a channel and reply. A teammate busy in another channel gets to it after that turn. */
   private wake(ch: Channel, agentId: string) {
-    if (ch.status === "archived") return;
+    if (ch.status === "archived" || this.closing) return;
     const b = this.busy.get(agentId);
     if (b) {
       if (b.channelId === ch.id) this.again.add(`${ch.id}:${agentId}`);
@@ -479,7 +587,7 @@ export class Team {
     let stopped = false;
     let said: string | undefined; // the turn's latest words, not yet followed by a tool call
     let holding: ReturnType<typeof setTimeout> | undefined; // the turn's one hold-on line, waiting to go out
-    const busy: { channelId: string; stop: () => void; activity?: string } = { channelId: ch.id, stop: () => {}, activity: "thinking" };
+    const busy: Busy = { channelId: ch.id, stop: () => {}, activity: "thinking", seen, events };
     this.busy.set(agentId, busy);
     this.setActivity(ch, agentId, "typing");
     this.emitSessions();
@@ -532,6 +640,7 @@ export class Team {
       .catch((e): RunResult => ({ text: String(e), sessionId: session.sessionId, isError: true, denials: [] }))
       .then((r) => {
         clearTimeout(holding);
+        if (this.closing) return; // cut off by an update: the next build gives it the same messages again
         this.turns.delete(token);
         this.busy.delete(agentId);
         this.setActivity(ch, agentId, null);
@@ -752,7 +861,8 @@ export class Team {
     return `Started job ${job.id}. Its report comes back to you here when it finishes.`;
   }
 
-  private runJob(ch: Channel, job: Job, prompt: string, resume: boolean) {
+  /** `fresh`: when resuming, what to start over with if the job's session never got saved. */
+  private runJob(ch: Channel, job: Job, prompt: string, resume: boolean, fresh?: string) {
     const key = `${ch.id}:${job.id}`;
     Object.assign(job, { status: "running", activity: "starting", endedAt: undefined });
     saveChannels();
@@ -787,9 +897,15 @@ export class Team {
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
       .then((r) => {
         clearInterval(ticker);
+        if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
         this.jobRuns.delete(key);
         const stopped = this.stopping.delete(key);
+        // Cut off before Claude Code saved its session: start it again from its brief.
+        if (!stopped && fresh !== undefined && r.isError && /no conversation found/i.test(r.text)) {
+          job.cost += r.cost ?? 0;
+          return this.runJob(ch, job, fresh, false);
+        }
         job.cost += r.cost ?? 0;
         job.activity = undefined;
         job.endedAt = Date.now();

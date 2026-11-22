@@ -127,7 +127,8 @@ export const channels = new Map<string, Channel>(
     if (c.archivedAt && !c.status) Object.assign(c, { status: "archived", statusAt: c.archivedAt });
     delete c.archivedAt;
     c.nextJob ??= 1;
-    // A job can't still be running after a restart: its process went with the old server.
+    // A job can't still be running after a restart: its process went with the old server. (After an update's restart,
+    // Team.resumeAfterRestart starts the ones that were running again.)
     for (const j of c.jobs) if (j.status === "running") Object.assign(j, { status: "stopped", activity: undefined, endedAt: Date.now() });
     return [c.id, c];
   }),

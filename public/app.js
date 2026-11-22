@@ -400,7 +400,7 @@
       available: [`Update: ${what}`, u.auto ? "" : "Update"],
       building: [u.from === "release" ? `Getting ${what}… (${u.detail || "downloading"})` : `Building the update… (${what})`, ""],
       ready: [`Update ready: ${what}`, "Restart to update"],
-      waiting: [`Update ready: restarts when nobody's working (${u.detail || "busy"})`, ""],
+      waiting: [`Update ready: restarts when nobody's working (${u.detail || "busy"})`, "Restart now"],
       installing: ["Restarting with the update…", ""],
       failed: ["Update failed", "Try again"],
     }[u.state];

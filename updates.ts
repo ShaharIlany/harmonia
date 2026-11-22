@@ -1,7 +1,8 @@
 // Over-the-air updates. The installed app knows what it is (build.json, written by macapp/build.sh): a release's
 // version, or the commit it was built from. Every 30 minutes it looks for something newer, gets it in the background,
 // and swaps it in at a quiet moment (nothing working, and you haven't sent anything for a while); the app reopens
-// itself on it. Or right away (still waiting for teammates to finish) with "Restart to update".
+// itself on it. Or right away with "Restart to update": what's working is picked up again after the restart
+// (server.ts's beforeRestart, Team.closeForRestart and resumeAfterRestart).
 //
 // Two sources (settings.json "updateFrom"):
 //   "release" (default)  the repo's latest GitHub release (.github/workflows/release.yml builds one per version tag):
@@ -32,6 +33,8 @@ export type UpdateStatus = {
 const RESOURCES = dirname(process.execPath);
 const APP = dirname(dirname(RESOURCES)); // …/Harmonia.app
 const SOURCE = join(DATA, "source");
+/** The build before the last update, to go back by hand. */
+const PREVIOUS = join(DATA, "previous");
 const LOG = join(DATA, "update.log");
 const CHECK_EVERY = 30 * 60_000;
 /** Auto-install waits until you haven't sent anything for this long. */
@@ -59,8 +62,9 @@ const fresh = () => (from === "release" ? join(DOWNLOAD, "Harmonia.app") : join(
 let status: UpdateStatus = { state: "off", from, auto, current: build?.commit, version: build?.version || undefined };
 let onStatus: (s: UpdateStatus) => void = () => {};
 let busyCount: () => number = () => 0;
+let beforeRestart: () => void = () => {};
 let lastActivity = Date.now();
-let installWhenIdle = false;
+let installNow = false; // you asked for it: install without waiting for the teammates
 let failedBuild: string | undefined; // a commit that didn't build: automatic updates skip it until the branch moves on
 let job: Promise<void> | undefined;
 
@@ -90,13 +94,17 @@ async function sh(cmd: string[], cwd?: string, env?: Record<string, string>): Pr
 }
 const git = (...args: string[]) => sh(["git", "-C", SOURCE, ...args]);
 
-export function startUpdates(o: { notify: (s: UpdateStatus) => void; busy: () => number }) {
+export function startUpdates(o: { notify: (s: UpdateStatus) => void; busy: () => number; beforeRestart?: () => void }) {
   onStatus = o.notify;
   busyCount = o.busy;
+  beforeRestart = o.beforeRestart ?? (() => {});
   if (setting("STUB")) return;
   if (!build) return set({ state: "off", detail: COMPILED ? "This build has no build.json." : "Running from source: update with git." });
   if (!repo) return set({ state: "off", detail: "The build has no git remote. Set updateRepo in settings.json." });
   if (from === "release" && !slug) return set({ state: "off", detail: `Releases come from GitHub, and ${repo} isn't a GitHub repo. Set updateRepo, or "updateFrom": "source".` });
+  // Installing would clear previous/, this very app. (Builds before 2.1.12 moved the whole bundle there, and macOS
+  // finds an app it reopens at login by its file, so it could reopen this backup instead of the new build.)
+  if (dirname(APP) === PREVIOUS) return set({ state: "off", detail: `This is the backup copy of Harmonia (${APP}). Quit it and open Harmonia from your Applications folder.` });
   set({ state: "idle" });
   setTimeout(() => checkForUpdates(), 60_000);
   setInterval(() => checkForUpdates(), CHECK_EVERY);
@@ -157,7 +165,7 @@ async function buildLatest() {
   set({ state: "ready", detail: undefined });
 }
 
-/** "Update" on the page: build now if it isn't built, then install as soon as nobody is working. */
+/** "Update" on the page: build now if it isn't built, then install right away. */
 export async function applyUpdate(): Promise<string | undefined> {
   if (job) await job;
   if (status.state === "failed" && !status.latest) await checkForUpdates();
@@ -168,7 +176,7 @@ export async function applyUpdate(): Promise<string | undefined> {
     await job;
   }
   if (status.state !== "ready" && status.state !== "waiting") return status.detail ?? "There's no update to install.";
-  installWhenIdle = true;
+  installNow = true;
   maybeInstall();
 }
 
@@ -176,8 +184,9 @@ function maybeInstall() {
   if (status.state !== "ready" && status.state !== "waiting") return;
   const busy = busyCount();
   const quiet = Date.now() - lastActivity > QUIET;
-  if (!installWhenIdle && !(auto && quiet)) return;
-  if (busy > 0) return set({ state: "waiting", detail: `${busy} teammate${busy === 1 ? " is" : "s or jobs are"} still working` });
+  if (!installNow && !(auto && quiet)) return;
+  // On its own, it waits for the teammates to finish. Asked for, it goes now, and their work picks up after the restart.
+  if (!installNow && busy > 0) return set({ state: "waiting", detail: `${busy} teammate${busy === 1 ? " is" : "s or jobs are"} still working` });
   install();
 }
 
@@ -185,37 +194,50 @@ function maybeInstall() {
 export const RELAUNCH_EXIT = 75;
 
 /**
- * Swaps the build while this one still runs (macOS keeps a running app going when its bundle is moved), then exits
+ * Swaps the build while this one still runs (macOS keeps a running app going when its files are moved), then exits
  * with RELAUNCH_EXIT. The app shell quits and reopens itself through LaunchServices. Nothing can outlive the app to do
  * it instead: macOS ends every process an app started, even launchd jobs, when the app quits.
+ *
+ * Only Harmonia.app's Contents move; the Harmonia.app folder itself stays put. macOS remembers an app it reopens at
+ * login (and a login item, and the Dock) by its file, and follows that file wherever it goes: moving the whole bundle
+ * to previous/ made a restart reopen the old build from there.
  * The old build is kept in the data folder's `previous/`, to go back by hand.
  */
 async function install() {
   set({ state: "installing", detail: "restarting" });
   const next = fresh();
-  const prevDir = join(DATA, "previous");
-  const prev = join(prevDir, "Harmonia.app");
+  const contents = join(APP, "Contents");
+  const kept = join(PREVIOUS, "Harmonia.app", "Contents");
   try {
     if (!existsSync(join(next, "Contents", "MacOS", "Harmonia"))) throw new Error("the new build isn't there");
-    rmSync(prevDir, { recursive: true, force: true });
-    mkdirSync(prevDir, { recursive: true });
-    renameSync(APP, prev);
+    if (dirname(APP) === PREVIOUS) throw new Error("this is the backup copy in previous/");
+    rmSync(PREVIOUS, { recursive: true, force: true });
+    mkdirSync(dirname(kept), { recursive: true });
+    renameSync(contents, kept);
     try {
       // A clone on APFS: instant, and no extra space.
-      await sh(["cp", "-cR", next, APP]).catch(() => sh(["ditto", next, APP]));
+      await sh(["cp", "-cR", join(next, "Contents"), contents]).catch(() => sh(["ditto", join(next, "Contents"), contents]));
     } catch (e) {
-      rmSync(APP, { recursive: true, force: true });
-      renameSync(prev, APP);
+      rmSync(contents, { recursive: true, force: true });
+      renameSync(kept, contents);
       throw e;
     }
   } catch (e) {
-    installWhenIdle = false;
+    installNow = false;
     log(`install failed: ${(e as Error).message}`);
     return set({ state: "failed", detail: `Couldn't install the update: ${(e as Error).message}` });
   }
+  // LaunchServices keeps what it read from the old Info.plist until it's told the app changed.
+  await sh([LSREGISTER, "-f", APP]).catch(() => {});
   log(`installed ${status.latestVersion ?? status.latest} into ${APP}; relaunching`);
+  try {
+    beforeRestart();
+  } catch (e) {
+    log(`saving running work failed: ${(e as Error).message}`);
+  }
   setTimeout(() => process.exit(RELAUNCH_EXIT), 300);
 }
+const LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 // ---------- Releases ----------
 
