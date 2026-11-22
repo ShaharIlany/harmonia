@@ -150,7 +150,7 @@ if (firstChatSessions) {
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
 type ChatTools = { startJob(input: any): string; checkJobs(): string; stopJob(jobId: string): string; requestTool(input: any): string };
 /** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
-type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[] };
+type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[]; answers?: string };
 
 /**
  * What was working when an update restarted the app (Team.closeForRestart), for the next build to pick up
@@ -159,7 +159,7 @@ type Busy = { channelId: string; stop: () => void; activity?: string; seen?: num
  */
 type Resume = {
   at: number;
-  turns: { channelId: string; agentId: string; seen?: number; events: string[] }[];
+  turns: { channelId: string; agentId: string; seen?: number; events: string[]; answers?: string }[];
   queue: Record<string, string[]>;
   events: Record<string, string[]>;
   turnsLeft: Record<string, number>;
@@ -181,12 +181,19 @@ export class Team {
   private turns = new Map<string, Turn>(); // per-turn token → the turn its job tools act for
   private jobRuns = new Map<string, Run>(); // `${channelId}:${jobId}`
   private stopping = new Set<string>();
+  private causes = new Map<string, string>(); // `${channelId}:${agentId}` → the message that woke it, for answers.
   private closing = false; // an update is restarting the app: runs that end now leave no trace, and nobody is woken
 
   constructor(
     private emit: Emit,
     private serverUrl: string,
   ) {}
+
+  /** The message the teammate's turn in this channel answers, if it's in one there: `{ answers }` for a message's meta. */
+  answering(channelId: string, agentId: string): { answers?: string } {
+    const b = this.busy.get(agentId);
+    return b?.channelId === channelId && b.answers ? { answers: b.answers } : {};
+  }
 
   activityFor(channelId: string) {
     return [...this.activity].filter(([k]) => k.startsWith(channelId + ":")).map(([k, status]) => ({ agentId: k.split(":")[1], status }));
@@ -320,7 +327,7 @@ export class Team {
         saveMessages(ch.id);
         this.emit({ type: "update", channelId: ch.id, message: msg });
       }
-      for (const id of d.to) this.wake(ch, id);
+      for (const id of d.to) this.wake(ch, id, msg);
     });
     this.coordinating.set(ch.id, next);
     next.finally(() => this.coordinating.get(ch.id) === next && this.coordinating.delete(ch.id));
@@ -430,7 +437,7 @@ export class Team {
   closeForRestart() {
     const r: Resume = {
       at: Date.now(),
-      turns: [...this.busy].map(([agentId, b]) => ({ channelId: b.channelId, agentId, seen: b.seen, events: b.events })),
+      turns: [...this.busy].map(([agentId, b]) => ({ channelId: b.channelId, agentId, seen: b.seen, events: b.events, answers: b.answers })),
       queue: Object.fromEntries([...this.queue].filter(([, q]) => q.length)),
       events: Object.fromEntries(this.events),
       turnsLeft: Object.fromEntries(this.turnsLeft),
@@ -491,7 +498,7 @@ export class Team {
     // Interrupted turns first, then the channels that were waiting for a teammate, then unread job reports.
     for (const t of r.turns ?? []) {
       const ch = channels.get(t.channelId);
-      if (ch) this.wake(ch, t.agentId);
+      if (ch) this.wake(ch, t.agentId, t.answers ? messages.get(ch.id)?.find((m) => m.id === t.answers) : undefined);
     }
     for (const [agentId, ids] of Object.entries(r.queue ?? {})) {
       for (const id of ids) {
@@ -514,9 +521,15 @@ export class Team {
     this.turnsLeft.set(ch.id, Math.max(this.turnsLeft.get(ch.id) ?? 0, 2));
   }
 
-  /** Asks a teammate to read a channel and reply. A teammate busy in another channel gets to it after that turn. */
-  private wake(ch: Channel, agentId: string) {
+  /**
+   * Asks a teammate to read a channel and reply. A teammate busy in another channel gets to it after that turn.
+   * `cause`: the message it's woken for, which its answer then answers (meta.answers: Slack puts the answer in that
+   * message's thread). Woken for anything else (a job report, a decision on a card), it answers in the channel.
+   */
+  private wake(ch: Channel, agentId: string, cause?: Message) {
     if (ch.status === "archived" || this.closing) return;
+    if (cause) this.causes.set(`${ch.id}:${agentId}`, cause.id);
+    else this.causes.delete(`${ch.id}:${agentId}`);
     const b = this.busy.get(agentId);
     if (b) {
       if (b.channelId === ch.id) this.again.add(`${ch.id}:${agentId}`);
@@ -561,6 +574,8 @@ export class Team {
       return false;
     }
     this.events.delete(key);
+    const answers = this.causes.get(key);
+    this.causes.delete(key);
     this.turnsLeft.set(ch.id, left - 1);
     ch.lastSeen[agentId] = all.length;
     saveChannels();
@@ -587,7 +602,7 @@ export class Team {
     let stopped = false;
     let said: string | undefined; // the turn's latest words, not yet followed by a tool call
     let holding: ReturnType<typeof setTimeout> | undefined; // the turn's one hold-on line, waiting to go out
-    const busy: Busy = { channelId: ch.id, stop: () => {}, activity: "thinking", seen, events };
+    const busy: Busy = { channelId: ch.id, stop: () => {}, activity: "thinking", seen, events, answers };
     this.busy.set(agentId, busy);
     this.setActivity(ch, agentId, "typing");
     this.emitSessions();
@@ -630,7 +645,7 @@ export class Team {
         said = undefined;
         if (holding || !text || NO_REPLY.test(text) || EMOJI_ONLY.test(text)) return;
         holding = setTimeout(() => {
-          if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true } });
+          if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true, ...(answers && { answers }) } });
         }, HOLD_ON_AFTER);
       },
     });
@@ -667,7 +682,7 @@ export class Team {
           // Its session file is gone (deleted, or another machine): start over in a new one.
           this.turnsLeft.set(ch.id, (this.turnsLeft.get(ch.id) ?? 0) + 1);
           this.again.add(key);
-        } else if (!stopped) this.afterReply(ch, agentId, r, target);
+        } else if (!stopped) this.afterReply(ch, agentId, r, target, answers);
         // Other channels that waited go first, then this one again if more came in meanwhile.
         if (this.again.delete(key) || this.events.has(key)) {
           const q = this.queue.get(agentId) ?? [];
@@ -679,16 +694,17 @@ export class Team {
     return true;
   }
 
-  private afterReply(ch: Channel, agentId: string, r: RunResult, target?: string) {
+  private afterReply(ch: Channel, agentId: string, r: RunResult, target?: string, answers?: string) {
     // "(no reply)": the teammate read the channel and decided it isn't its turn. Nothing is posted or woken.
     if (!r.isError && NO_REPLY.test(r.text.trim())) return;
     // Only an emoji: a reaction on the message it answers, like WhatsApp. Nobody is woken.
     if (!r.isError && EMOJI_ONLY.test(r.text.trim())) return target ? this.react(ch, target, agentId, r.text.trim()) : undefined;
     const cached = r.inputTotal ? r.cacheRead! / r.inputTotal : undefined;
-    if (r.isError) this.post(ch, { author: agentId, kind: "error", text: r.text || "The run failed." });
+    const on = answers ? { answers } : undefined;
+    if (r.isError) this.post(ch, { author: agentId, kind: "error", text: r.text || "The run failed.", meta: on });
     else if (r.text) {
       const parts = bubbles(r.text);
-      const { first, after } = this.postBubbles(ch, agentId, parts, { cost: r.cost, tokens: r.tokens, cached });
+      const { first, after } = this.postBubbles(ch, agentId, parts, { cost: r.cost, tokens: r.tokens, cached, ...on });
       const asksUser = mentions(r.text).includes("user");
       // A question to the user makes the user's next plain message go to this teammate.
       if (asksUser) ch.waitingOn = agentId;
@@ -696,7 +712,7 @@ export class Team {
       // channel's Mozart decides whether anyone follows up, once all the bubbles are out. A question to the user
       // waits for the user.
       const to = handoffs(r.text).filter((id) => id !== agentId);
-      for (const id of to) this.wake(ch, id);
+      for (const id of to) this.wake(ch, id, first);
       if (first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
     }
     saveChannels();
@@ -716,7 +732,7 @@ export class Team {
       at += Math.min(1500, Math.max(600, part.length * 15));
       setTimeout(() => {
         if (!this.busy.has(agentId)) this.setActivity(ch, agentId, null);
-        this.post(ch, { author: agentId, text: part });
+        this.post(ch, { author: agentId, text: part, ...(meta?.answers && { meta: { answers: meta.answers } }) });
       }, at);
     }
     return { first, after: at + 50 };
@@ -784,7 +800,7 @@ export class Team {
       (m) => m.meta?.toolRequest?.status === "pending" && m.meta.toolRequest.agentId === agentId && missing.every((t) => m.meta!.toolRequest!.tools.some((x) => x.name === t.name)),
     );
     if (pending) return "That request is already waiting on the user's card in this channel.";
-    this.post(ch, { author: agentId, kind: "tools", text: "", meta: { toolRequest: { agentId, tools: missing, reason: reason.slice(0, 400), status: "pending" } } });
+    this.post(ch, { author: agentId, kind: "tools", text: "", meta: { toolRequest: { agentId, tools: missing, reason: reason.slice(0, 400), status: "pending" }, ...this.answering(ch.id, agentId) } });
     return `Asked ${USER_NAME}: a card with Approve / Deny for ${missing.map((t) => t.name).join(", ")} is in #${ch.name}. Their answer reaches you as an event. Don't ask again in your message; say in a line what you'll do once it's approved, or (no reply).`;
   }
 
@@ -856,7 +872,7 @@ export class Team {
     ch.jobs.push(job);
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
     this.emitJob(ch, job); // before the card, so the page can draw it
-    this.post(ch, { author: agentId, kind: "job", text: `started job ${job.id}: ${job.title}`, meta: { jobId: job.id } });
+    this.post(ch, { author: agentId, kind: "job", text: `started job ${job.id}: ${job.title}`, meta: { jobId: job.id, ...this.answering(ch.id, agentId) } });
     this.runJob(ch, job, prompt ?? job.brief, !!prev);
     return `Started job ${job.id}. Its report comes back to you here when it finishes.`;
   }

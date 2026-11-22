@@ -9,7 +9,8 @@
 // deleted once its answer is out (the answer is a new message, so Slack notifies you of it).
 //
 // Every message is kept with its Slack ts (meta.slack), so Slack's own gestures work: a thread reply is a reply to that
-// message here (it wakes that teammate), and the answers follow you into the thread; your reaction on a message is
+// message here (it wakes that teammate), and the answers to it follow you into the thread (only those: job reports and
+// whatever else comes up stay in the conversation); your reaction on a message is
 // your reaction here; ⚠️ on a teammate's message gets you a DM asking how it could be better, and your answer (a
 // thread reply, or the box behind its button) is feedback, as ✎ gives it in the app. A teammate's request for a tool
 // (a connector) or a permission comes with buttons, and the card says what you decided, here or there.
@@ -251,6 +252,8 @@ type Deps = {
   channelCreated: (ch: Channel) => void;
   /** Sets a channel's status (`@Harmonia status`, `@Harmonia archive`), as the page does. An error to show, if it can't. */
   setStatus: (ch: Channel, status: ChannelStatus | undefined) => string | undefined;
+  /** The message a teammate at work in a channel is answering, if any: its typing message goes in that one's thread. */
+  answering: (channelId: string, agentId: string) => string | undefined;
   log: (event: string, fields?: Record<string, unknown>) => void;
 };
 
@@ -279,7 +282,6 @@ export class SlackBridge {
   private typing = new Map<string, Typing>(); // "channel id:teammate id" → the teammate's typing message there
   private typed: Set<Typing>; // typing messages out in Slack and not deleted yet, kept in slack.json for after a restart
   private reacted = new Set<string>();
-  private threads = new Map<string, string>(); // Harmonia channel id → the Slack thread the conversation is in now
   private cardsDone = new Set<string>(); // cards whose Slack message already says what was decided
   private asks: Record<string, Ask>; // ts of a ⚠️ question in your DM → the message it's about
   private sending: Promise<void> = Promise.resolve();
@@ -668,7 +670,6 @@ export class SlackBridge {
     for (const key of this.typing.keys()) if (key.startsWith(`${l.channelId}:`)) this.untype(key);
     this.working.delete(l.channelId);
     this.inSlack.delete(l.channelId);
-    this.threads.delete(l.channelId);
     for (const key of this.mateIn) if (key.endsWith(`:${conversationId}`)) this.mateIn.delete(key);
     delete this.links[conversationId];
     this.save();
@@ -790,9 +791,7 @@ export class SlackBridge {
       this.say(ev.channel, `I couldn't fetch your file${got.missed.length > 1 ? "s" : ""} for the teammates: the ${APP_NAME} app needs the files:read scope. Harmonia's Slack page shows how to update it.`, thread);
     const ref: SlackRef = { channel: ev.channel, ts: String(ev.ts), ...(thread && { thread }) };
     if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), text, ev.user, ref, got.files);
-    // The answers go where you wrote: into the thread, or the channel itself.
-    if (thread) this.threads.set(ch.id, thread);
-    else this.threads.delete(ch.id);
+    // The answers go where you wrote, into the thread or the channel itself: they answer this message (threadOf).
     this.inSlack.add(ch.id);
     this.deps.post(ch, text, { replyTo: thread ? this.bySlack(ch.id, ev.channel, thread)?.id : undefined, slack: ref, files: got.files });
   }
@@ -1320,21 +1319,35 @@ export class SlackBridge {
     const ref = { channelId: ch.id, message: m };
     if (m.author === "user") {
       // Typed in the app. A reply to a message that's in Slack goes into its thread, and the answers follow.
-      const to = m.meta?.replyTo && messages.get(ch.id)?.find((x) => x.id === m.meta!.replyTo!.id)?.meta?.slack;
-      const root = to && to.channel === link.conversationId ? (to.thread ?? to.ts) : undefined;
-      if (root) this.threads.set(ch.id, root);
-      else this.threads.delete(ch.id);
+      const root = this.threadOf(link, ch, m);
       this.inSlack.delete(ch.id); // you're writing in the app now: no typing messages in Slack
       if (m.meta?.files?.length) return void this.sendFiles(link, ch, m, root);
       return this.postAs(USER_LOOK, link.conversationId, { markdown: m.text }, { thread: root, ref });
     }
-    const thread = this.threads.get(ch.id);
+    const thread = this.threadOf(link, ch, m);
     if (m.author === "system") return this.postAs(undefined, link.conversationId, { markdown: `_${m.text}_` }, { thread, ref });
     const t = teammate(m.author);
     if (!t) return;
     const text = relayText(m, ch);
     const content: Content | undefined = card(m, ch) ?? (text ? { markdown: text } : undefined);
     if (content) this.postFor(t, link, content, { thread, ref });
+  }
+
+  /**
+   * The Slack thread a message goes in, or undefined for the conversation itself. One that's in Slack already stays
+   * where it is. Yours, typed in the app as a reply to a message in Slack, goes into that message's thread (or starts
+   * one under it). A teammate's goes where the message its turn answers is (meta.answers): a reply in a thread gets its
+   * answers in that thread, and everything else (job reports, status updates) goes in the conversation.
+   */
+  private threadOf(link: Link, ch: Channel, m: Message, depth = 0): string | undefined {
+    if (m.meta?.slack) return m.meta.slack.channel === link.conversationId ? m.meta.slack.thread : undefined;
+    const find = (id?: string) => (id ? messages.get(ch.id)?.find((x) => x.id === id) : undefined);
+    if (m.author === "user") {
+      const to = find(m.meta?.replyTo?.id)?.meta?.slack;
+      return to && to.channel === link.conversationId ? (to.thread ?? to.ts) : undefined;
+    }
+    const answered = find(m.meta?.answers);
+    return answered && depth < 20 ? this.threadOf(link, ch, answered, depth + 1) : undefined;
   }
 
   /** A message changed: a teammate's emoji on yours, or a card that's decided now (here or by its buttons). */
@@ -1379,7 +1392,10 @@ export class SlackBridge {
         this.typed.add(t);
         this.save();
       };
-      this.postAs(look, t.channel, { markdown: TYPING }, { thread: this.threads.get(link.channelId), posted });
+      const ch = channels.get(link.channelId);
+      const answers = this.deps.answering(link.channelId, agentId);
+      const to = ch && answers && messages.get(ch.id)?.find((x) => x.id === answers);
+      this.postAs(look, t.channel, { markdown: TYPING }, { thread: ch && to ? this.threadOf(link, ch, to) : undefined, posted });
     }, TYPING_AFTER);
     this.typing.set(key, t);
   }
@@ -1434,7 +1450,8 @@ export class SlackBridge {
       this.reacted.add(key);
       const name = reactionName(x.emoji);
       if (!name) {
-        this.postFor(t, link, { markdown: x.emoji }, { thread: this.threads.get(link.channelId) });
+        const ch = channels.get(link.channelId);
+        this.postFor(t, link, { markdown: x.emoji }, { thread: ch && this.threadOf(link, ch, m) });
         continue;
       }
       void this.queue(async () => {
