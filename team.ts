@@ -77,13 +77,18 @@ function jobPrompt(ch: Channel, agentId: string) {
   return RULES.job
     .replaceAll("{{user}}", USER_NAME)
     .replaceAll("{{name}}", nameOf(agentId))
-    .replaceAll("{{channel}}", ch.name)
+    .replaceAll("{{channel}}", ch.dm ? `a DM with ${USER_NAME}` : `the channel #${ch.name}`)
     .replaceAll("{{cwd}}", ch.cwd);
 }
 
+/** Where a channel is, as the teammates read it: "#name", or "your DM with <you>". */
+const placeOf = (ch: Channel) => (ch.dm ? `your DM with ${USER_NAME}` : `#${ch.name}`);
+/** The same, as you read it (in the typing bar). */
+const shownAs = (ch: Channel) => (ch.dm ? "your DM" : `#${ch.name}`);
+
 /** How sessions are titled in Claude Code: the tag says which teammate it is. */
 export const chatTitle = (agentId: string) => `[${nameOf(agentId)}] Harmonia chat`;
-export const jobTitle = (ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] #${ch.name} · ${title}`;
+export const jobTitle = (ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] ${ch.dm ? "DM" : `#${ch.name}`} · ${title}`;
 
 const time = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
 /** What a teammate answers when a turn needs nothing from it (chat-rules.md, "Is it your turn?"). */
@@ -230,6 +235,7 @@ export class Team {
 
   /** Tags a channel (or clears its tag). Archiving is refused while a teammate or job is still working there. */
   setStatus(ch: Channel, status: ChannelStatus | undefined): string | undefined {
+    if (ch.dm && status) return `Your DM with ${nameOf(ch.dm)} has no status: it's always there.`;
     if (status === "archived" && ch.status !== "archived") {
       const chatting = [...this.busy].filter(([, b]) => b.channelId === ch.id).map(([id]) => nameOf(id));
       const jobs = ch.jobs.filter((j) => j.status === "running").map((j) => `${nameOf(j.agentId)}'s job ${j.id}`);
@@ -272,7 +278,8 @@ export class Team {
   /**
    * A message from you: typed here, or in a linked Slack conversation (`via: "slack"`, and where it is there), maybe
    * with files (attachments.ts). An @mention, "Name, …" or a reply to a teammate's message goes to that teammate;
-   * anything else, the channel's Mozart decides. Either way Mozart may make it a reaction instead of a turn.
+   * anything else, the channel's Mozart decides. Either way Mozart may make it a reaction instead of a turn. In a DM,
+   * it goes to the DM's teammate, whoever it names: nobody else is there.
    */
   userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef; files?: Attachment[] } = {}): Message {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
@@ -291,6 +298,10 @@ export class Team {
     ch.waitingOn = undefined;
     saveChannels();
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
+    if (ch.dm) {
+      if (ch.status !== "archived" && teammate(ch.dm)) this.wake(ch, ch.dm, msg);
+      return msg;
+    }
     this.coordinate(ch, msg, waitingOn, named.length ? named : atStart ? [atStart] : undefined);
     return msg;
   }
@@ -537,7 +548,8 @@ export class Team {
         const q = this.queue.get(agentId) ?? [];
         if (!q.includes(ch.id)) q.push(ch.id);
         this.queue.set(agentId, q);
-        this.setActivity(ch, agentId, `busy in #${channels.get(b.channelId)?.name ?? "another channel"}, then here`);
+        const busyIn = channels.get(b.channelId);
+        this.setActivity(ch, agentId, `busy in ${busyIn ? shownAs(busyIn) : "another channel"}, then here`);
         this.emitSessions();
       }
       return;
@@ -583,10 +595,10 @@ export class Team {
     // What an emoji-only reply reacts to: the latest message it read from someone else.
     const target = fresh.findLast((m) => m.author !== agentId && m.author !== "system" && m.kind !== "job" && m.kind !== "status")?.id;
 
-    const where = `#${ch.name} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
+    const where = `${placeOf(ch)} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
     const lines = [...fresh.map((m) => line(m, ch.id)), ...events];
-    const prompt = `${intro}\n${lines.join("\n")}\n\nWrite your next message in #${ch.name}, or (no reply) if nothing here is waiting on you.`;
+    const prompt = `${intro}\n${lines.join("\n")}\n\nWrite your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you.`;
 
     const had = agentSessions[agentId];
     const resume = !!had;
@@ -710,10 +722,10 @@ export class Team {
       if (asksUser) ch.waitingOn = agentId;
       // Handoffs (@Name) go straight out, unless the mention is part of the question to the user. Otherwise the
       // channel's Mozart decides whether anyone follows up, once all the bubbles are out. A question to the user
-      // waits for the user.
-      const to = handoffs(r.text).filter((id) => id !== agentId);
+      // waits for the user. In a DM there's nobody else to wake, and nobody for Mozart to pick.
+      const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
       for (const id of to) this.wake(ch, id, first);
-      if (first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
+      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
@@ -801,7 +813,7 @@ export class Team {
     );
     if (pending) return "That request is already waiting on the user's card in this channel.";
     this.post(ch, { author: agentId, kind: "tools", text: "", meta: { toolRequest: { agentId, tools: missing, reason: reason.slice(0, 400), status: "pending" }, ...this.answering(ch.id, agentId) } });
-    return `Asked ${USER_NAME}: a card with Approve / Deny for ${missing.map((t) => t.name).join(", ")} is in #${ch.name}. Their answer reaches you as an event. Don't ask again in your message; say in a line what you'll do once it's approved, or (no reply).`;
+    return `Asked ${USER_NAME}: a card with Approve / Deny for ${missing.map((t) => t.name).join(", ")} is in ${placeOf(ch)}. Their answer reaches you as an event. Don't ask again in your message; say in a line what you'll do once it's approved, or (no reply).`;
   }
 
   stopJob(ch: Channel, jobId: string): string {
@@ -833,7 +845,7 @@ export class Team {
     const prompt = fill(RULES.feedback, {
       user: USER_NAME,
       what: job ? `your job ${job.id} "${job.title}"` : "one of your messages",
-      channel: ch.name,
+      channel: placeOf(ch),
       feedback: text,
       time: new Date(target.ts).toISOString(),
       message: line(target, ch.id),

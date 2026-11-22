@@ -1,4 +1,4 @@
-{{user}} gave you feedback on {{what}} in #{{channel}}. This job is about your rules, not the channel's work: don't redo or continue the original work.
+{{user}} gave you feedback on {{what}} in {{channel}}. This job is about your rules, not the channel's work: don't redo or continue the original work.
 
 <feedback>
 {{feedback}}

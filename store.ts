@@ -85,6 +85,7 @@ export type Channel = {
   jobs: Job[];
   nextJob: number;
   mozart?: MozartSession; // the channel's coordinator (mozart.ts)
+  dm?: string; // a DM with this teammate: only it is here, only it is woken, and Mozart stays out
 };
 
 /** A channel's Mozart: its own Haiku session, which reads the channel and decides who answers each message. */
@@ -154,7 +155,7 @@ export const saveChannels = () => write(join(DATA, "channels.json"), () => [...c
 export const saveMessages = (channelId: string) =>
   write(join(MSG_DIR, `${channelId}.json`), () => messages.get(channelId) ?? []);
 
-export function createChannel(name: string, cwd: string): Channel {
+export function createChannel(name: string, cwd: string, dm?: string): Channel {
   const slug = name.toLowerCase().replace(/[^\p{L}\d]+/gu, "-").replace(/^-|-$/g, "") || "channel";
   const ch: Channel = {
     id: `${slug}-${crypto.randomUUID().slice(0, 6)}`,
@@ -165,6 +166,7 @@ export function createChannel(name: string, cwd: string): Channel {
     allowedTools: [],
     jobs: [],
     nextJob: 1,
+    ...(dm && { dm }),
   };
   channels.set(ch.id, ch);
   messages.set(ch.id, []);
@@ -172,6 +174,9 @@ export function createChannel(name: string, cwd: string): Channel {
   saveMessages(ch.id);
   return ch;
 }
+
+/** Your DM with a teammate, if you have one. */
+export const dmOf = (agentId: string): Channel | undefined => [...channels.values()].find((c) => c.dm === agentId);
 
 export function addMessage(channelId: string, m: Omit<Message, "id" | "ts">): Message {
   const msg: Message = { id: crypto.randomUUID(), ts: Date.now(), ...m };

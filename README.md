@@ -326,7 +326,14 @@ Jobs and memories stay.
 - **Permissions:** every run uses `--permission-mode bypassPermissions`
   (`PERMISSION_MODE` in `runner.ts`). Allow / Deny cards only appear if that
   constant is changed back to a stricter mode.
-- **Teammate settings:** click a teammate (sidebar, avatar or name). Name,
+- **DMs:** click a teammate in the sidebar for your DM with them: a channel
+  of its own (`dm` set on it, made the first time you open it), shown under the
+  teammate with its unread count. Only that teammate reads it and only that
+  teammate is woken there, whoever your message names, and Mozart stays out.
+  Its turns say "your DM with Alex", and an @mention it writes wakes nobody.
+  Jobs it starts run in the default folder, like any channel's.
+- **Teammate settings:** right-click a teammate in the sidebar (or click its
+  avatar or name in a message, or ⚙ in its DM's menu). Name,
   avatar, role, colour and the chat model and effort live in `team.json`. Job
   model, effort and instructions are written to `~/.claude/agents/<id>.md`. Memories are the files in
   `~/.claude/agent-memory/<id>/`.
@@ -370,12 +377,13 @@ Jobs and memories stay.
     message from it says so; it's deleted once the answer is out, and the
     answer comes as a new message (so Slack notifies you of it).
   - **Teammates as Slack members:** on the Slack page, each teammate can get a
-    Slack app of its own (a bot that only posts and reacts), so it's a member you can
+    Slack app of its own (a bot that posts and reacts, and that you can DM), so it's a member you can
     @mention from Slack's list, with its own profile. Generate an app
     configuration token (api.slack.com/apps → **Your App Configuration
     Tokens**) and paste it: Harmonia makes the apps (`apps.manifest.create`,
-    scopes `chat:write`, `chat:write.customize` and `reactions:write`, nothing
-    to DM), sets each
+    scopes `chat:write`, `chat:write.customize` and `reactions:write`, plus
+    `im:history`, `im:write`, `reactions:read`, `files:read` and `files:write`
+    for your DM with it; Socket Mode, `message.im` and reaction events), sets each
     icon to the teammate's emoji (a 512 px picture the page draws,
     `apps.icon.set`), and doesn't keep the token. Then install each app and
     paste its bot token: Harmonia checks it's that app's, keeps it in the
@@ -390,6 +398,19 @@ Jobs and memories stay.
     icons and scopes (after a rename, say; an app made before teammates reacted
     needs a reinstall after that, and Harmonia reacts for it until then); **Forget** drops one here (delete the app
     in Slack yourself).
+  - **DM a teammate in Slack:** **Let me DM Emily in Slack…** under a connected
+    teammate takes an app-level token of its own app (Basic Information →
+    App-Level Tokens, `connections:write`). Harmonia checks the token is that
+    app's (the socket URL names its app) and that its bot token can read and
+    open DMs (an app made before DMs needs the apps updated and a reinstall),
+    keeps it in the Keychain, and listens on that app's own Socket Mode
+    connection. Your Slack DM with Emily's app is then your DM with Emily here,
+    linked as soon as both exist: your messages, thread replies, files and
+    reactions come in over her socket, and everything in that DM goes out with
+    her bot token (her answers, typing message, cards and their buttons, what
+    you type in the app), since Harmonia's bot isn't in it. Someone else who
+    DMs her app gets "I only work for …". **Turn off DMs** forgets the token;
+    the DM here stays.
   - **Replies:** reply in a Slack thread to a message and it's a reply to that
     message here: a reply to a teammate goes to them, and
     the answers come back in the thread. A reply you type in the app goes in

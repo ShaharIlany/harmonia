@@ -5,6 +5,8 @@
   let connecting = false; // the tokens are being checked with Slack
   let replacing = false; // the "replace tokens" form is open
   let connectingMate = ""; // the teammate whose bot token is being checked
+  let dmFormFor = ""; // the teammate whose "let me DM it" steps are open
+  let connectingDms = ""; // the teammate whose app-level token is being checked
 
   const APP = "Harmonia"; // slack.ts APP_NAME: the app's name in Slack, and what the commands are written to
   const TINT = "#611f69";
@@ -82,6 +84,7 @@
       <ol class="sk-plain">
         <li>Write to <b>@${APP}</b> in a DM: it's <b>#slack</b> here. Mozart picks who answers, as in the app; start with <code>@Leo</code> to ask Leo.</li>
         <li><b>@mention a teammate</b>: once it has its own app (above), Slack lists it when you type <code>@Le</code>. Without one, type <code>@Leo</code> in full, or start with <code>Leo,</code>: it reaches Leo all the same.</li>
+        <li><b>DM a teammate</b>: once its app takes DMs (above), find it under <b>Apps</b> in Slack's sidebar and write. It's your DM with it here: only that teammate reads it and answers.</li>
         <li><code>/invite @${APP}</code> in a channel or private channel, then write there: it's linked to a new channel here.</li>
         <li><code>@${APP} new channel &lt;name&gt;</code> makes a Slack channel with you in it, linked to a new channel here. <code>new private channel &lt;name&gt;</code> makes one only its members see. @mention people (or write their email) to invite them too. No admin needed.</li>
         <li><code>@${APP} status &lt;status&gt;</code> sets the channel's status here (<code>in progress</code>, <code>waiting</code>, <code>later</code>, <code>archived</code> or <code>none</code>). <code>@${APP} archive</code> archives it.</li>
@@ -98,18 +101,18 @@
   function linksHtml() {
     const links = S.slackLinks || [];
     if (!links.length) return "";
-    const icon = { dm: "💬", group: "👥", private: "🔒", channel: "#" };
+    const icon = { dm: "💬", mate: "💬", group: "👥", private: "🔒", channel: "#" };
     return `<section class="card">
       <h2>Linked in Slack</h2>
       <ul class="sk-list">${links
         .map((l) => {
           const ch = S.channels.find((c) => c.id === l.channelId);
-          const where = l.kind === "dm" ? `Your DM with ${APP}` : l.kind === "group" ? "A group DM" : `${l.kind === "private" ? "🔒 " : "#"}${esc(l.name || "channel")}`;
+          const where = l.kind === "dm" ? `Your DM with ${APP}` : l.kind === "mate" ? `Your DM with @${esc(l.name || "a teammate")}` : l.kind === "group" ? "A group DM" : `${l.kind === "private" ? "🔒 " : "#"}${esc(l.name || "channel")}`;
           return `<li class="sk-item">
             <span class="sk-av" style="--c:${TINT}">${icon[l.kind] || "#"}</span>
             <div class="sk-main">
               <div class="sk-top"><b>${where}</b></div>
-              <div class="hint">${ch ? `↔ <a href="#" data-channel="${esc(ch.id)}">#${esc(ch.name)}</a>` : "its channel is gone"}${l.url ? ` · ${ext(l.url, "Open in Slack")}` : ""}</div>
+              <div class="hint">${ch ? `↔ <a href="#" data-channel="${esc(ch.id)}">${esc(window.TeamApp.chLabel(ch))}</a>` : "its channel is gone"}${l.url ? ` · ${ext(l.url, "Open in Slack")}` : ""}</div>
             </div>
             <div class="row-btns"><button class="btn" data-unlink="${esc(l.conversationId)}">Unlink</button></div>
           </li>`;
@@ -133,7 +136,7 @@
     const label = s.making ? "Making them…" : !missing.length ? "Update their apps" : made.length ? `Make the other ${missing.length}` : `Make their ${missing.length} apps`;
     return `<section class="card">
       <h2>Teammates as Slack members</h2>
-      <p class="hint">Give each teammate a Slack app of its own, so it's a member you can @mention in Slack, like <b>@Emily</b>, with its own profile. ${APP} invites them to the linked channels, and their answers and emoji reactions there come from their own app. You still write through ${APP}, and only you wake them. In your DM with ${APP} and in group DMs they keep answering under ${APP}'s app, with their name and picture.</p>
+      <p class="hint">Give each teammate a Slack app of its own, so it's a member you can @mention in Slack, like <b>@Emily</b>, with its own profile. ${APP} invites them to the linked channels, and their answers and emoji reactions there come from their own app. You still write through ${APP}, and only you wake them. In your DM with ${APP} and in group DMs they keep answering under ${APP}'s app, with their name and picture. With one more token, you can DM a teammate's app too: that's your DM with it here.</p>
       <ol class="sk-steps">
         <li class="sk-step ${missing.length ? "now" : "done"}">${tick(!missing.length)}<div class="sk-body">
           <h3>${missing.length ? "Make their apps" : "Their apps are made"}</h3>
@@ -176,11 +179,48 @@
     return `<li class="sk-item">
       <span class="sk-av" style="--c:${esc(m.color)}">${esc(m.avatar)}</span>
       <div class="sk-main">
-        <div class="sk-top"><b>${esc(m.name)}</b> <span class="pill ${cls}">${label}</span></div>
+        <div class="sk-top"><b>${esc(m.name)}</b> <span class="pill ${cls}">${label}</span>${m.dms && m.dms !== "off" ? ` ${dmPill(m)}` : ""}</div>
         ${notes.length ? `<div class="hint">${notes.join(" · ")}</div>` : ""}
         ${form}
+        ${dmHtml(m)}
       </div>
     </li>`;
+  }
+
+  const DM_STATE = { ready: ["ok", "DMs on"], connecting: ["warn", "DMs connecting…"], failed: ["bad", "DMs need you"], stopped: ["off", "DMs stopped"] };
+  const dmPill = (m) => {
+    const [cls, label] = DM_STATE[m.dms] || ["off", m.dms];
+    return `<span class="pill ${cls}">${label}</span>`;
+  };
+  const scopeList = (list) => list.map((x) => `<code>${esc(x)}</code>`).join(", ");
+
+  /** Your DM with a teammate's own app: how to turn it on (an app-level token of its own), or where it's at. */
+  function dmHtml(m) {
+    if (m.state !== "connected" || m.gone) return "";
+    const name = esc(m.name);
+    const settings = m.appLink ? ext(m.appLink, `${name}'s app settings`) : `${name}'s app settings`;
+    const reinstall = m.installLink ? ext(m.installLink, "Install App") : "Install App";
+    const update = (missing) =>
+      `Bring its app up to date first: paste a configuration token above (<b>Update their apps</b>), then in ${reinstall} → <b>Reinstall to Workspace</b> → <b>Allow</b>. Its token is missing ${scopeList(missing)}.`;
+    if (m.dms && m.dms !== "off") {
+      const notes = [
+        m.dmDetail ? esc(m.dmDetail) : "",
+        m.dmMissing && m.dmMissing.length ? `Files and your reactions there need ${scopeList(m.dmMissing)}: update the apps above and reinstall ${name}'s` : "",
+        m.dmUrl ? ext(m.dmUrl, `Open your DM with ${name}`) : `Write to <b>@${name}</b> under Apps in Slack`,
+        `<button type="button" class="sk-link danger" data-mate-dms-off="${esc(m.id)}">Turn off DMs</button>`,
+      ].filter(Boolean);
+      return `<div class="hint sk-dm">${notes.join(" · ")}</div>`;
+    }
+    if (dmFormFor !== m.id) return `<div class="hint sk-dm"><button type="button" class="sk-link" data-mate-dms-open="${esc(m.id)}">Let me DM ${name} in Slack…</button></div>`;
+    return `<div class="sk-dm">
+      ${m.dmMissing && m.dmMissing.length ? `<p class="hint">${update(m.dmMissing)}</p>` : ""}
+      <p class="hint">In ${settings}: <b>Basic Information</b> → <b>App-Level Tokens</b> → <b>Generate Token and Scopes</b>, any name, add the <code>connections:write</code> scope, <b>Generate</b>. Copy it (<code>xapp-…</code>) and paste it here. It goes to your Keychain, and ${APP} listens for your DM with ${name} over it, the way it does for its own app.</p>
+      <form class="sk-mate-form" data-mate-dms="${esc(m.id)}" autocomplete="off">
+        <input name="dm-${esc(m.id)}" type="password" placeholder="xapp-…" aria-label="${name}'s app-level token" spellcheck="false" required>
+        <button class="btn primary" ${connectingDms === m.id ? "disabled" : ""}>${connectingDms === m.id ? "Checking…" : "Turn on DMs"}</button>
+        <button type="button" class="btn" data-mate-dms-close>Cancel</button>
+      </form>
+    </div>`;
   }
 
   /** A teammate's emoji as its Slack app's icon: a 512 px PNG (base64), drawn with this Mac's emoji font. */
@@ -272,7 +312,7 @@
           <div class="ag-sub">Talk to your teammates from Slack</div>
         </div>
       </div>
-      ${back ? `<button class="btn" data-back>← #${esc(back.name)}</button>` : ""}
+      ${back ? `<button class="btn" data-back>← ${esc(window.TeamApp.chLabel(back))}</button>` : ""}
     </header>
     <div class="ag-scroll">
       <section class="card">
@@ -347,6 +387,19 @@
       if (!confirm(`Forget ${m ? m.name : "this teammate"}'s Slack app here? Its token leaves your Keychain and its answers go out under ${APP} again. The app stays in Slack until you delete it there (App settings → Delete App).`)) return;
       return act("/api/slack/teammates/forget", { id: forget.dataset.mateForget }, "Forgotten.");
     }
+    const dmOpen = t.closest("[data-mate-dms-open]");
+    if (dmOpen) {
+      dmFormFor = dmOpen.dataset.mateDmsOpen;
+      update();
+      return view().querySelector(`[data-mate-dms="${CSS.escape(dmFormFor)}"] input`)?.focus();
+    }
+    if (t.closest("[data-mate-dms-close]")) return (dmFormFor = ""), update();
+    const dmOff = t.closest("[data-mate-dms-off]");
+    if (dmOff) {
+      const m = (slack().teammates || []).find((x) => x.id === dmOff.dataset.mateDmsOff);
+      if (!confirm(`Turn off DMs with ${m ? m.name : "this teammate"} in Slack? ${APP} stops listening on its app and forgets its app-level token. Your DM with ${m ? m.name : "it"} here stays.`)) return;
+      return act("/api/slack/teammates/dms-off", { id: dmOff.dataset.mateDmsOff }, "DMs are off.");
+    }
     const unlink = t.closest("[data-unlink]");
     if (unlink) {
       if (!confirm("Unlink this Slack conversation? Both sides keep their messages. If you write there again, it links to a new channel here.")) return;
@@ -379,6 +432,20 @@
       const name = (slack().teammates || []).find((x) => x.id === id)?.name || "It";
       await act("/api/slack/teammates/connect", { id, botToken: input.value }, `${name} is in Slack now: @${name} reaches it.`);
       connectingMate = "";
+      update();
+      return;
+    }
+    const dms = e.target.closest("[data-mate-dms]");
+    if (dms) {
+      e.preventDefault();
+      const id = dms.dataset.mateDms;
+      const input = dms.querySelector("input");
+      connectingDms = id;
+      update();
+      const name = (slack().teammates || []).find((x) => x.id === id)?.name || "it";
+      const ok = await act("/api/slack/teammates/dms", { id, appToken: input.value }, `DMs are on: write to @${name} in Slack.`);
+      connectingDms = "";
+      if (ok) dmFormFor = "";
       update();
       return;
     }

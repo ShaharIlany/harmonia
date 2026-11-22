@@ -116,6 +116,12 @@
     return colors.length ? colors[h % colors.length] : "#888";
   };
 
+  /** The teammate a DM is with (a DM is a channel with `dm` set), or undefined for a channel. */
+  const dmMate = (c) => (c && c.dm ? byId(c.dm) : undefined);
+  /** A channel as you read it: "#name", or "Emily" for your DM with Emily. */
+  const chLabel = (c) => (c.dm ? (dmMate(c) || { name: c.dm }).name : `#${c.name}`);
+  const dmWith = (agentId) => S.channels.find((c) => c.dm === agentId);
+
   async function api(path, body) {
     const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined);
     const data = await res.json().catch(() => ({}));
@@ -146,10 +152,11 @@
   /** The chat list's second line: who said what last, or who's typing right now. */
   function previewHtml(c) {
     const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
-    if (typing.length) return `<span class="c-typing">${esc(typing.map((t) => t.name).join(", "))} ${typing.length > 1 ? "are" : "is"} typing…</span>`;
+    if (typing.length) return `<span class="c-typing">${c.dm ? "" : `${esc(typing.map((t) => t.name).join(", "))} ${typing.length > 1 ? "are" : "is"} `}typing…</span>`;
     const m = S.previews[c.id];
     if (!m || (m.author === "system" && !m.text)) return `<span class="c-folder">${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>`;
-    const who = m.author === "user" ? "You" : m.author === "system" ? "" : authorName(m.author);
+    // In a DM it's clear who wrote, unless it was you.
+    const who = m.author === "user" ? "You" : m.author === "system" || c.dm ? "" : authorName(m.author);
     const t = byId(m.author);
     const what = {
       permission: "🔐 needs your OK",
@@ -175,7 +182,7 @@
     };
     const byLatest = (a, b) => ((S.previews[b.id] || {}).ts || 0) - ((S.previews[a.id] || {}).ts || 0);
     const q = S.filter.trim().toLowerCase();
-    const shown = S.channels.filter((c) => !q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q)));
+    const shown = S.channels.filter((c) => !c.dm && (!q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q))));
     const tagged = shown.some((c) => c.status && c.status !== "archived");
     const pins = shown.filter((c) => pinned.has(c.id) && c.status !== "archived").sort(byLatest);
     $("channels").innerHTML =
@@ -198,10 +205,20 @@
       ...S.sessions.filter((x) => x.busyIn).map((x) => x.agentId),
       ...S.channels.flatMap((c) => (c.jobs || []).filter((j) => j.status === "running").map((j) => j.agentId)),
     ]);
+    // Each teammate is a DM: click to write to them alone. Their settings are in the row's menu and the DM's header.
     $("people").innerHTML = S.roster
-      .map((t) => `<li><button class="chat-row person ${busy.has(t.id) ? "busy" : ""} ${S.view === t.id ? "active" : ""}" data-person="${t.id}" title="${esc(t.name)}'s settings" aria-haspopup="menu">
+      .map((t) => {
+        const c = dmWith(t.id);
+        const n = (c && S.unread[c.id]) || 0;
+        const last = c && S.previews[c.id];
+        const typing = c && Object.keys(S.activity[c.id] || {}).length;
+        const active = (S.view === "channel" && c && c.id === S.current) || S.view === t.id;
+        const prev = typing ? previewHtml(c) : busy.has(t.id) ? `<span class="c-typing">working…</span>` : last ? previewHtml(c) : esc(t.role);
+        return `<li><button class="chat-row person ${busy.has(t.id) ? "busy" : ""} ${active ? "active" : ""} ${n ? "unread" : ""}" data-person="${t.id}" title="Message ${esc(t.name)}" aria-haspopup="menu">
           <span class="c-av p-avatar" style="--c:${t.color}">${t.avatar}<span class="dot"></span></span>
-          <span class="c-main"><span class="c-top"><span class="c-name">${esc(t.name)}</span></span><span class="c-bot"><span class="c-prev">${busy.has(t.id) ? `<span class="c-typing">working…</span>` : esc(t.role)}</span></span></span></button></li>`)
+          <span class="c-main"><span class="c-top"><span class="c-name">${esc(t.name)}</span><span class="c-time">${last ? listTime(last.ts) : ""}</span></span>
+            <span class="c-bot"><span class="c-prev">${prev}</span>${c && muted.has(c.id) ? `<span class="c-icon" title="Muted">🔕</span>` : ""}${n ? `<span class="badge ${c && muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</span></span></button></li>`;
+      })
       .join("");
   }
   $("search").addEventListener("input", (e) => {
@@ -224,8 +241,22 @@
   });
   $("people").addEventListener("click", (e) => {
     const b = e.target.closest("[data-person]");
-    if (b) openAgent(b.dataset.person);
+    if (b) openDm(b.dataset.person);
   });
+
+  /** Your DM with a teammate: made the first time you open it. */
+  async function openDm(agentId) {
+    let c = dmWith(agentId);
+    if (!c) {
+      try {
+        c = await api(`/api/dms/${agentId}`, {});
+      } catch (err) {
+        return toast(err.message);
+      }
+      if (!S.channels.some((x) => x.id === c.id)) S.channels.push(c);
+    }
+    return openChannel(c.id);
+  }
   $("menu").addEventListener("click", () => $("app").classList.toggle("nav-open"));
 
   // ---------- Claude CLI sign-in ----------
@@ -290,13 +321,13 @@
       body = jobCard(channelOf(m), m.meta.jobId);
     } else if (m.kind === "permission") {
       const p = m.meta.permission;
-      const decided = { once: "✅ Allowed once", always: `✅ Allowed in #${esc(currentChannel().name)}`, denied: "🚫 Denied" }[p.status];
+      const decided = { once: "✅ Allowed once", always: `✅ Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "🚫 Denied" }[p.status];
       body = `<div class="perm">
         <div class="perm-title">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} wants to use ${esc(p.tool)}</div>
         <code>${esc(p.summary)}</code>
         ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
           <button class="btn primary" data-perm="once" data-mid="${m.id}">Allow once</button>
-          <button class="btn" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this channel">Always in this channel</button>
+          <button class="btn" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${currentChannel().dm ? "DM" : "channel"}">Always in this ${currentChannel().dm ? "DM" : "channel"}</button>
           <button class="btn" data-perm="denied" data-mid="${m.id}">Deny</button></div>`}
       </div>`;
     } else if (m.kind === "tools") {
@@ -584,7 +615,11 @@
     const list = S.msgs[S.current] || [];
     const el = $("messages");
     if (!list.length) {
-      el.innerHTML = `<div class="empty"><div class="big">${S.roster.map((t) => t.avatar).join("")}</div>
+      const t = dmMate(currentChannel());
+      el.innerHTML = t
+        ? `<div class="empty"><div class="big">${t.avatar}</div>
+        This is the start of your DM with <b>${esc(t.name)}</b>. Only ${esc(t.name)} reads it, and only ${esc(t.name)} answers.</div>`
+        : `<div class="empty"><div class="big">${S.roster.map((t) => t.avatar).join("")}</div>
         This is the start of <b>#${esc(currentChannel().name)}</b>. Say hi, or @mention someone to give them a job.</div>`;
       return;
     }
@@ -702,6 +737,14 @@
   }
 
   function channelMenu(c) {
+    const t = dmMate(c);
+    if (c.dm) return [
+      t && { label: `${t.name}'s settings and memory`, icon: "⚙", run: () => openAgent(t.id) },
+      { label: muted.has(c.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(c.id) ? "🔔" : "🔕", run: () => (muted.toggle(c.id), renderSidebar(), updateTitle()) },
+      { sep: true },
+      { label: "Open the folder in Finder", icon: "📁", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
+      { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
+    ];
     const st = (id, label) => ({ label, checked: (c.status || "") === id, run: () => setStatus(c, id) });
     const n = S.unread[c.id] || 0;
     return [
@@ -728,8 +771,14 @@
   function personMenu(t) {
     const sid = S.sessions.find((x) => x.agentId === t.id)?.sessionId;
     const ch = currentChannel();
+    const dm = dmWith(t.id);
+    const n = (dm && S.unread[dm.id]) || 0;
     return [
-      ch && ch.status !== "archived" && { label: `Message @${t.name} in #${ch.name}`, icon: "@", run: () => (S.view !== "channel" ? openChannel(ch.id) : Promise.resolve()).then(() => mentionInComposer(t)) },
+      { label: `Message ${t.name}`, icon: "💬", run: () => openDm(t.id) },
+      ch && !ch.dm && ch.status !== "archived" && { label: `Message @${t.name} in #${ch.name}`, icon: "@", run: () => (S.view !== "channel" ? openChannel(ch.id) : Promise.resolve()).then(() => mentionInComposer(t)) },
+      dm && (n ? { label: "Mark as read", icon: "✓", run: () => ((S.unread[dm.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "●", run: () => ((S.unread[dm.id] = 1), unreadChanged()) }),
+      dm && { label: muted.has(dm.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(dm.id) ? "🔔" : "🔕", run: () => (muted.toggle(dm.id), renderSidebar(), updateTitle()) },
+      { sep: true },
       { label: "Settings and memory", icon: "⚙", run: () => openAgent(t.id) },
       { label: "Open the chat session in Claude", icon: "↗", disabled: !sid, run: () => openAgentSession(t.id) },
     ];
@@ -847,7 +896,7 @@
     if (!t) return "";
     const where = s.busyIn && S.channels.find((c) => c.id === s.busyIn);
     const status = s.busyIn
-      ? `<span class="s-live"><span class="s-pulse"></span>${where && where.id !== S.current ? `#${esc(where.name)} · ` : ""}${esc(s.activity || "thinking")}</span>`
+      ? `<span class="s-live"><span class="s-pulse"></span>${where && where.id !== S.current ? `${esc(chLabel(where))} · ` : ""}${esc(s.activity || "thinking")}</span>`
       : s.sessionId ? `<span>idle${s.lastAt ? ` · ${ago(s.lastAt)}` : ""}</span>` : `<span>starts on the first message</span>`;
     const waiting = s.queue.length ? ` · ${s.queue.length} channel${s.queue.length > 1 ? "s" : ""} waiting` : "";
     const cache = cacheShare(s);
@@ -875,7 +924,7 @@
     return `<li><button class="s-row" data-open-job="${j.id}" data-ch="${ch.id}" title="Open in the Claude app">
       <span class="s-av" style="--c:${t.color}">${t.avatar}</span>
       <span class="s-main">
-        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> ${j.kind === "chat" ? `#${esc(ch.name)}` : esc(j.title)}</span>
+        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> ${j.kind === "chat" ? esc(chLabel(ch)) : esc(j.title)}</span>
         <span class="s-sub">${j.kind === "job" ? `${esc(j.id)} · ` : "chat · "}${status}</span>
       </span>
       <span class="s-side"><span class="s-open" aria-hidden="true">↗</span></span>
@@ -892,7 +941,7 @@
     $("sessions-count").textContent = working ? `${working} working` : "";
     $("sessions").innerHTML = `<div class="s-head"><b>Chat sessions</b><span>TeamAgents</span></div>
       <ul>${S.sessions.map(sessionRow).join("")}</ul>
-      <div class="s-head s-head2"><b>Jobs</b><span>in #${esc(ch.name)}</span></div>
+      <div class="s-head s-head2"><b>Jobs</b><span>in ${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</span></div>
       ${jobs.length ? "" : `<p class="s-empty">No jobs yet. When a teammate starts one, its Claude Code session shows up here.</p>`}
       ${live.length ? `<div class="s-group">Running</div><ul>${live.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
       ${rest.length ? `<div class="s-group">Recent</div><ul>${rest.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
@@ -955,7 +1004,7 @@
     store.set("harmonia:channel", id);
     showView("channel");
     const c = currentChannel();
-    $("input").placeholder = `Message #${c.name}`;
+    $("input").placeholder = `Message ${chLabel(c)}`;
     renderSubtitle();
     renderStatus();
     renderTask();
@@ -974,7 +1023,7 @@
   function renderTask() {
     const c = currentChannel();
     if (!c) return;
-    $("ch-task").innerHTML = c.task
+    $("ch-task").innerHTML = c.dm ? "" : c.task
       ? `<button class="task-pill big" data-open-task title="Open ${esc(c.task.id)} in Chrome">${esc(c.task.id)} <span aria-hidden="true">↗</span></button><button class="task-edit" data-edit-task title="Change or remove the task" aria-label="Change the ClickUp task">✎</button>`
       : `<button class="task-add" data-edit-task title="Tag this channel with a ClickUp task">+ ClickUp task</button>`;
   }
@@ -1031,8 +1080,10 @@
     renderAttachBar();
     $("ch-status").hidden = !c.status;
     $("ch-status").innerHTML = c.status ? `<span class="status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}` : "";
-    $("ch-name").textContent = c.name;
-    $("ch-av").style.setProperty("--c", chColor(c));
+    const t = dmMate(c);
+    $("ch-name").textContent = t ? t.name : c.name;
+    $("ch-av").textContent = t ? t.avatar : "#";
+    $("ch-av").style.setProperty("--c", t ? t.color : chColor(c));
   }
   async function setStatus(c, status) {
     try {
@@ -1058,10 +1109,11 @@
     const el = $("ch-folder");
     el.classList.toggle("typing-now", typing.length > 0);
     const link = (S.slackLinks || []).find((l) => l.channelId === c.id);
-    const where = link && (link.kind === "dm" ? "your Slack DM" : link.kind === "group" ? "a Slack group DM" : `Slack #${link.name || "channel"}`);
+    const t = dmMate(c);
+    const where = link && (link.kind === "dm" ? "your Slack DM" : link.kind === "mate" ? `your Slack DM with ${t ? t.name : "them"}` : link.kind === "group" ? "a Slack group DM" : `Slack #${link.name || "channel"}`);
     el.textContent = typing.length
-      ? `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
-      : `${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to ${where}` : ""}`;
+      ? c.dm ? "typing…" : `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
+      : `${t ? `${t.role} · ` : ""}${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to ${where}` : ""}`;
     el.title = c.cwd;
   }
 
@@ -1426,7 +1478,7 @@
     const ok = canDrop() && !!e.target.closest?.("#channel-view");
     e.dataTransfer.dropEffect = ok ? "copy" : "none";
     if (ok) {
-      $("drop-where").textContent = `#${currentChannel().name}`;
+      $("drop-where").textContent = chLabel(currentChannel());
       $("drop-zone").hidden = false;
     }
     clearTimeout(dropHide);
@@ -1579,7 +1631,7 @@
     // A muted channel stays quiet, except when a teammate is stuck waiting for your OK.
     if (muted.has(channelId) && m.kind !== "permission" && m.kind !== "tools") return;
     const c = S.channels.find((x) => x.id === channelId);
-    const where = c ? ` · #${c.name}` : "";
+    const where = c && !c.dm ? ` · #${c.name}` : "";
     if (m.kind === "permission") return showNotification(channelId, `${t.avatar} ${t.name} needs your OK${where}`, `wants to use ${m.meta.permission.tool}`, true);
     if (m.kind === "tools") return showNotification(channelId, `${t.avatar} ${t.name} asks for a tool${where}`, `${m.meta.toolRequest.tools.map((x) => x.name).join(", ")}: ${m.meta.toolRequest.reason}`, true);
     if (m.kind === "error") return showNotification(channelId, `⚠️ ${t.name} hit an error${where}`, plain(m.text), false);
@@ -1592,7 +1644,7 @@
     const t = byId(job.agentId);
     const c = S.channels.find((x) => x.id === channelId);
     const what = { done: "finished", failed: "failed", stopped: "stopped", blocked: "needs permission" }[job.status] || job.status;
-    showNotification(channelId, `${t ? t.avatar + " " : ""}${job.id} ${what}${c ? ` · #${c.name}` : ""}`, job.title, job.status === "failed" || job.status === "blocked");
+    showNotification(channelId, `${t ? t.avatar + " " : ""}${job.id} ${what}${c ? ` · ${chLabel(c)}` : ""}`, job.title, job.status === "failed" || job.status === "blocked");
   }
 
   function setRoster(roster) {
@@ -1737,7 +1789,7 @@
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus };
+  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, openDm, chLabel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);

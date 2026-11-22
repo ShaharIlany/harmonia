@@ -42,7 +42,10 @@
           <div class="ag-sub"><span id="ag-role-preview">${esc(a.role)}</span> · <code>${esc(home(a.file))}</code></div>
         </div>
       </div>
-      ${back ? `<button class="btn" data-back>← #${esc(back.name)}</button>` : ""}
+      <div class="row-btns">
+        <button class="btn primary" data-message title="Your DM with ${esc(a.name)}">💬 Message</button>
+        ${back && back.dm !== a.id ? `<button class="btn" data-back>← ${esc(window.TeamApp.chLabel(back))}</button>` : ""}
+      </div>
     </header>
 
     <div class="ag-scroll">
@@ -309,6 +312,7 @@
   $("agent-view").addEventListener("click", (e) => {
     const t = e.target;
     if (t.closest("[data-back]")) return openChannel(S.current);
+    if (t.closest("[data-message]")) return agent && window.TeamApp.openDm(agent.id);
     if (t.closest("[data-menu]")) return $("app").classList.toggle("nav-open");
     const emoji = t.closest("[data-emoji]");
     if (emoji) {

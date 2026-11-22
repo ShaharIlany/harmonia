@@ -10,7 +10,7 @@ import type { ServerWebSocket } from "bun";
 import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
+import { CHANNEL_STATUSES, channels, createChannel, dmOf, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
@@ -311,14 +311,17 @@ Bun.serve({
         }
         return err ? json({ error: err, ...slackState() }, 400) : json(slackState());
       }
-      // The teammates' own Slack apps: make them (with a configuration token), connect one (its bot token), forget one.
-      const sm = p.match(/^\/api\/slack\/teammates\/(make|connect|forget)$/);
+      // The teammates' own Slack apps: make them (with a configuration token), connect one (its bot token), forget one,
+      // and let you DM one (its app-level token), or stop.
+      const sm = p.match(/^\/api\/slack\/teammates\/(make|connect|forget|dms|dms-off)$/);
       if (sm && post) {
         let err: string | undefined;
         try {
           const icons = body.icons && typeof body.icons === "object" ? Object.fromEntries(Object.entries(body.icons).map(([k, v]) => [k, String(v)])) : {};
           if (sm[1] === "make") err = await slack.makeMateApps(String(body.configToken ?? ""), icons);
           else if (sm[1] === "connect") err = await slack.connectMate(String(body.id ?? ""), String(body.botToken ?? ""));
+          else if (sm[1] === "dms") err = await slack.connectMateDms(String(body.id ?? ""), String(body.appToken ?? ""));
+          else if (sm[1] === "dms-off") err = await slack.stopMateDms(String(body.id ?? ""));
           else err = await slack.forgetMate(String(body.id ?? ""));
         } catch (e) {
           err = (e as Error).message;
@@ -337,6 +340,19 @@ Bun.serve({
         const ch = createChannel(name, cwd);
         broadcast({ type: "channel", channel: ch });
         slack.channelAdded(ch); // a private Slack channel for it, when Slack is connected
+        return json(ch);
+      }
+
+      // Your DM with a teammate: made the first time you open it.
+      const dm = p.match(/^\/api\/dms\/([a-z0-9_-]+)$/);
+      if (dm && post) {
+        if (!teammate(dm[1])) return json({ error: "No such teammate." }, 404);
+        let ch = dmOf(dm[1]);
+        if (!ch) {
+          ch = createChannel(`dm ${dm[1]}`, DEFAULT_CWD, dm[1]);
+          broadcast({ type: "channel", channel: ch });
+          slack.channelAdded(ch); // linked to your Slack DM with the teammate's own app, when it takes DMs
+        }
         return json(ch);
       }
 
