@@ -60,7 +60,7 @@ import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
 import { channels, createChannel, dmOf, messages, saveChannels, saveMessages, type Channel, type ChannelStatus, type Message, type SlackRef } from "./store";
 import type { Event } from "./team";
 import { claudeProjects, parentOf, projectOf, tilde, type Project } from "./projects";
-import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, type Envelope, type SocketState } from "./slack-socket";
+import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, socketAppId, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
 import { ChannelMarks } from "./slack-marks";
 
@@ -716,21 +716,16 @@ export class SlackBridge {
     const lacking = scopes ? MATE_DM_SCOPES.filter((x) => !scopes.includes(x)) : [];
     if (lacking.length)
       return `${t.name}'s app can't take DMs yet: its token is missing ${lacking.join(", ")}. Update the teammates' apps (the configuration token above), then reinstall ${t.name}'s app (App settings → Install App → Reinstall to Workspace) and try again.`;
-    let url: string;
+    // Which app the token is for: Slack names it when a socket opens. Harmonia's own token here would split Harmonia's
+    // events between two sockets.
+    let appId: string | undefined;
     try {
-      url = String((await slackCall(appToken, "apps.connections.open")).url ?? "");
+      appId = await socketAppId(appToken);
     } catch (e: any) {
       if (e instanceof SlackError && e.code === "missing_scope") return "The app-level token needs the connections:write scope. Make a new one with it.";
+      if (!(e instanceof SlackError)) return `Slack took the token, but its socket didn't open (${e.message}). Try again in a moment.`;
       return `Slack didn't accept the app-level token: ${e.message}${isAuthError(e) ? "" : `. Is Socket Mode on for ${t.name}'s app? Update the teammates' apps above.`}`;
     }
-    // The socket's address names its app. Harmonia's own token here would split Harmonia's events between two sockets.
-    const appId = (() => {
-      try {
-        return new URL(url).searchParams.get("app_id") ?? undefined;
-      } catch {
-        return undefined;
-      }
-    })();
     if (appId && appId === c.appId) return `That's ${APP_NAME}'s own app-level token. Make one in ${t.name}'s app (App settings → Basic Information → App-Level Tokens).`;
     const other = appId && Object.entries(c.teammates!).find(([k, a]) => k !== id && a.appId === appId);
     if (other) return `That's ${nameOf(other[0])}'s app-level token. Make one in ${t.name}'s app.`;

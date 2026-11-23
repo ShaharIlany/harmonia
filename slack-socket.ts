@@ -85,6 +85,41 @@ async function request(token: string, method: string, params: Record<string, unk
   }
 }
 
+/**
+ * Which app an app-level token is for. Slack names it ("A…") in the hello of a socket opened with the token; the
+ * app_id in the socket's address is something else. That socket acks nothing, so an event sent to it meanwhile
+ * comes again on another connection.
+ */
+export async function socketAppId(appToken: string): Promise<string | undefined> {
+  const { url } = await slackCall(appToken, "apps.connections.open");
+  return new Promise<string | undefined>((resolve, reject) => {
+    const ws = new WebSocket(String(url));
+    let settled = false;
+    // Settled before the close, which can call onclose at once.
+    const done = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      settle();
+      try {
+        ws.close();
+      } catch {}
+    };
+    const timer = setTimeout(() => done(() => reject(new Error(`no hello from Slack within ${HELLO_TIMEOUT / 1000} s`))), HELLO_TIMEOUT);
+    ws.onmessage = (e) => {
+      let m: any;
+      try {
+        m = JSON.parse(String(e.data));
+      } catch {
+        return;
+      }
+      if (m?.type === "hello") done(() => resolve(m.connection_info?.app_id ? String(m.connection_info.app_id) : undefined));
+    };
+    ws.onclose = (e) => done(() => reject(new Error(`the socket closed (${e.code})`)));
+    ws.onerror = () => {}; // onclose follows
+  });
+}
+
 // ---------- One WebSocket connection ----------
 
 class Connection {
