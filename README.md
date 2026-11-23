@@ -309,7 +309,7 @@ Jobs and memories stay.
   teammate's turn shows `Alex (replying to Leo's message "…"): text`.
 - **Tool requests:** a teammate that lacks a tool calls `request_tool` (a
   team tool, like `start_job`). `tool-catalog.ts` resolves the names (built-ins
-  plus the ClickUp and Microsoft 365 connector tools; typos get suggestions) and
+  plus the ClickUp, Microsoft 365 and Meetings connector tools; typos get suggestions) and
   an Approve / Deny card appears. Approve adds both names of each tool (app and
   CLI form; the app form's connector id is read from the agent files) to `~/.claude/agents/<id>.md`, so the teammate has it for good, in
   the chat and in jobs; either way it hears back as an event and carries on.

@@ -42,6 +42,11 @@ const CONNECTORS = [
       teams_create_chat teams_list_channel_messages teams_list_channels teams_list_chats teams_list_teams
       teams_reply_channel_message teams_send_channel_message teams_send_chat_message`.split(/\s+/),
   },
+  {
+    label: "Meetings",
+    cli: "mcp__claude_ai_Meetings__",
+    tools: `list_meetings get_meeting get_meeting_action_items get_meeting_transcript follow_meeting_transcript`.split(/\s+/),
+  },
 ];
 
 type Connector = (typeof CONNECTORS)[number];
