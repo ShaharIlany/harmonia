@@ -1,3 +1,4 @@
+import type { Subprocess } from "bun";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { USER_NAME } from "./roster";
@@ -15,6 +16,8 @@ export type RunResult = {
   cacheRead?: number; // the part of inputTotal served from the prompt cache
   context?: number; // conversation size at the turn's last API call
   denials: Denial[];
+  answered?: boolean; // it gave its answer, even if it was stopped or closed after that
+  leftRunning?: string[]; // closed after its answer because of these background tasks, still running
 };
 export type RunOptions = {
   agentId: string;
@@ -29,6 +32,11 @@ export type RunOptions = {
   onText?: (text: string) => void; // the session's own words between tool calls (not its subagents')
   onTool?: (name: string, input: Record<string, any>) => void; // each tool call of the session itself
   onToolResult?: (text: string, isError: boolean) => void; // what came back
+  /**
+   * It gave its answer, and these background tasks it started are still running (claude -p doesn't exit until they
+   * end). Called again with undefined if one of them wakes it for another turn.
+   */
+  onAnswered?: (leftRunning: string[] | undefined) => void;
   /** A chat turn: no agent file and no built-in tools, only the MCP servers in mcpConfig. */
   chat?: { model: string; effort: string; mcpConfig: string; tools?: string[] };
   ephemeral?: boolean; // don't save the session (dry runs)
@@ -130,6 +138,41 @@ function ruleFor(tool: string, input: Record<string, any> = {}): string {
   return tool === "Bash" && input.command ? `Bash(${input.command})` : tool;
 }
 
+/**
+ * How long a run may stay open after its answer, for background tasks it left running (HARMONIA_LINGER_MINUTES).
+ * claude -p waits for them, and one that never ends (a dev server, a browser driver) would hold it open for good.
+ * A task that ends in time wakes it for another turn, whose answer adds to the first.
+ */
+const lingerMinutes = Number(setting("LINGER_MINUTES"));
+export const LINGER_MS = (lingerMinutes > 0 ? lingerMinutes : 10) * 60_000;
+
+/** Every process under pid: its children, theirs, and so on. */
+function descendants(pid: number): number[] {
+  const kids = new Map<number, number[]>();
+  for (const line of Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString().trim().split("\n")) {
+    const [p, parent] = line.trim().split(/\s+/).map(Number);
+    if (!kids.has(parent)) kids.set(parent, []);
+    kids.get(parent)!.push(p);
+  }
+  const all: number[] = [];
+  const walk = (p: number) => kids.get(p)?.forEach((k) => (all.push(k), walk(k)));
+  walk(pid);
+  return all;
+}
+
+/** Stops a run and what it started. Claude Code ends its own shells; anything still up after that is stopped too. */
+function stopTree(proc: Subprocess) {
+  const started = descendants(proc.pid);
+  proc.kill();
+  setTimeout(() => {
+    for (const p of started) {
+      try {
+        process.kill(p);
+      } catch {} // already gone
+    }
+  }, 3000);
+}
+
 export function runAgent(o: RunOptions): Run {
   if (setting("STUB")) return stubRun(o);
 
@@ -177,6 +220,12 @@ export function runAgent(o: RunOptions): Run {
 
   const done = (async (): Promise<RunResult> => {
     let final: any;
+    const answers: string[] = []; // every answer: a background task that ends can wake it for another one
+    const denials = new Map<string, Denial>();
+    let tasks: string[] = []; // the background tasks running now
+    let linger: Timer | undefined;
+    let answered = false; // and not woken since
+    let leftRunning: string[] | undefined;
     let lastText = "";
     let context: number | undefined;
     let buf = "";
@@ -193,6 +242,13 @@ export function runAgent(o: RunOptions): Run {
           ev = JSON.parse(line);
         } catch {
           continue;
+        }
+        if (ev.subtype === "background_tasks_changed") tasks = (ev.tasks ?? []).map((t: any) => String(t.description || "a background task"));
+        if (answered && (ev.subtype === "init" || ev.type === "assistant")) {
+          // A background task ended and woke it: it's working again.
+          answered = false;
+          clearTimeout(linger);
+          o.onAnswered?.(undefined);
         }
         if (ev.type === "assistant") {
           const u = ev.message?.usage;
@@ -214,10 +270,24 @@ export function runAgent(o: RunOptions): Run {
             o.onToolResult(text, !!c.is_error);
           }
         } else if (ev.type === "rate_limit_event") readUsage(ev.rate_limit_info);
-        else if (ev.type === "result") final = ev;
+        else if (ev.type === "result") {
+          final = ev;
+          const text = String(ev.result ?? "").trim();
+          if (text && !ev.is_error && !answers.includes(text)) answers.push(text);
+          for (const d of ev.permission_denials ?? []) {
+            const rule = ruleFor(d.tool_name, d.tool_input);
+            denials.set(rule, { tool: d.tool_name, rule, summary: describeTool(d.tool_name, d.tool_input) });
+          }
+          // Done. If what it left running keeps the process open, close it after a while: the answer is in.
+          answered = true;
+          clearTimeout(linger);
+          linger = setTimeout(() => ((leftRunning = tasks.length ? tasks : ["a background process"]), stopTree(proc)), LINGER_MS);
+          o.onAnswered?.(tasks);
+        }
       }
     }
     await proc.exited;
+    clearTimeout(linger);
     if (!final) {
       const err = (await new Response(proc.stderr).text()).trim();
       return { text: err || `claude exited with code ${proc.exitCode}`, sessionId, isError: true, denials: [] };
@@ -225,23 +295,21 @@ export function runAgent(o: RunOptions): Run {
     const u = final.usage ?? {};
     const inputTotal = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
     return {
-      text: (final.result ?? lastText ?? "").trim(),
+      text: answers.length ? answers.join("\n\n") : String(final.result ?? lastText ?? "").trim(),
       sessionId: final.session_id ?? sessionId,
-      isError: !!final.is_error,
+      isError: !answers.length && !!final.is_error,
       cost: final.total_cost_usd,
       tokens: inputTotal + (u.output_tokens ?? 0),
       inputTotal,
       cacheRead: u.cache_read_input_tokens ?? 0,
       context,
-      denials: (final.permission_denials ?? []).map((d: any) => ({
-        tool: d.tool_name,
-        rule: ruleFor(d.tool_name, d.tool_input),
-        summary: describeTool(d.tool_name, d.tool_input),
-      })),
+      denials: [...denials.values()],
+      answered: answers.length > 0,
+      ...(leftRunning && { leftRunning }),
     };
   })();
 
-  return { done, stop: () => proc.kill() };
+  return { done, stop: () => stopTree(proc) };
 }
 
 /** HARMONIA_STUB=1: canned replies, for trying the UI without spending a run. */

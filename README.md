@@ -267,6 +267,17 @@ Jobs and memories stay.
   steps: its narration, tool calls and results. The chat session isn't
   involved, and teammates don't read these updates as chat lines. If the call
   fails, the update falls back to the job's latest words and current step.
+- **Leftovers:** `claude -p` doesn't exit while a background command it
+  started is still running (a dev server, a browser driver), so a job that
+  has answered can stay open. Its update then says so once, instead of
+  repeating its last step. Ten minutes after the answer
+  (`HARMONIA_LINGER_MINUTES`), Harmonia closes the job with that answer and
+  stops what it started, and the report says so. A background command that
+  ends sooner wakes the job for another turn, and that answer adds to the
+  report. Stopping a job that has already answered counts as done: the
+  teammate gets the report, and no Allow cards are posted, since allowing one
+  would start the stopped job again. The job rules (job-rules.md) also tell
+  teammates to stop what they started before they report.
 - **Menus:** right-click (or Shift+F10 on) a message, a channel or a
   teammate. A message: react, reply, copy, try again, open or stop its job,
   message the teammate, and when it was sent and what it cost. A channel: mark
@@ -516,7 +527,7 @@ Jobs and memories stay.
 | `updates.ts` | Over-the-air updates: check for a release (or commits), get it in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
-| `runner.ts` | Runs `claude -p --agent …`, plus the stub used by `bun run stub` |
+| `runner.ts` | Runs `claude -p --agent …` (and closes a run that stays open after its answer), plus the stub used by `bun run stub` |
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `projects.ts` | Your Claude projects (the folders your Claude Code sessions run in), for a channel's folder |
 | `agents.ts` | Reads and writes agent files and agent memories |

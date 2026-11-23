@@ -10,7 +10,7 @@ import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide } from "./mozart";
-import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
+import { chatToolsFor, LINGER_MS, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
 import {
   addMessage,
   agentSessions,
@@ -915,6 +915,12 @@ export class Team {
       },
       onTool: (name, input) => this.logStep(job, `ran ${name.replace(/^mcp__.*?__/, "")}: ${JSON.stringify(input)}`),
       onToolResult: (text, isError) => this.logStep(job, `${isError ? "error" : "result"}: ${text}`),
+      onAnswered: (leftRunning) => {
+        if (leftRunning) this.answered.set(job, { at: Date.now(), leftRunning });
+        else this.answered.delete(job);
+        job.activity = leftRunning ? `done; ${leftRunning.length ? `still running: ${leftRunning.join(", ")}` : "closing"}` : "back at work";
+        this.emitJob(ch, job);
+      },
     });
     this.jobRuns.set(key, run);
 
@@ -928,6 +934,7 @@ export class Team {
         if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
         this.jobRuns.delete(key);
+        this.answered.delete(job);
         const stopped = this.stopping.delete(key);
         // Cut off before Claude Code saved its session: start it again from its brief.
         if (!stopped && fresh !== undefined && r.isError && /no conversation found/i.test(r.text)) {
@@ -937,12 +944,16 @@ export class Team {
         job.cost += r.cost ?? 0;
         job.activity = undefined;
         job.endedAt = Date.now();
-        job.report = r.text;
-        job.status = stopped ? "stopped" : r.isError ? "failed" : r.denials.length ? "blocked" : "done";
+        job.report = r.leftRunning
+          ? `${r.text}\n\n_Harmonia closed this job ${Math.round(LINGER_MS / 60_000)} min after this report, because something it started was still running: ${r.leftRunning.join(", ")}. It's stopped now._`
+          : r.text;
+        // Stopped after it had answered: it was done, only waiting on something it left running. No Allow cards then,
+        // either: allowing one would start again a job you've just stopped.
+        job.status = stopped ? (r.answered ? "done" : "stopped") : r.isError ? "failed" : r.denials.length ? "blocked" : "done";
         saveChannels();
         this.emitJob(ch, job);
 
-        for (const d of r.denials) {
+        if (!stopped) for (const d of r.denials) {
           this.post(ch, {
             author: job.agentId,
             kind: "permission",
@@ -960,6 +971,8 @@ export class Team {
   /** Recent steps of each running job (narration, tool calls, results), for its status updates. */
   private jobLogs = new Map<Job, string[]>();
   private summarizing = new Set<Job>();
+  /** Running jobs that have answered and stay open only for background tasks they left running. */
+  private answered = new Map<Job, { at: number; leftRunning: string[]; noted?: boolean }>();
 
   private logStep(job: Job, step: string) {
     const log = this.jobLogs.get(job) ?? [];
@@ -975,6 +988,19 @@ export class Team {
    */
   private async postJobStatus(ch: Channel, job: Job) {
     if (job.status !== "running" || ch.status === "archived" || this.summarizing.has(job)) return;
+    const waiting = this.answered.get(job);
+    if (waiting) {
+      // It's done, so its last steps would only repeat themselves: say once what holds it open.
+      if (waiting.noted) return;
+      waiting.noted = true;
+      const what = waiting.leftRunning.length ? waiting.leftRunning.join(", ") : "a background process";
+      const text =
+        `⏳ **${job.id}** · ${job.title} · ${Math.round((Date.now() - job.startedAt) / 60_000)} min\n` +
+        `I finished at ${time(waiting.at)}, and my report comes when the job closes. It's still open because something I ` +
+        `started is still running (${what}). If it still is at ${time(waiting.at + LINGER_MS)}, Harmonia stops it and closes the job.`;
+      this.post(ch, { author: job.agentId, kind: "status", text, meta: { jobId: job.id } });
+      return;
+    }
     this.summarizing.add(job);
     try {
       const minutes = Math.round((Date.now() - job.startedAt) / 60_000);
