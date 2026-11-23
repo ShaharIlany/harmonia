@@ -16,6 +16,7 @@ export type Message = {
     replyTo?: { id: string; author: string; text: string }; // user messages: the message this one answers (text clipped)
     answers?: string; // teammate messages: the message its turn was woken for (Slack puts it in that message's thread)
     files?: Attachment[]; // files attached to it (attachments.ts): yours, from the app or Slack, or a guest's in Slack
+    voice?: { language: string }; // a voice note from Slack: its text is what was said, in this language (voice.ts)
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
     toolRequest?: {

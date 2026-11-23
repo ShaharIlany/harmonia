@@ -422,6 +422,19 @@ Jobs and memories stay.
     you type in the app), since Harmonia's bot isn't in it. Someone else who
     DMs her app gets "I only work for …". **Turn off DMs** forgets the token;
     the DM here stays.
+  - **Voice messages:** record one in Slack (your DM with Harmonia or with a
+    teammate, or a linked channel) and its words are your message, as if you'd
+    typed them; the audio stays attached. macOS's own on-device dictation
+    (macOS 26 and later) does it, so nothing leaves the Mac and there's nothing
+    to set up: `voice.ts` runs the app's `harmonia-transcribe`
+    (`macapp/transcribe.swift`). It tries each of the Mac's preferred languages
+    and keeps the one it's surest of (`voiceLanguages` in `settings.json`, like
+    `["he-IL", "en-US"]`, picks them instead). A WebM recording goes through
+    ffmpeg when it's installed, or Slack's own MP4 copy of the clip. The
+    teammates read it marked as a voice message, since dictation can mishear a
+    word, and a voice message doesn't change the conversation's language: it
+    goes on in the language the conversation (or its thread) started in. When
+    the audio can't be made out, Harmonia says why in Slack.
   - **Replies:** reply in a Slack thread to a message and it's a reply to that
     message here: a reply to a teammate goes to them, and
     the answers come back in the thread. A reply you type in the app goes in

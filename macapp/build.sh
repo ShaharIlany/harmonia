@@ -45,6 +45,14 @@ xcrun swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/Harmonia" macapp/main.s
   -framework Cocoa -framework WebKit -framework UserNotifications
 cp macapp/Info.plist "$APP/Contents/Info.plist"
 
+# Voice messages from Slack (voice.ts): macOS's on-device dictation, which needs the macOS 26 SDK (Xcode 26) to build.
+# Without it the app still builds, and a voice note reaches the teammates as an audio file they can't listen to.
+echo "› transcriber"
+if ! xcrun swiftc -O -swift-version 5 -o "$APP/Contents/Resources/harmonia-transcribe" macapp/transcribe.swift \
+  -framework Speech -framework AVFoundation 2>build/transcribe.log; then
+  echo "  ! no transcriber: this Xcode has no macOS 26 SDK (see build/transcribe.log). Voice messages stay audio files."
+fi
+
 # What the About panel shows: "Version <CFBundleShortVersionString> (<CFBundleVersion>)". A release gets its version
 # and commit, "2.1.3 (1a2b3c4)"; a build from source the newest version tag it's built on, with how many commits it's
 # past that, "2.1.3+4 (1a2b3c4-dirty)". Info.plist's own 1.0 is only for a build outside a git checkout.

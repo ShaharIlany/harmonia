@@ -404,6 +404,16 @@
     return `<div class="routed" title="${tip}">${text}</div>`;
   }
 
+  /** A language's name in English: "Hebrew" for "he-IL". */
+  function langName(tag) {
+    const code = String(tag || "").split(/[-_]/)[0];
+    try {
+      return new Intl.DisplayNames(["en"], { type: "language" }).of(code) || code;
+    } catch {
+      return code;
+    }
+  }
+
   /** Message details: when, what it cost. The bubble's time tooltip and the menu's last line. */
   function msgInfo(m) {
     const d = new Date(m.ts);
@@ -412,6 +422,7 @@
       m.meta && m.meta.tokens && `${m.meta.tokens.toLocaleString()} tokens`,
       m.meta && m.meta.cached !== undefined && `${Math.round(m.meta.cached * 100)}% cached`,
       m.meta && m.meta.via === "slack" && "from Slack",
+      m.meta && m.meta.voice && `voice message in ${langName(m.meta.voice.language)}, transcribed`,
       m.meta && m.meta.via === "teams" && "from Microsoft Teams",
     ].filter(Boolean).join(" · ");
   }

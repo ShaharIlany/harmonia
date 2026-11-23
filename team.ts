@@ -6,6 +6,7 @@ import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
 import { filesLines, type Attachment } from "./attachments";
+import { languageName, type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
@@ -137,12 +138,33 @@ function line(m: Message, channelId?: string): string {
   if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
   if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
   const files = m.meta?.files?.length ? (channelId ? filesLines(channelId, m.meta.files) : ` (attached: ${m.meta.files.map((f) => f.name).join(", ")})`) : "";
-  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"}): ${m.text}${files}`;
+  const voice = m.meta?.voice ? ` (voice message in ${languageName(m.meta.voice.language)}, transcribed by speech recognition, so a word may be misheard)` : "";
+  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"})${voice}: ${m.text}${files}`;
   const re = m.meta?.replyTo;
   // A teammate's emoji on your message (instead of a turn, or as its whole answer): it's been answered.
   const reacted = m.author === "user" ? (m.meta?.reactions ?? []).filter((x) => teammate(x.by)).map((x) => `${nameOf(x.by)} ${x.emoji}`) : [];
   const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
-  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
+  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}${voice}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
+}
+
+/**
+ * A voice message doesn't change the conversation's language: it goes on in the language it started in. The
+ * conversation is the thread the voice message replies in (its first message), else the channel. Empty when the voice
+ * message starts it, or it started in the same language.
+ */
+function keepLanguage(all: Message[], voiced: Message): string {
+  const said = (m: Message) => (m.author === "user" || teammate(m.author)) && (!m.kind || m.kind === "text") && !m.meta?.interim && !!m.text.trim();
+  const root = voiced.meta?.replyTo && all.find((m) => m.id === voiced.meta!.replyTo!.id);
+  const first = root && said(root) ? root : all.find(said);
+  const spoken = voiced.meta!.voice!.language;
+  if (!first || first.id === voiced.id) return "";
+  const lang = (tag: string) => tag.split(/[-_]/)[0].toLowerCase();
+  if (first.meta?.voice) {
+    if (lang(first.meta.voice.language) === lang(spoken)) return "";
+    return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but this conversation started in ${languageName(first.meta.voice.language)}: keep writing in ${languageName(first.meta.voice.language)}.`;
+  }
+  const opening = first.text.replace(/\s+/g, " ").trim().slice(0, 160);
+  return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but keep writing in the language this ${root ? "thread" : "conversation"} started in, the language of its first message: "${opening}".`;
 }
 
 // First start with TeamAgents chat sessions: they're new, so each teammate re-reads each channel's recent messages.
@@ -281,12 +303,13 @@ export class Team {
    * anything else, the channel's Mozart decides. Either way Mozart may make it a reaction instead of a turn. In a DM,
    * it goes to the DM's teammate, whoever it names: nobody else is there.
    */
-  userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef; files?: Attachment[] } = {}): Message {
+  userMessage(ch: Channel, text: string, replyToId?: string, from: { via?: "slack"; slack?: SlackRef; files?: Attachment[]; voice?: Voice } = {}): Message {
     const target = replyToId ? messages.get(ch.id)?.find((m) => m.id === replyToId) : undefined;
     const replyTo = target && { id: target.id, author: target.author, text: replyText(target).slice(0, 300) };
     const meta = {
       ...(replyTo && { replyTo }),
       ...(from.files?.length && { files: from.files }),
+      ...(from.voice && { voice: from.voice }),
       ...(from.via && { via: from.via }),
       ...(from.slack && { slack: from.slack }),
     };
@@ -310,9 +333,9 @@ export class Team {
    * Someone else's message in a linked Slack conversation. It's context for the teammates and Mozart (they read it
    * with the rest of the channel), but it never wakes anyone: the teammates work for you.
    */
-  guestMessage(ch: Channel, name: string, text: string, slackId?: string, slack?: SlackRef, files?: Attachment[]) {
+  guestMessage(ch: Channel, name: string, text: string, slackId?: string, slack?: SlackRef, files?: Attachment[], voice?: Voice) {
     const guest = { name: name.slice(0, 80) || "Someone", ...(slackId && { slackId }) };
-    return this.post(ch, { author: "guest", text, meta: { guest, ...(files?.length && { files }), via: "slack", ...(slack && { slack }) } });
+    return this.post(ch, { author: "guest", text, meta: { guest, ...(files?.length && { files }), ...(voice && { voice }), via: "slack", ...(slack && { slack }) } });
   }
 
   /**
@@ -598,7 +621,9 @@ export class Team {
     const where = `${placeOf(ch)} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
     const lines = [...fresh.map((m) => line(m, ch.id)), ...events];
-    const prompt = `${intro}\n${lines.join("\n")}\n\nWrite your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you.`;
+    const voiced = fresh.findLast((m) => m.author === "user" && m.meta?.voice);
+    const language = voiced ? keepLanguage(all, voiced) : "";
+    const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you.`;
 
     const had = agentSessions[agentId];
     const resume = !!had;

@@ -55,8 +55,8 @@ function setReaction(ch: Channel, msg: Message, emoji: string | undefined) {
 // Slack (slack.ts): one Slack app the teammates talk through, your DM with it, and linked channels and group DMs.
 const slack = new SlackBridge({
   emit: broadcast,
-  post: (ch, text, from) => team.userMessage(ch, text, from.replyTo, { via: "slack", slack: from.slack, files: from.files }),
-  guest: (ch, name, text, slackId, ref, files) => team.guestMessage(ch, name, text, slackId, ref, files),
+  post: (ch, text, from) => team.userMessage(ch, text, from.replyTo, { via: "slack", slack: from.slack, files: from.files, voice: from.voice }),
+  guest: (ch, name, text, slackId, ref, files, voice) => team.guestMessage(ch, name, text, slackId, ref, files, voice),
   note: (ch, text) => void team.post(ch, { author: "system", text, meta: { via: "slack" } }),
   react: setReaction,
   feedback: (ch, messageId, text) => team.feedback(ch, messageId, text, { via: "slack" }),

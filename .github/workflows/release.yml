@@ -40,6 +40,14 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tags look like v1.2.3, not $GITHUB_REF_NAME"; exit 1; }
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
+      # The transcriber for voice messages (macapp/transcribe.swift) needs the macOS 26 SDK, which comes with Xcode 26.
+      - name: Xcode
+        run: |
+          X="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$X" ]; then sudo xcode-select -s "$X"; fi
+          xcodebuild -version
+          xcrun --show-sdk-version
+
       - name: Build the app
         run: |
           HARMONIA_VERSION="$VERSION" HARMONIA_BRANCH=main \
@@ -48,6 +56,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "build/Team Chat.app" Team-Chat-arm64.zip
           for z in Harmonia-arm64.zip Team-Chat-arm64.zip; do shasum -a 256 "$z" > "$z.sha256"; done
           cat build/Harmonia.app/Contents/Resources/build.json
+          [ -x build/Harmonia.app/Contents/Resources/harmonia-transcribe ] || echo "::warning::No transcriber in this build: voice messages from Slack stay audio files. $(cat build/transcribe.log 2>/dev/null | grep -m1 error)"
 
       - name: Publish the release
         run: |

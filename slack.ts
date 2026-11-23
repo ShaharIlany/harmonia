@@ -54,6 +54,7 @@
 // Kept in the data folder: slack.json (the workspace, the app, who it works for, the linked conversations, the
 // teammates' apps). The bot tokens and the app-level tokens are in the Keychain.
 import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DATA, DEFAULT_CWD } from "./paths";
 import { ROSTER, USER_NAME, nameOf, teammate, type Teammate } from "./roster";
@@ -63,6 +64,7 @@ import { claudeProjects, parentOf, projectOf, tilde, type Project } from "./proj
 import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, socketAppId, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
 import { ChannelMarks } from "./slack-marks";
+import { isVoice, transcribe, type Voice } from "./voice";
 
 const FILE = join(DATA, "slack.json");
 const KEYCHAIN_SERVICE = "Harmonia Slack";
@@ -243,7 +245,9 @@ export type Link = {
 };
 
 /** Your message in a channel still waiting for its project: it goes to the teammates once you pick one. */
-type Held = { text: string; slack: SlackRef; files?: Attachment[] };
+type Held = { text: string; slack: SlackRef; files?: Attachment[]; voice?: Voice };
+/** A Slack message's files, fetched: `voices` are the ones that are voice notes (voice.ts), `missed` what couldn't be. */
+type Fetched = { files: Attachment[]; voices: { file: Attachment; mp4?: string }[]; missed: string[]; noScope?: boolean };
 
 export type SlackView = {
   rev: number; // goes up with every change, so the page never takes an older view over a newer one
@@ -276,9 +280,9 @@ type Content = { markdown: string } | { text: string; blocks: unknown[] };
 type Deps = {
   emit: (e: SlackEvent) => void;
   /** Posts as you in a channel, exactly like typing it there (from Slack): maybe a reply to a message there, maybe with files. */
-  post: (ch: Channel, text: string, from: { replyTo?: string; slack: SlackRef; files?: Attachment[] }) => Message;
+  post: (ch: Channel, text: string, from: { replyTo?: string; slack: SlackRef; files?: Attachment[]; voice?: Voice }) => Message;
   /** Someone else's message in a linked Slack conversation: context only. */
-  guest: (ch: Channel, name: string, text: string, slackId: string | undefined, slack: SlackRef, files?: Attachment[]) => void;
+  guest: (ch: Channel, name: string, text: string, slackId: string | undefined, slack: SlackRef, files?: Attachment[], voice?: Voice) => void;
   /** A note in a channel (from Slack, so it isn't sent back there). */
   note: (ch: Channel, text: string) => void;
   /** Your reaction on a message (undefined takes it off), from Slack. */
@@ -1070,7 +1074,7 @@ export class SlackBridge {
       return this.say(ev.channel, `#${ch.name} is archived in Harmonia. Unarchive it there (or *${dm ? "" : `@${APP_NAME} `}status in progress* here) and write again.`, thread);
     const got = await this.readIn(ev, ch, raw, yours, thread);
     if (!got) return;
-    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), got.text, ev.user, got.slack, got.files);
+    if (!yours) return this.deps.guest(ch, await this.nameOf(ev.user), got.text, ev.user, got.slack, got.files, got.voice);
     const waiting = this.links[got.slack.channel];
     if (waiting?.awaitingProject) return this.hold(waiting, ch, got);
     this.forward(ch, got);
@@ -1085,24 +1089,66 @@ export class SlackBridge {
     return true;
   }
 
-  /** A Slack message as it lands here: its text as the teammates read it, and its files fetched. Undefined: nothing to read. */
+  /**
+   * A Slack message as it lands here: its text as the teammates read it, and its files fetched. A voice note's words
+   * are its text (voice.ts), with the audio still attached. Undefined: nothing to read.
+   */
   private async readIn(ev: any, ch: Channel, raw: string, yours: boolean, thread?: string): Promise<Held | undefined> {
     const where = String(ev.channel);
-    const got = await this.fetchFiles(ch, Array.isArray(ev.files) ? ev.files : [], this.tokenFor(where));
+    const token = this.tokenFor(where);
+    const got = await this.fetchFiles(ch, Array.isArray(ev.files) ? ev.files : [], token);
     let text = await this.chatText(raw);
+    const heard = await this.hear(ch, got.voices, token);
+    if (heard.text) text = [text, heard.text].filter(Boolean).join("\n\n");
+    if (heard.failed.length) {
+      text = [text, `(voice message, not transcribed: ${heard.failed.join("; ")})`].filter(Boolean).join("\n");
+      if (yours) this.say(where, `I couldn't make out your voice message: ${heard.failed.join("; ")}. The teammates get the audio file, which they can't listen to.`, thread);
+    }
     if (got.missed.length) text = [text, `(attached in Slack, not fetched: ${got.missed.join("; ")})`].filter(Boolean).join("\n");
     if (!text && !got.files.length) return void (yours && this.say(where, "I can only read text and files for now.", thread));
     const mate = this.links[where]?.mate;
     if (yours && got.noScope)
       this.say(where, `I couldn't fetch your file${got.missed.length > 1 ? "s" : ""} for the teammates: ${mate ? `${nameOf(mate)}'s app` : `the ${APP_NAME} app`} needs the files:read scope. Harmonia's Slack page shows how to update it.`, thread);
-    return { text, slack: { channel: where, ts: String(ev.ts), ...(thread && { thread }) }, files: got.files };
+    return { text, slack: { channel: where, ts: String(ev.ts), ...(thread && { thread }) }, files: got.files, ...(heard.language && { voice: { language: heard.language } }) };
+  }
+
+  /** The voice notes on a message as text, one after another, and the language they were spoken in. */
+  private async hear(ch: Channel, voices: Fetched["voices"], token: string): Promise<{ text: string; language?: string; failed: string[] }> {
+    const said: string[] = [];
+    const failed: string[] = [];
+    let language: string | undefined;
+    for (const v of voices) {
+      const started = Date.now();
+      const slackCopy = v.mp4 ? () => this.downloadTemp(v.mp4!, token) : undefined;
+      const r = await transcribe(attachmentPath(ch.id, v.file), v.file.type, slackCopy);
+      if ("text" in r) {
+        said.push(r.text);
+        language ??= r.language;
+        this.deps.log("slack.voice_transcribed", { file: v.file.slack, language: r.language, chars: r.text.length, ms: Date.now() - started });
+      } else {
+        failed.push(voices.length > 1 ? `${v.file.name}: ${r.error}` : r.error);
+        this.deps.log("slack.voice_failed", { file: v.file.slack, type: v.file.type, code: r.code, error: r.error });
+      }
+    }
+    return { text: said.join("\n\n"), language, failed };
+  }
+
+  /** A file from Slack into a temporary file, for a moment (Slack's MP4 copy of a voice clip). Slack's own hosts only. */
+  private async downloadTemp(url: string, token = this.botToken): Promise<string> {
+    const host = new URL(url).hostname;
+    if (!(host === "slack.com" || host.endsWith(".slack.com") || host === new URL(SLACK_API).hostname)) throw new Error(`it's not on Slack (${host})`);
+    const r = await fetch(url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(FILE_TIMEOUT) });
+    if (!r.ok || /^text\/html/i.test(r.headers.get("content-type") ?? "")) throw new Error(`Slack answered HTTP ${r.status}`);
+    const path = join(tmpdir(), `harmonia-voice-${crypto.randomUUID()}.mp4`);
+    writeFileSync(path, new Uint8Array(await r.arrayBuffer()));
+    return path;
   }
 
   /** Your message, to the teammates. The answers go where you wrote, into the thread or the channel itself: they answer this message (threadOf). */
   private forward(ch: Channel, h: Held) {
     this.inSlack.add(ch.id);
     const thread = h.slack.thread;
-    this.deps.post(ch, h.text, { replyTo: thread ? this.bySlack(ch.id, h.slack.channel, thread)?.id : undefined, slack: h.slack, files: h.files });
+    this.deps.post(ch, h.text, { replyTo: thread ? this.bySlack(ch.id, h.slack.channel, thread)?.id : undefined, slack: h.slack, files: h.files, voice: h.voice });
   }
 
   /**
@@ -1110,8 +1156,9 @@ export class SlackBridge {
    * be (a link to Google Drive, a file deleted since, one too big) is named in `missed`, with why. `noScope`: the app
    * was made before it could read files (files:read).
    */
-  private async fetchFiles(ch: Channel, list: any[], token = this.botToken): Promise<{ files: Attachment[]; missed: string[]; noScope?: boolean }> {
+  private async fetchFiles(ch: Channel, list: any[], token = this.botToken): Promise<Fetched> {
     const files: Attachment[] = [];
+    const voices: Fetched["voices"] = [];
     const missed: string[] = [];
     let noScope = false;
     for (let f of list.slice(0, MAX_FILES)) {
@@ -1132,7 +1179,10 @@ export class SlackBridge {
       else if (!url) missed.push(noScope ? `${name} (the Slack app needs files:read)` : name);
       else {
         try {
-          files.push({ ...(await this.download(ch.id, String(url), name, f.mimetype, token)), ...(f.id && { slack: String(f.id) }) });
+          const file: Attachment = { ...(await this.download(ch.id, String(url), name, f.mimetype, token)), ...(f.id && { slack: String(f.id) }) };
+          files.push(file);
+          // Slack keeps an MP4 of a recorded clip, which dictation can open when the original (WebM) can't be.
+          if (isVoice(f)) voices.push({ file, ...(typeof f.mp4 === "string" && { mp4: f.mp4 }) });
         } catch (e: any) {
           if (e?.code === "missing_scope") noScope = true;
           missed.push(`${name} (${e?.message ?? e})`);
@@ -1141,7 +1191,7 @@ export class SlackBridge {
       }
     }
     if (list.length > MAX_FILES) missed.push(`${list.length - MAX_FILES} more file${list.length - MAX_FILES > 1 ? "s" : ""} (up to ${MAX_FILES} on a message)`);
-    return { files, missed, noScope };
+    return { files, voices, missed, noScope };
   }
 
   /** One file from Slack, with the bot token (`token`: a teammate's, in your DM with its app). Slack's own hosts only: the token goes nowhere else. */

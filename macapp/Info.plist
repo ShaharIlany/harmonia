@@ -24,6 +24,8 @@
   <string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Harmonia turns the voice messages you send your teammates in Slack into text, on this Mac.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>
