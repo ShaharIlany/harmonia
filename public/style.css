@@ -1,6 +1,6 @@
 /* Laid out like WhatsApp: a chat list, a patterned wall with bubbles, a rounded composer. Coloured with the brand
-   (docs/brand/guidelines.md): graphite and cool greys, with no accent hue of its own. The teammates' colours (the
-   lyre's six strings) are the colour in the app. */
+   (docs/brand/guidelines.md): graphite and cool greys, with no accent hue of its own. The teammates' colours and the
+   lyre's six strings are the colour in the app. */
 :root {
   --bg: #ffffff; /* panels: the chat list, menus, dialogs */
   --text: #1b1d21;

@@ -563,10 +563,10 @@ work.
 ## Brand
 
 *Harmonia* first meant tuning a lyre's strings to each other, so the logo is a
-lyre whose six strings are the starter teammates' colours, on a thin graphite
-frame. The wordmark is Poppins, and the app is graphite and cool greys: the
-teammates are the colour. The logo, app icon, colours and usage rules are in
-[docs/brand](docs/brand/guidelines.md).
+solid lyre (white on dark, graphite on light) with six strings, red to violet.
+The app icon puts it on a navy sky with a soft halo. The wordmark is Poppins,
+and the app is graphite and cool greys: the strings are the colour. The logo,
+app icon, colours and usage rules are in [docs/brand](docs/brand/guidelines.md).
 
 ## License
 
