@@ -177,9 +177,16 @@ function serveFile(path: string, name: string, type: string) {
 /** Opens a CLI session in the Claude desktop app (it imports the session by id). */
 const openInClaude = (sessionId: string) => run(["open", `claude://resume?session=${sessionId}`]);
 
-/** A job's session in the Claude app (the page's button, and View in Claude in Slack). An error, if it couldn't. */
+/**
+ * A job's session in the Claude app (the page's button, and View in Claude in Slack). An error, if it couldn't.
+ * Not while the job runs: the app would resume the session next to the job's own run, answer its last step on its own
+ * and fork it, so the app shows a stopped copy and anything typed there runs beside the job.
+ */
 async function openJobSession(ch: Channel, jobId: string): Promise<string | undefined> {
-  const sid = team.jobSession(ch, jobId);
+  const job = team.findJob(ch, jobId);
+  if (job?.status === "running")
+    return `${jobId} is still running. Opening it in Claude now would start a second copy of its session that answers on its own and splits off from the job, so it opens once the job ends. Stop it first if you need it now.`;
+  const sid = job?.sessionId;
   if (!sid || !UUID.test(sid)) return "That session doesn't exist yet.";
   return (await openInClaude(sid)).code === 0 ? undefined : "Couldn't open the Claude app.";
 }

@@ -538,6 +538,8 @@
   // ---------- Job cards ----------
   const channelOf = () => currentChannel();
   const jobById = (ch, id) => ch && (ch.jobs || []).find((j) => j.id === id);
+  // The server refuses it too: the Claude app would fork a running job's session and answer in it on its own.
+  const OPEN_WHEN_DONE = "Opens in Claude once the job ends: the Claude app would fork a running job's session";
   const STATUS = {
     running: ["Running", "run"],
     done: ["Done", "ok"],
@@ -565,7 +567,7 @@
       <div class="job-sub">${j.status === "running" ? `<span class="job-act">${esc(j.activity || "starting")}</span> · ` : ""}${took}</div>
       ${j.report && j.status !== "running" ? `<details class="job-report"><summary>Report</summary><div class="text" dir="${textDir(j.report)}">${window.renderMarkdown(j.report, { people: S.people })}</div></details>` : ""}
       <div class="job-btns">
-        <button class="btn" data-open-job="${j.id}" data-ch="${ch.id}">Open in Claude ↗</button>
+        <button class="btn" data-open-job="${j.id}" data-ch="${ch.id}" ${j.status === "running" ? `disabled title="${OPEN_WHEN_DONE}"` : ""}>Open in Claude ↗</button>
         ${j.status === "running" ? `<button class="btn" data-stop-job="${j.id}">Stop</button>` : ""}
       </div>
     </div>`;
@@ -737,7 +739,7 @@
       m.meta?.replyTo && { label: "Show the quoted message", icon: "↑", run: () => gotoMessage(m.meta.replyTo.id) },
       m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "↻", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
       job && { sep: true },
-      job && { label: `Open ${job.id} in Claude`, icon: "↗", run: () => openJobSession(ch.id, job.id) },
+      job && { label: `Open ${job.id} in Claude`, icon: "↗", disabled: job.status === "running", run: () => openJobSession(ch.id, job.id) },
       job && job.status === "running" && { label: `Stop ${job.id}`, icon: "■", danger: true, run: () => api(`/api/channels/${S.current}/stop-job`, { jobId: job.id }).then((r) => toast(r.message), (err) => toast(err.message)) },
       t && { sep: true },
       t && !archived && { label: `Message @${t.name}`, icon: "@", run: () => mentionInComposer(t) },
@@ -932,7 +934,7 @@
     const status = j.status === "running"
       ? `<span class="s-live"><span class="s-pulse"></span>${esc(j.activity || "starting")}</span>`
       : `<span>${label.toLowerCase()} · ${ago(j.endedAt || j.startedAt)}</span>`;
-    return `<li><button class="s-row" data-open-job="${j.id}" data-ch="${ch.id}" title="Open in the Claude app">
+    return `<li><button class="s-row" data-open-job="${j.id}" data-ch="${ch.id}" title="${j.status === "running" ? OPEN_WHEN_DONE : "Open in the Claude app"}">
       <span class="s-av" style="--c:${t.color}">${t.avatar}</span>
       <span class="s-main">
         <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> ${j.kind === "chat" ? esc(chLabel(ch)) : esc(j.title)}</span>
@@ -956,7 +958,7 @@
       ${jobs.length ? "" : `<p class="s-empty">No jobs yet. When a teammate starts one, its Claude Code session shows up here.</p>`}
       ${live.length ? `<div class="s-group">Running</div><ul>${live.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
       ${rest.length ? `<div class="s-group">Recent</div><ul>${rest.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
-      <p class="s-hint">Each teammate chats in every channel from one session in the TeamAgents project, and does the real work in job sessions. Click any of them to open it in the Claude app.</p>`;
+      <p class="s-hint">Each teammate chats in every channel from one session in the TeamAgents project, and does the real work in job sessions. Click one to open it in the Claude app; a running job opens once it ends.</p>`;
   }
 
   async function openAgentSession(agentId) {

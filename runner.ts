@@ -18,6 +18,7 @@ export type RunResult = {
   denials: Denial[];
   answered?: boolean; // it gave its answer, even if it was stopped or closed after that
   leftRunning?: string[]; // closed after its answer because of these background tasks, still running
+  closedAfter?: number; // with leftRunning: how long after its answer it was closed (ms)
 };
 export type RunOptions = {
   agentId: string;
@@ -34,9 +35,10 @@ export type RunOptions = {
   onToolResult?: (text: string, isError: boolean) => void; // what came back
   /**
    * It gave its answer, and these background tasks it started are still running (claude -p doesn't exit until they
-   * end). Called again with undefined if one of them wakes it for another turn.
+   * end); Harmonia closes it at closesAt if they still are. Called again with undefined if one of them wakes it for
+   * another turn.
    */
-  onAnswered?: (leftRunning: string[] | undefined) => void;
+  onAnswered?: (leftRunning: string[] | undefined, closesAt?: number) => void;
   /** A chat turn: no agent file and no built-in tools, only the MCP servers in mcpConfig. */
   chat?: { model: string; effort: string; mcpConfig: string; tools?: string[] };
   ephemeral?: boolean; // don't save the session (dry runs)
@@ -144,7 +146,19 @@ function ruleFor(tool: string, input: Record<string, any> = {}): string {
  * A task that ends in time wakes it for another turn, whose answer adds to the first.
  */
 const lingerMinutes = Number(setting("LINGER_MINUTES"));
-export const LINGER_MS = (lingerMinutes > 0 ? lingerMinutes : 10) * 60_000;
+const LINGER_MS = (lingerMinutes > 0 ? lingerMinutes : 10) * 60_000;
+/** The longest it waits for a background command's own timeout (a job can ask for any). */
+const MAX_WAIT_MS = 3 * 60 * 60_000;
+
+/**
+ * How long a run stays open after its answer, given when each background task still running stops by itself.
+ * A Bash command's `timeout` is kept in the background too: Claude Code stops it then and wakes the run, so wait until
+ * the last of those (and a minute for the wake). One with no limit (a dev server) may never end: LINGER_MS for that.
+ */
+function waitAfterAnswer(stopsAt: (number | undefined)[]) {
+  const last = Math.max(0, ...stopsAt.map((t) => (t ?? 0) + 60_000 - Date.now()));
+  return Math.min(MAX_WAIT_MS, Math.max(LINGER_MS, last));
+}
 
 /** Every process under pid: its children, theirs, and so on. */
 function descendants(pid: number): number[] {
@@ -222,10 +236,13 @@ export function runAgent(o: RunOptions): Run {
     let final: any;
     const answers: string[] = []; // every answer: a background task that ends can wake it for another one
     const denials = new Map<string, Denial>();
-    let tasks: string[] = []; // the background tasks running now
+    let tasks: { id: string; description: string }[] = []; // the background tasks running now
+    const timeouts = new Map<string, number>(); // Bash tool_use id → the timeout it asked for (ms)
+    const stopsAt = new Map<string, number>(); // background task id → when Claude Code stops it (its Bash timeout)
     let linger: Timer | undefined;
     let answered = false; // and not woken since
     let leftRunning: string[] | undefined;
+    let closedAfter = 0;
     let lastText = "";
     let context: number | undefined;
     let buf = "";
@@ -243,7 +260,9 @@ export function runAgent(o: RunOptions): Run {
         } catch {
           continue;
         }
-        if (ev.subtype === "background_tasks_changed") tasks = (ev.tasks ?? []).map((t: any) => String(t.description || "a background task"));
+        if (ev.subtype === "background_tasks_changed")
+          tasks = (ev.tasks ?? []).map((t: any) => ({ id: String(t.task_id), description: String(t.description || "a background task") }));
+        if (ev.subtype === "task_started" && timeouts.has(ev.tool_use_id)) stopsAt.set(String(ev.task_id), Date.now() + timeouts.get(ev.tool_use_id)!);
         if (answered && (ev.subtype === "init" || ev.type === "assistant")) {
           // A background task ended and woke it: it's working again.
           answered = false;
@@ -255,6 +274,7 @@ export function runAgent(o: RunOptions): Run {
           if (u && !ev.parent_tool_use_id) context = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
           for (const c of ev.message?.content ?? []) {
             if (c.type === "tool_use") {
+              if (c.name === "Bash" && Number(c.input?.timeout) > 0) timeouts.set(c.id, Number(c.input.timeout));
               o.onActivity(describeTool(c.name, c.input));
               if (!ev.parent_tool_use_id) o.onTool?.(c.name, c.input ?? {});
             }
@@ -281,8 +301,14 @@ export function runAgent(o: RunOptions): Run {
           // Done. If what it left running keeps the process open, close it after a while: the answer is in.
           answered = true;
           clearTimeout(linger);
-          linger = setTimeout(() => ((leftRunning = tasks.length ? tasks : ["a background process"]), stopTree(proc)), LINGER_MS);
-          o.onAnswered?.(tasks);
+          const running = tasks.map((t) => t.description);
+          const wait = waitAfterAnswer(tasks.map((t) => stopsAt.get(t.id)));
+          linger = setTimeout(() => {
+            leftRunning = running.length ? running : ["a background process"];
+            closedAfter = wait;
+            stopTree(proc);
+          }, wait);
+          o.onAnswered?.(running, Date.now() + wait);
         }
       }
     }
@@ -305,7 +331,7 @@ export function runAgent(o: RunOptions): Run {
       context,
       denials: [...denials.values()],
       answered: answers.length > 0,
-      ...(leftRunning && { leftRunning }),
+      ...(leftRunning && { leftRunning, closedAfter }),
     };
   })();
 

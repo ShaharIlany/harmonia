@@ -11,7 +11,7 @@ import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide } from "./mozart";
-import { chatToolsFor, LINGER_MS, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
+import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
 import {
   addMessage,
   agentSessions,
@@ -942,8 +942,8 @@ export class Team {
       },
       onTool: (name, input) => this.logStep(job, `ran ${name.replace(/^mcp__.*?__/, "")}: ${JSON.stringify(input)}`),
       onToolResult: (text, isError) => this.logStep(job, `${isError ? "error" : "result"}: ${text}`),
-      onAnswered: (leftRunning) => {
-        if (leftRunning) this.answered.set(job, { at: Date.now(), leftRunning });
+      onAnswered: (leftRunning, closesAt) => {
+        if (leftRunning) this.answered.set(job, { at: Date.now(), closesAt: closesAt ?? Date.now(), leftRunning });
         else this.answered.delete(job);
         job.activity = leftRunning ? `done; ${leftRunning.length ? `still running: ${leftRunning.join(", ")}` : "closing"}` : "back at work";
         this.emitJob(ch, job);
@@ -972,7 +972,7 @@ export class Team {
         job.activity = undefined;
         job.endedAt = Date.now();
         job.report = r.leftRunning
-          ? `${r.text}\n\n_Harmonia closed this job ${Math.round(LINGER_MS / 60_000)} min after this report, because something it started was still running: ${r.leftRunning.join(", ")}. It's stopped now._`
+          ? `${r.text}\n\n_Harmonia closed this job ${Math.round((r.closedAfter ?? 0) / 60_000)} min after this report, because something it started was still running: ${r.leftRunning.join(", ")}. It's stopped now._`
           : r.text;
         // Stopped after it had answered: it was done, only waiting on something it left running. No Allow cards then,
         // either: allowing one would start again a job you've just stopped.
@@ -999,7 +999,7 @@ export class Team {
   private jobLogs = new Map<Job, string[]>();
   private summarizing = new Set<Job>();
   /** Running jobs that have answered and stay open only for background tasks they left running. */
-  private answered = new Map<Job, { at: number; leftRunning: string[]; noted?: boolean }>();
+  private answered = new Map<Job, { at: number; closesAt: number; leftRunning: string[]; noted?: boolean }>();
 
   private logStep(job: Job, step: string) {
     const log = this.jobLogs.get(job) ?? [];
@@ -1024,7 +1024,7 @@ export class Team {
       const text =
         `⏳ **${job.id}** · ${job.title} · ${Math.round((Date.now() - job.startedAt) / 60_000)} min\n` +
         `I finished at ${time(waiting.at)}, and my report comes when the job closes. It's still open because something I ` +
-        `started is still running (${what}). If it still is at ${time(waiting.at + LINGER_MS)}, Harmonia stops it and closes the job.`;
+        `started is still running (${what}). If it still is at ${time(waiting.closesAt)}, Harmonia stops it and closes the job.`;
       this.post(ch, { author: job.agentId, kind: "status", text, meta: { jobId: job.id } });
       return;
     }
@@ -1089,8 +1089,8 @@ export class Team {
     }
   }
 
-  jobSession(ch: Channel, jobId: string) {
-    return ch.jobs.find((j) => j.id === jobId)?.sessionId;
+  findJob(ch: Channel, jobId: string) {
+    return ch.jobs.find((j) => j.id === jobId);
   }
 }
 

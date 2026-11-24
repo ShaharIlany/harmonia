@@ -270,14 +270,22 @@ Jobs and memories stay.
 - **Leftovers:** `claude -p` doesn't exit while a background command it
   started is still running (a dev server, a browser driver), so a job that
   has answered can stay open. Its update then says so once, instead of
-  repeating its last step. Ten minutes after the answer
-  (`HARMONIA_LINGER_MINUTES`), Harmonia closes the job with that answer and
-  stops what it started, and the report says so. A background command that
-  ends sooner wakes the job for another turn, and that answer adds to the
-  report. Stopping a job that has already answered counts as done: the
+  repeating its last step. Harmonia waits until the last of those commands
+  with a `timeout` of its own has reached it (Claude Code stops a background
+  command at its timeout and wakes the job), at most 3 hours, or ten minutes
+  after the answer (`HARMONIA_LINGER_MINUTES`) for commands without one. Then
+  it closes the job with that answer and stops what it started, and the
+  report says so. A background command that ends sooner wakes the job for
+  another turn, and that answer adds to the report. The job rules tell
+  teammates never to end a turn to wait for something, since a turn's end is
+  the job's report. Stopping a job that has already answered counts as done: the
   teammate gets the report, and no Allow cards are posted, since allowing one
   would start the stopped job again. The job rules (job-rules.md) also tell
   teammates to stop what they started before they report.
+- **Open in Claude:** a job's session opens in the Claude app from its card,
+  its message menu, the sidebar or View in Claude in Slack, once the job has
+  ended. Not while it runs: the app would resume the session next to the
+  job's own run, answer the last step on its own and fork the session.
 - **Menus:** right-click (or Shift+F10 on) a message, a channel or a
   teammate. A message: react, reply, copy, try again, open or stop its job,
   message the teammate, and when it was sent and what it cost. A channel: mark
