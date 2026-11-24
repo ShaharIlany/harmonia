@@ -81,7 +81,7 @@ const childEnv = () => {
 
 /** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
 export async function quickAnswer(system: string, prompt: string, cwd: string): Promise<string> {
-  if (setting("STUB")) return "(stub) I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
+  if (setting("STUB")) return "(stub) ETA ~5 min: I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
       "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),

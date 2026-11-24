@@ -31,6 +31,8 @@ import {
 
 /** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
 const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
+/** How many of a job's earlier status updates its next one is written against. */
+const STATUS_HISTORY = 6;
 /** Agent turns allowed after one user message before the chat pauses (stops ping-pong). */
 const MAX_TURNS_PER_USER_MESSAGE = 8;
 const STUB = !!setting("STUB");
@@ -1028,24 +1030,40 @@ export class Team {
     }
     this.summarizing.add(job);
     try {
-      const minutes = Math.round((Date.now() - job.startedAt) / 60_000);
+      const now = Date.now();
+      const minutes = Math.round((now - job.startedAt) / 60_000);
       const t = teammate(job.agentId)!;
+      // Its earlier updates, with the ETA each gave: an ETA overrun by a clear margin means something may be wrong.
+      const earlier = (messages.get(ch.id) ?? [])
+        .filter((m) => m.kind === "status" && m.author === job.agentId && m.meta?.jobId === job.id && m.ts >= job.startedAt)
+        .map((m) => ({ ts: m.ts, text: m.text.split("\n").slice(1).join("\n").trim(), ...readEta(m.text) }));
+      const warning = etaWarning(earlier, job.startedAt, now);
       const system = [
         `You write a short status update for ${USER_NAME} about a job that ${t.name} (${t.role}) is running for them.`,
         `Write as ${t.name}, in the first person, in the language of the brief.`,
-        "2 to 4 short markdown lines, no heading, no preamble, no sign-off:",
-        "- what's happening right now, in plain words (not tool names);",
-        "- what's done so far, if anything worth saying;",
-        "- what we're waiting for (a build, a deploy, a test run, a query, someone's answer) and, if the log shows it, roughly how long.",
+        "2 to 4 short markdown lines, no heading, no preamble, no sign-off.",
+        "The first line starts with the ETA to finish, as `ETA ~N min:` (minutes, even past an hour), then what's happening right now, in plain words (not tool names).",
+        "Estimate it from the brief (what done looks like), the steps done so far and what's left; a wait on a build, a deploy or someone's answer counts.",
+        "Then, if worth saying: what's done so far, and what we're waiting for (a build, a deploy, a test run, a query, someone's answer).",
+        "If the input has a WARNING line, don't give a cheerful new ETA: lead with the warning it gives, then `: <what it's doing or waiting on, and the last real progress, with its time>`.",
+        "After a warning, give a new ETA only if the log shows a concrete reason for the delay and a clear way to finish, written as `ETA ~N min because <reason>:`",
+        "(keep the words `ETA` and `because` as they are, e.g. `ETA ~15 min because the backend restarted, rerunning the specs:`). With no concrete reason, give no new ETA: the warning stays.",
         "If the job is stuck, failing or retrying the same thing, say so plainly.",
         "Only state what the log shows. Don't invent results.",
       ].join("\n");
       const prompt = [
         `Job ${job.id}: ${job.title}`,
-        `Running for ${minutes} min, in ${ch.cwd}.`,
+        `Now: ${time(now)}. Started ${time(job.startedAt)}, running for ${minutes} min, in ${ch.cwd}.`,
         "",
         "Brief:",
         job.brief.length > 2000 ? job.brief.slice(0, 2000) + "…" : job.brief,
+        "",
+        "Your earlier updates on this job, oldest first:",
+        ...(earlier.length
+          ? earlier.slice(-STATUS_HISTORY).map((u) =>
+              `- ${time(u.ts)} (${Math.round((now - u.ts) / 60_000)} min ago${u.eta === undefined ? "" : `, ETA ~${u.eta} min`}): ${u.text.replace(/\s+/g, " ")}`)
+          : ["(none yet)"]),
+        ...(warning ? ["", `WARNING: ${warning.why} Lead with "${warning.lead}: …".`] : []),
         "",
         "Recent steps, oldest first:",
         ...(this.jobLogs.get(job) ?? ["(nothing yet)"]).slice(-30).map((x) => `- ${x}`),
@@ -1057,7 +1075,11 @@ export class Team {
       if (!summary) {
         // No summary (the call failed): fall back to the job's own latest words and current step.
         const said = (job.lastText ?? "").replace(/\s+/g, " ").trim();
-        summary = [said && `> ${said.length > 300 ? said.slice(0, 299) + "…" : said}`, job.activity && `Now: \`${job.activity.replace(/`/g, "'")}\``]
+        summary = [
+          warning && `${warning.lead}.`,
+          said && `> ${said.length > 300 ? said.slice(0, 299) + "…" : said}`,
+          job.activity && `Now: \`${job.activity.replace(/`/g, "'")}\``,
+        ]
           .filter(Boolean)
           .join("\n");
       }
@@ -1070,6 +1092,42 @@ export class Team {
   jobSession(ch: Channel, jobId: string) {
     return ch.jobs.find((j) => j.id === jobId)?.sessionId;
   }
+}
+
+/**
+ * The ETA a status update gave ("ETA ~15 min", "ETA ~1.5 h"), in minutes, and whether it gave a reason for it
+ * ("ETA ~15 min because the build took longer"). Not "Over the ETA by…" nor "the first ETA (20 min)".
+ */
+function readEta(text: string): { eta?: number; reason?: boolean } {
+  const m = text.match(/\bETA\s*[:~≈]?\s*~?(\d+(?:\.\d+)?)\s*(h|hr|hours?|m|mins?|minutes?)\b(.*)/i);
+  if (!m) return {};
+  return { eta: Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)), reason: /^\s*[,(–—-]?\s*because\s+\S/i.test(m[3]) };
+}
+
+/** Minutes past an update's ETA at `at`, when that counts as overrun: 10 min, or half the ETA when that's more (ETA 20 → 30). */
+function overrun(u: { ts: number; eta: number }, at: number) {
+  const by = Math.round((at - u.ts) / 60_000 - u.eta);
+  return by >= Math.max(10, u.eta / 2) ? by : undefined;
+}
+
+/**
+ * Whether a job's next status update leads with a warning. It's measured against the latest ETA; once that's overrun,
+ * a later ETA replaces it only when it gives a reason ("because …"). And past twice the job's first ETA, it warns whatever.
+ */
+function etaWarning(updates: { ts: number; eta?: number; reason?: boolean }[], startedAt: number, now: number) {
+  let ref: { ts: number; eta: number } | undefined;
+  for (const u of updates) {
+    if (u.eta === undefined) continue;
+    if (!ref || overrun(ref, u.ts) === undefined || u.reason) ref = { ts: u.ts, eta: u.eta };
+  }
+  const by = ref && overrun(ref, now);
+  if (ref && by !== undefined)
+    return { lead: `Over the ETA by ${by} min, may be stuck`, why: `the ${time(ref.ts)} update gave ETA ~${ref.eta} min; ${Math.round((now - ref.ts) / 60_000)} min have passed, ${by} min over.` };
+  const first = updates.find((u) => u.eta !== undefined)?.eta;
+  const elapsed = Math.round((now - startedAt) / 60_000);
+  if (first && elapsed >= 2 * first)
+    return { lead: `Over 2× the first ETA (${first} min), may be stuck`, why: `the first update gave ETA ~${first} min, and the job has run ${elapsed} min.` };
+  return undefined;
 }
 
 /** What a reply quotes from a message: its text, what the card is, or the files it carries. */
