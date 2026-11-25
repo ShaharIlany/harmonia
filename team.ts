@@ -364,7 +364,7 @@ export class Team {
         this.emit({ type: "update", channelId: ch.id, message: msg });
       }
       for (const id of d.to) this.wake(ch, id, msg);
-    });
+    }).catch((e) => console.error(`Routing a message in ${ch.id} failed:`, e));
     this.coordinating.set(ch.id, next);
     next.finally(() => this.coordinating.get(ch.id) === next && this.coordinating.delete(ch.id));
   }
@@ -579,7 +579,7 @@ export class Team {
       }
       return;
     }
-    if (!this.start(ch, agentId)) this.next(agentId);
+    if (!this.tryStart(ch, agentId)) this.next(agentId);
   }
 
   /** The next channel waiting for this teammate, if any. */
@@ -587,9 +587,46 @@ export class Team {
     const q = this.queue.get(agentId) ?? [];
     while (q.length && !this.busy.has(agentId)) {
       const ch = channels.get(q.shift()!);
-      if (ch && this.start(ch, agentId)) break;
+      if (ch && this.tryStart(ch, agentId)) break;
     }
     this.emitSessions();
+  }
+
+  /**
+   * `start`, but a throw while setting the turn up (a missing agent file, say) becomes an error card from the teammate
+   * instead of ending the server. What `start` had already changed goes back, so it's as if the turn never began.
+   */
+  private tryStart(ch: Channel, agentId: string): boolean {
+    const key = `${ch.id}:${agentId}`;
+    const before = {
+      left: this.turnsLeft.get(ch.id),
+      hadSeen: agentId in ch.lastSeen,
+      seen: ch.lastSeen[agentId],
+      events: this.events.get(key),
+      cause: this.causes.get(key),
+      session: agentSessions[agentId],
+    };
+    try {
+      return this.start(ch, agentId);
+    } catch (e) {
+      console.error(`Could not start ${agentId}'s turn in ${ch.id}:`, e);
+      if (before.left === undefined) this.turnsLeft.delete(ch.id);
+      else this.turnsLeft.set(ch.id, before.left);
+      if (before.hadSeen) ch.lastSeen[agentId] = before.seen!;
+      else delete ch.lastSeen[agentId];
+      if (before.events) this.events.set(key, before.events);
+      if (before.cause) this.causes.set(key, before.cause);
+      if (before.session) agentSessions[agentId] = before.session;
+      else delete agentSessions[agentId];
+      for (const [token, turn] of this.turns) if (turn.channelId === ch.id && turn.agentId === agentId) this.turns.delete(token);
+      this.busy.delete(agentId);
+      this.setActivity(ch, agentId, null);
+      saveChannels();
+      this.emitSessions();
+      const why = e instanceof Error && (e as NodeJS.ErrnoException).code === "ENOENT" ? `A file it needs is missing: ${(e as NodeJS.ErrnoException).path ?? e.message}` : e instanceof Error ? e.message : String(e);
+      this.post(ch, { author: agentId, kind: "error", text: `Could not start this turn. ${why}` });
+      return false;
+    }
   }
 
   /** One turn of the teammate's chat session for this channel. False when there was nothing to do. */
@@ -684,7 +721,11 @@ export class Team {
         said = undefined;
         if (holding || !text || NO_REPLY.test(text) || EMOJI_ONLY.test(text)) return;
         holding = setTimeout(() => {
-          if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true, ...(answers && { answers }) } });
+          try {
+            if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true, ...(answers && { answers }) } });
+          } catch (e) {
+            console.error("Hold-on line failed:", e);
+          }
         }, HOLD_ON_AFTER);
       },
     });
@@ -752,7 +793,7 @@ export class Team {
       // waits for the user. In a DM there's nobody else to wake, and nobody for Mozart to pick.
       const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
       for (const id of to) this.wake(ch, id, first);
-      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
+      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.safely(() => this.coordinate(ch, first)), after);
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
@@ -767,14 +808,23 @@ export class Team {
     const first = this.post(ch, { author: agentId, text: parts[0], meta });
     let at = 0;
     for (const part of parts.slice(1)) {
-      setTimeout(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing"), at + 100);
+      setTimeout(() => this.safely(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing")), at + 100);
       at += Math.min(1500, Math.max(600, part.length * 15));
-      setTimeout(() => {
+      setTimeout(() => this.safely(() => {
         if (!this.busy.has(agentId)) this.setActivity(ch, agentId, null);
         this.post(ch, { author: agentId, text: part, ...(meta?.answers && { meta: { answers: meta.answers } }) });
-      }, at);
+      }), at);
     }
     return { first, after: at + 50 };
+  }
+
+  /** Runs a timer's work so a failure in it is logged, not fatal. */
+  private safely(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("Timer callback failed:", e);
+    }
   }
 
   /** A teammate's emoji on a message. One reaction per teammate per message; a new one replaces it. */
@@ -952,7 +1002,7 @@ export class Team {
     this.jobRuns.set(key, run);
 
     // While it runs, the job reports in every few minutes, under its teammate's name.
-    const ticker = setInterval(() => this.postJobStatus(ch, job), STATUS_EVERY_MS);
+    const ticker = setInterval(() => void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e)), STATUS_EVERY_MS);
 
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
