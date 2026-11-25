@@ -7,7 +7,7 @@ import slackPageJs from "./public/slack-page.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
-import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
+import { EFFORTS, MODELS, deleteMemory, installStarterAgents, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
 import { CHANNEL_STATUSES, channels, createChannel, dmOf, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
@@ -42,6 +42,7 @@ const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROST
   if ("channelId" in e || e.type === "channel") toSlack?.(e as Event); // "channel": its status and task, in Slack's topic
 };
 mkdirSync(TEAM_AGENTS, { recursive: true });
+installStarterAgents(ROSTER.map((t) => t.id)); // before anything can wake a teammate
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
 
 /** Your reaction on a message (one at a time, like a teammate's), or none. From the page, or from Slack. */
