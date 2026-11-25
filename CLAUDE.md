@@ -1,6 +1,6 @@
 # Harmonia
 
-Harmonia is a local group chat where six Claude Code "teammates" (Dali, Leo, Elliot, Sherlock, Murphy, Emily; `team.json`) answer in channels. It is a Bun/TypeScript server with a plain-JS web UI in `public/`, a Swift Mac shell in `macapp/` and a C# Windows shell in `winapp/`. There are no runtime dependencies. README.md is the user manual; this file is the map.
+Harmonia is a local group chat where six Claude Code "teammates" (Dali, Leo, Elliot, Sherlock, Murphy, Emily; `team.json`) answer in channels. It is a Bun/TypeScript server with a plain-JS web UI in `public/`, a Swift Mac shell in `macapp/` and a C# Windows shell in `winapp/`. There are no runtime dependencies. README.md is the short intro and `docs/` is the user manual; this file is the map.
 
 **Main flow.** A user message (`Team.userMessage`, `team.ts`) → Mozart (`mozart.ts`, `decide`) picks who answers, or only a reaction, or nobody → the teammate's chat session (`Team.start`, run by `runAgent` in `runner.ts`, one session per teammate, shared by all channels) → optionally a job (`startJob` / `runJob`: its own Claude Code session in the channel's folder, started through the `start_job` tool from `job-tools.ts`) → the job's report comes back to the chat session as an event.
 
@@ -29,7 +29,7 @@ Env vars: `HARMONIA_STUB`, `HARMONIA_DATA`, `PORT` (4747), `HARMONIA_USER`, `HAR
 - No runtime dependencies. Embed files with `import x from "./file" with { type: "file" }` and read them through the import, so the compiled binary carries them (`bun run build:windows`; `macapp/build.sh` on the Mac).
 - Comments say why, in plain full sentences. User-facing strings are plain and specific.
 - Commit subjects: `Area: what changed, in plain words` (`Slack: …`, `Jobs: …`, `Mozart: …`).
-- README documents behaviour; update it in the same commit as the feature. Old `TEAM_CHAT_*` names still work (via `setting()` in `env.ts`); keep it so.
+- `docs/` documents behaviour (`docs/settings.md` the settings and environment variables); update it in the same commit as the feature. Old `TEAM_CHAT_*` names still work (via `setting()` in `env.ts`); keep it so.
 
 ## Releases: can hurt
 Every push to `main` is tagged as the next patch version (`tag.yml`) and released (`release.yml`), and installed apps update to it by themselves within 30 minutes. `[skip ci]` in the commit message prevents the tag and release. Never push to `main` to "try" something; use a branch. `windows.yml` builds and smoke-tests the Windows server on every PR.
