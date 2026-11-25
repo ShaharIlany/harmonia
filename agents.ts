@@ -39,7 +39,8 @@ export function installStarterAgents(ids: string[]) {
 
 function split(id: string) {
   if (!existsSync(agentFile(id))) throw new Error(`${agentFile(id)} is missing, and Harmonia could not create it. Copy ${id}.md from the agents folder of the Harmonia repository to ${AGENTS_DIR}.`);
-  const text = readFileSync(agentFile(id), "utf8");
+  // A file saved on Windows may have CRLF line ends; the front matter is read as LF either way.
+  const text = readFileSync(agentFile(id), "utf8").replace(/\r\n/g, "\n");
   const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) throw new Error(`${agentFile(id)} has no frontmatter`);
   return { front: m[1], body: m[2] };

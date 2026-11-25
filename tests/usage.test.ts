@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const dir = mkdtempSync(join(tmpdir(), "harmonia-usage-"));
-process.env.HARMONIA_DATA = dir;
-const { recordRun, usageSummary } = await import("./usage");
+// The data folder is the temp one tests/setup.ts points at before any module loads.
+const { DATA: dir } = await import("../paths");
+const { recordRun, usageSummary } = await import("../usage");
 
 test("usageSummary adds up a hand-written ledger and skips bad lines and old runs", () => {
   const now = Date.now();

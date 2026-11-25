@@ -61,5 +61,5 @@ export function usageSummary(sinceMs: number) {
 }
 
 /** Records a finished run from its RunResult (the fields are the same), plus where it ran. */
-export const recordResult = (kind: RunKind, r: { cost?: number; inputTotal?: number; cacheRead?: number; context?: number }, who: Pick<RunRecord, "agentId" | "channelId" | "jobId" | "ms">) =>
-  recordRun({ kind, ...who, cost: r.cost ?? 0, inputTotal: r.inputTotal ?? 0, cacheRead: r.cacheRead ?? 0, context: r.context });
+export const recordResult = (kind: RunKind, r: { cost?: number; inputTotal?: number; cacheRead?: number; context?: number; firstInput?: number }, who: Pick<RunRecord, "agentId" | "channelId" | "jobId" | "ms">) =>
+  recordRun({ kind, ...who, cost: r.cost ?? 0, inputTotal: r.inputTotal ?? 0, cacheRead: r.cacheRead ?? 0, context: r.context, firstInput: r.firstInput });
