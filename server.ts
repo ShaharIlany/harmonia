@@ -4,6 +4,7 @@ import indexHtml from "./public/index.html" with { type: "file" };
 import appJs from "./public/app.js" with { type: "file" };
 import agentPageJs from "./public/agent-page.js" with { type: "file" };
 import slackPageJs from "./public/slack-page.js" with { type: "file" };
+import setupPageJs from "./public/setup-page.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
@@ -17,6 +18,7 @@ import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus,
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
+import { readSettings, saveSettings, setupChecks } from "./setup";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 4747);
@@ -26,6 +28,7 @@ const PUBLIC: Record<string, string> = {
   "app.js": appJs,
   "agent-page.js": agentPageJs,
   "slack-page.js": slackPageJs,
+  "setup-page.js": setupPageJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
 };
@@ -322,6 +325,14 @@ Bun.serve({
       if (p === "/api/cli-auth/login" && post) {
         const r = await startCliLogin();
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
+      }
+
+      // ----- Setup check and settings.json (setup.ts) -----
+      if (p === "/api/setup" && !post) return json({ checks: await setupChecks(() => cliAuth(true), updateStatus()) });
+      if (p === "/api/settings" && !post) return json(readSettings());
+      if (p === "/api/settings" && post) {
+        const r = saveSettings(body);
+        return "error" in r ? json(r, 400) : json(r);
       }
 
       // ----- Slack -----
