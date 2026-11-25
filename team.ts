@@ -12,6 +12,7 @@ import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
+import { recordResult } from "./usage";
 import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
 import {
@@ -839,6 +840,7 @@ export class Team {
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: session.sessionId, isError: true, denials: [] }))
       .then((r) => {
+        recordResult("chat", r, { agentId, channelId: ch.id });
         clearTimeout(holding);
         if (this.closing) return; // cut off by an update: the next build gives it the same messages again
         this.turns.delete(token);
@@ -1147,6 +1149,7 @@ export class Team {
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
       .then((r) => {
+        recordResult("job", r, { agentId: job.agentId, channelId: ch.id, jobId: job.id, ms: Date.now() - job.startedAt });
         stopStatus();
         if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
@@ -1291,7 +1294,7 @@ export class Team {
         `Right now: ${job.activity ?? "thinking"}`,
       ].join("\n");
       // With the log unchanged, only the warning is new: the fallback text below says it, no Haiku call.
-      let summary = unchanged ? "" : await quickAnswer(system, prompt, ch.cwd);
+      let summary = unchanged ? "" : await quickAnswer(system, prompt, ch.cwd, { agentId: job.agentId, channelId: ch.id, jobId: job.id });
       if (job.status !== "running") return; // it finished meanwhile; its report says the rest
       if (!summary) {
         // No summary (the call failed): fall back to the job's own latest words and current step.

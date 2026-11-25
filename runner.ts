@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
+import { recordResult, type RunRecord } from "./usage";
 
 export type Denial = { tool: string; rule: string; summary: string };
 export type RunResult = {
@@ -94,8 +95,15 @@ const childEnv = () => {
   return env;
 };
 
+/** A CLI `result` event's cost and token counts, as the arguments recordResult takes after the kind. */
+function resultUsage(ev: any, who: Pick<RunRecord, "agentId" | "channelId" | "jobId">): [Parameters<typeof recordResult>[1], Parameters<typeof recordResult>[2]] {
+  const u = ev.usage ?? {};
+  const inputTotal = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+  return [{ cost: ev.total_cost_usd, inputTotal, cacheRead: u.cache_read_input_tokens ?? 0 }, { ...who, ms: ev.duration_ms }];
+}
+
 /** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
-export async function quickAnswer(system: string, prompt: string, cwd: string): Promise<string> {
+export async function quickAnswer(system: string, prompt: string, cwd: string, who: Pick<RunRecord, "agentId" | "channelId" | "jobId"> = {}): Promise<string> {
   if (setting("STUB")) return "(stub) ETA ~5 min: I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
@@ -110,6 +118,7 @@ export async function quickAnswer(system: string, prompt: string, cwd: string): 
     try {
       const ev = JSON.parse(l);
       if (ev.type === "rate_limit_event") readUsage(ev.rate_limit_info);
+      if (ev.type === "result") recordResult("status", ...resultUsage(ev, who));
       if (ev.type === "result" && !ev.is_error) result = String(ev.result ?? "").trim();
     } catch {}
   }
@@ -129,9 +138,11 @@ export async function probeUsage(cwd: string) {
   );
   const out = await new Response(proc.stdout).text();
   for (const l of out.split("\n")) {
-    if (!l.includes("rate_limit_event")) continue;
+    if (!l.includes("rate_limit_event") && !l.includes('"type":"result"')) continue;
     try {
-      readUsage(JSON.parse(l).rate_limit_info);
+      const ev = JSON.parse(l);
+      if (ev.type === "result") recordResult("probe", ...resultUsage(ev, {}));
+      else readUsage(ev.rate_limit_info);
     } catch {}
   }
 }
