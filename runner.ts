@@ -5,6 +5,10 @@ import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
 import { recordResult, type RunRecord } from "./usage";
+import { stopProcessTree } from "./platform";
+
+// Stopping a run and what it started is platform work, so it lives in platform.ts.
+export const stopTree = stopProcessTree;
 
 export type Denial = { tool: string; rule: string; summary: string };
 export type RunResult = {
@@ -179,50 +183,6 @@ const MAX_WAIT_MS = 3 * 60 * 60_000;
 function waitAfterAnswer(stopsAt: (number | undefined)[]) {
   const last = Math.max(0, ...stopsAt.map((t) => (t ?? 0) + 60_000 - Date.now()));
   return Math.min(MAX_WAIT_MS, Math.max(LINGER_MS, last));
-}
-
-/** Every process under pid: its children, theirs, and so on. */
-function descendants(pid: number): number[] {
-  const kids = new Map<number, number[]>();
-  for (const line of Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString().trim().split("\n")) {
-    const [p, parent] = line.trim().split(/\s+/).map(Number);
-    if (!kids.has(parent)) kids.set(parent, []);
-    kids.get(parent)!.push(p);
-  }
-  const all: number[] = [];
-  const walk = (p: number) => kids.get(p)?.forEach((k) => (all.push(k), walk(k)));
-  walk(pid);
-  return all;
-}
-
-/**
- * Stops a run and what it started. Never throws: it is also called from timers. Windows has no `ps`, but taskkill /T ends
- * the whole tree. Elsewhere Claude Code ends its own shells; anything still up after that is stopped too.
- */
-export function stopTree(proc: Subprocess) {
-  if (process.platform === "win32") {
-    try {
-      if (Bun.spawnSync(["taskkill", "/PID", String(proc.pid), "/T", "/F"]).exitCode === 0) return;
-    } catch {} // no taskkill: fall back to the process itself
-    try {
-      proc.kill();
-    } catch {}
-    return;
-  }
-  let started: number[] = [];
-  try {
-    started = descendants(proc.pid);
-  } catch {} // best effort: the run itself is still killed
-  try {
-    proc.kill();
-  } catch {}
-  setTimeout(() => {
-    for (const p of started) {
-      try {
-        process.kill(p);
-      } catch {} // already gone
-    }
-  }, 3000);
 }
 
 export function runAgent(o: RunOptions): Run {

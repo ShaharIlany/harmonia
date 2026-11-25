@@ -63,6 +63,7 @@ import type { Event } from "./team";
 import { claudeProjects, parentOf, projectOf, tilde, type Project } from "./projects";
 import { SLACK_API, SlackError, SlackSocket, isAuthError, slackAuth, slackCall, slackUpload, socketAppId, type Envelope, type SocketState } from "./slack-socket";
 import { MAX_FILE, MAX_FILES, attachmentPath, fileSize, saveAttachment, type Attachment } from "./attachments";
+import { usesKeychain } from "./platform";
 import { ChannelMarks } from "./slack-marks";
 import { isVoice, transcribe, type Voice } from "./voice";
 
@@ -2559,12 +2560,11 @@ async function run(cmd: string[], timeoutMs: number) {
 }
 
 const keychain = (args: string[]) => run(["security", ...args], 15_000);
-const onMac = process.platform === "darwin";
 
 type Secrets = { teamId?: string; bot?: string; app?: string; mates?: Record<string, string>; mateApps?: Record<string, string> };
 
 async function saveTokens(teamId: string, bot: string, app: string): Promise<string | undefined> {
-  if (!onMac) {
+  if (!usesKeychain) {
     const was = readJson<Secrets>(SECRETS_FILE, {});
     const same = was.teamId === teamId;
     writeFileSync(SECRETS_FILE, JSON.stringify({ teamId, bot, app, ...(same && was.mates && { mates: was.mates }), ...(same && was.mateApps && { mateApps: was.mateApps }) }), { mode: 0o600 });
@@ -2577,7 +2577,7 @@ async function saveTokens(teamId: string, bot: string, app: string): Promise<str
 }
 
 async function readTokens(teamId: string): Promise<{ bot: string; app: string } | undefined> {
-  if (!onMac) {
+  if (!usesKeychain) {
     const s = readJson<{ teamId?: string; bot?: string; app?: string }>(SECRETS_FILE, {});
     return s.teamId === teamId && s.bot && s.app ? { bot: s.bot, app: s.app } : undefined;
   }
@@ -2586,7 +2586,7 @@ async function readTokens(teamId: string): Promise<{ bot: string; app: string } 
 }
 
 async function deleteTokens(teamId: string, mates: string[] = []) {
-  if (!onMac) {
+  if (!usesKeychain) {
     writeFileSync(SECRETS_FILE, "{}", { mode: 0o600 });
     return;
   }
@@ -2603,7 +2603,7 @@ const mateAccount = (teamId: string, id: string, kind: MateKind) => `${teamId}:$
 const mateField = (kind: MateKind) => (kind === "app" ? "mateApps" : "mates") as "mates" | "mateApps";
 
 async function saveMateToken(teamId: string, id: string, token: string, kind: MateKind = "bot"): Promise<string | undefined> {
-  if (!onMac) {
+  if (!usesKeychain) {
     const s = readJson<Secrets>(SECRETS_FILE, {});
     if (s.teamId !== teamId) return "Harmonia's own Slack tokens are missing. Remove the connection and connect again.";
     writeFileSync(SECRETS_FILE, JSON.stringify({ ...s, [mateField(kind)]: { ...s[mateField(kind)], [id]: token } }), { mode: 0o600 });
@@ -2614,7 +2614,7 @@ async function saveMateToken(teamId: string, id: string, token: string, kind: Ma
 }
 
 async function readMateToken(teamId: string, id: string, kind: MateKind = "bot"): Promise<string | undefined> {
-  if (!onMac) {
+  if (!usesKeychain) {
     const s = readJson<Secrets>(SECRETS_FILE, {});
     return s.teamId === teamId ? s[mateField(kind)]?.[id] : undefined;
   }
@@ -2623,7 +2623,7 @@ async function readMateToken(teamId: string, id: string, kind: MateKind = "bot")
 }
 
 async function deleteMateToken(teamId: string, id: string, kind: MateKind = "bot") {
-  if (!onMac) {
+  if (!usesKeychain) {
     const s = readJson<Secrets>(SECRETS_FILE, {});
     const field = s[mateField(kind)];
     if (field?.[id] === undefined) return;
