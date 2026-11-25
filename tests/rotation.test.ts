@@ -6,13 +6,13 @@ import { join } from "node:path";
 // team.ts reads the data folder and ~/.claude/agents when it loads, so point both at temp folders first.
 const home = mkdtempSync(join(tmpdir(), "harmonia-home-"));
 mkdirSync(join(home, ".claude"), { recursive: true });
-cpSync(join(import.meta.dir, "agents"), join(home, ".claude", "agents"), { recursive: true });
+cpSync(join(import.meta.dir, "..", "agents"), join(home, ".claude", "agents"), { recursive: true });
 process.env.HARMONIA_DATA = mkdtempSync(join(tmpdir(), "harmonia-data-"));
 process.env.HARMONIA_STUB = "1";
 process.env.USERPROFILE = home;
 process.env.HOME = home;
 
-const { shouldRotate } = await import("./team");
+const { shouldRotate } = await import("../team");
 
 const now = Date.now();
 const MIN = 60_000;

@@ -172,6 +172,42 @@ function line(m: Message, channelId?: string): string {
   return `[${time(m.ts)}] ${nameOf(m.author)}${quote}${voice}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
 }
 
+/** Most lines a chat turn replays from the channel, however long the teammate was away. */
+export const CATCH_UP_LINES = 40;
+/** A message from someone else is replayed to a teammate up to this long; the channel file has the rest. */
+export const OTHERS_MESSAGE_CHARS = 1200;
+/** A finished job's report is put in the channel up to this long; the job card keeps all of it. */
+export const REPORT_IN_CHAT = 3000;
+
+/** The last CATCH_UP_LINES of `fresh`, plus any dropped permission or tools card still waiting on a decision. */
+export function capCatchUp(fresh: Message[]): { kept: Message[]; dropped: number } {
+  if (fresh.length <= CATCH_UP_LINES) return { kept: fresh, dropped: 0 };
+  const cut = fresh.length - CATCH_UP_LINES;
+  const pending = (m: Message) => (m.kind === "permission" && m.meta?.permission?.status === "pending") || (m.kind === "tools" && m.meta?.toolRequest?.status === "pending");
+  const rescued = fresh.slice(0, cut).filter(pending);
+  return { kept: [...rescued, ...fresh.slice(cut)], dropped: cut - rescued.length };
+}
+
+/** A message's text for another teammate's turn: long ones cut, saying where the rest is. */
+export function clipOthers(m: Message): Message {
+  if (m.author === "user" || m.text.length <= OTHERS_MESSAGE_CHARS) return m;
+  const more = m.text.length - OTHERS_MESSAGE_CHARS;
+  return { ...m, text: `${m.text.slice(0, OTHERS_MESSAGE_CHARS)}…(cut: ${more} more characters; the full message is in the channel file, id ${m.id})` };
+}
+
+/** The lines of a chat turn: the capped catch-up, a note when lines were dropped, long messages by others clipped. */
+export function catchUpLines(fresh: Message[], channelId: string): string[] {
+  const { kept, dropped } = capCatchUp(fresh);
+  const note = dropped ? [`(${dropped} earlier messages here are not shown. The whole channel is in ${join(DATA, "messages", `${channelId}.json`)}; read it if you need them.)`] : [];
+  return [...note, ...withDays(kept, (m) => line(clipOthers(m), channelId))];
+}
+
+/** A job's report for the channel: cut, with where the whole of it is. */
+export function reportInChat(text: string, jobId: string): string {
+  if (text.length <= REPORT_IN_CHAT) return text;
+  return `${text.slice(0, REPORT_IN_CHAT)}\n…(cut: ${text.length - REPORT_IN_CHAT} more characters; the full report is on the job card and in ${join(DATA, "channels.json")} under job ${jobId}, field report)`;
+}
+
 /**
  * A voice message doesn't change the conversation's language: it goes on in the language it started in. The
  * conversation is the thread the voice message replies in (its first message), else the channel. Empty when the voice
@@ -695,7 +731,7 @@ export class Team {
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
     // Queued events carry only a time: if the day turned since the last message, they get their own day line.
     const lastDay = fresh.length ? dateText(fresh[fresh.length - 1].ts) : "";
-    const lines = [...withDays(fresh, (m) => line(m, ch.id)), ...(events.length && lastDay !== dateText(Date.now()) ? [dayLine(Date.now())] : []), ...events];
+    const lines = [...catchUpLines(fresh, ch.id), ...(events.length && lastDay !== dateText(Date.now()) ? [dayLine(Date.now())] : []), ...events];
     const voiced = fresh.findLast((m) => m.author === "user" && m.meta?.voice);
     const language = voiced ? keepLanguage(all, voiced) : "";
     const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you. Now: ${nowText(Date.now())}.`;
@@ -1075,7 +1111,7 @@ export class Team {
           });
         }
         if (job.status === "done" || job.status === "failed") {
-          this.queueEvent(ch, job.agentId, `Your job ${job.id} "${job.title}" ${job.status === "done" ? "finished" : "failed"}. Its report:\n${clip(r.text, 8000)}`);
+          this.queueEvent(ch, job.agentId, `Your job ${job.id} "${job.title}" ${job.status === "done" ? "finished" : "failed"}. Its report:\n${reportInChat(r.text, job.id)}`);
           this.wake(ch, job.agentId);
         }
       });
