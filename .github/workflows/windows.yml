@@ -39,7 +39,19 @@ jobs:
           Get-Content "$env:RUNNER_TEMP\out.log", "$env:RUNNER_TEMP\err.log" -ErrorAction SilentlyContinue
           if (-not $ok) { throw "harmonia-server.exe didn't answer on 4790" }
 
+      # The app (the window around the server) and its installer, so a PR can't break them unnoticed.
+      - name: Build the app and installer
+        shell: pwsh
+        run: |
+          ./winapp/build.ps1
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc winapp/installer.iss
+          if ($LASTEXITCODE) { throw "installer failed" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: harmonia-windows-x64
-          path: build/windows/harmonia-server.exe
+          path: |
+            build/windows/harmonia-server.exe
+            winapp/out/Harmonia-Setup-x64.exe
