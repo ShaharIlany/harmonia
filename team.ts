@@ -65,6 +65,17 @@ const RULES = { chat: readFileSync(chatRulesFile, "utf8"), job: readFileSync(job
 const fill = (tpl: string, vars: Record<string, string>) => tpl.replace(/\{\{(\w+)\}\}/g, (all, k) => vars[k] ?? all);
 const roster = (agentId: string) => ROSTER.map((r) => `- ${r.name} (@${r.name}): ${r.role}${r.id === agentId ? " (you)" : ""}`).join("\n");
 
+/** The optional team rules file: a short list of rules for every teammate, kept by feedback jobs (feedback-rules.md). */
+export const TEAM_RULES_FILE = join(DATA, "team-rules.md");
+/** Its text as a section of the chat rules, or "" when there's no file or it's empty, so the prompt stays as it was. */
+function teamRulesSection() {
+  let text = "";
+  try {
+    text = readFileSync(TEAM_RULES_FILE, "utf8").trim();
+  } catch {}
+  return text ? `## Team rules from ${USER_NAME}\n\n${text}\n\n` : "";
+}
+
 /** The chat session's whole system prompt. Nothing in it is per channel or per turn, so the cached prefix stays put. */
 export function chatPrompt(agentId: string) {
   const t = teammate(agentId)!;
@@ -73,7 +84,8 @@ export function chatPrompt(agentId: string) {
     .replaceAll("{{name}}", t.name)
     .replaceAll("{{role}}", t.role)
     .replaceAll("{{roster}}", roster(agentId))
-    .replaceAll("{{instructions}}", readAgent(agentId).instructions.trim());
+    .replaceAll("{{instructions}}", readAgent(agentId).instructions.trim())
+    .replace("{{teamRules}}", () => teamRulesSection()); // last, so nothing in the file is filled in again
 }
 
 function jobPrompt(ch: Channel, agentId: string) {
@@ -883,7 +895,8 @@ export class Team {
       history: all.slice(Math.max(0, i - 40), i + 1).map((m) => line(m, ch.id)).join("\n"),
       agentFile: agentFile(agentId),
       memoryDir: memoryDir(agentId),
-      chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId) }),
+      chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId), teamRules: "" }), // the team rules file is listed apart (teamRulesFile)
+      teamRulesFile: TEAM_RULES_FILE,
       jobRules: jobPrompt(ch, agentId),
     });
     const title = `Feedback: ${text.replace(/\s+/g, " ").slice(0, 60)}`;

@@ -234,6 +234,10 @@ Jobs and memories stay.
   rule decides instead: a teammate waiting on your answer gets it, else the
   teammate you were just talking with, else Emily ("→ Emily · nobody in the
   conversation (Mozart failed)").
+  After changing `mozart-rules.md`, run `bun evals/mozart-eval.ts` (or
+  `bun run eval:mozart`): 40 routing cases in `evals/mozart-cases.json`, one
+  fresh Haiku call each, pass/fail per case, exit code 1 under 90%. `--dry`
+  prints the prompts without calling anything.
 - **A reaction instead of a turn.** Mozart also reads each message of yours
   that names its teammate, and decides whether all it needs is an
   acknowledgment: you thank a teammate, say "ok" to something finished, or
@@ -271,7 +275,10 @@ Jobs and memories stay.
   job's brief and report when it's a job card, the teammate's instructions
   file and memories, and the team rules. The teammate works out how its rules
   led to the message and amends its own instructions to include the feedback,
-  keeping every intended behavior and the file as short as it can. Its report
+  keeping every intended behavior and the file as short as it can. A lesson
+  for the whole team goes into `team-rules.md` in the data folder instead: if
+  that file exists, its text is added to every teammate's rules under "Team
+  rules from you" (read on every turn). Its report
   comes back in the chat like any job's.
 - **Handoffs:** a teammate's `@Name` wakes that teammate, unless it's in the
   same sentence as a question to you. Teammates write a name without `@` when
