@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import mozartRulesFile from "./mozart-rules.md" with { type: "file" };
 import { MOZART_DIR } from "./paths";
+import { withDays } from "./dates";
 import { setting } from "./env";
 import { ROSTER, TRIAGE, USER_NAME, nameOf, teammate } from "./roster";
 import { runAgent } from "./runner";
@@ -137,7 +138,7 @@ export async function decide(o: {
   const old = ch.mozart;
   const fresh = !old || (old.context ?? 0) > MAX_CONTEXT;
   const from = fresh ? Math.max(0, i + 1 - FIRST_READ) : Math.min(old!.seen, i);
-  const lines = all.slice(from, i + 1).filter((m) => m.kind !== "status").map(o.line);
+  const lines = withDays(all.slice(from, i + 1).filter((m) => m.kind !== "status"), o.line);
   const who = msg.author === "user" ? USER_NAME : nameOf(msg.author);
   const waiting = o.waitingOn && teammate(o.waitingOn) ? `\n(${nameOf(o.waitingOn)} asked ${USER_NAME} a question and is waiting for the answer.)` : "";
   const names = addressed?.map(nameOf).join(" and ");

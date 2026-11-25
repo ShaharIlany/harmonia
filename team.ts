@@ -5,6 +5,7 @@ import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
+import { dateText, dayLine, nowText, withDays } from "./dates";
 import { filesLines, type Attachment } from "./attachments";
 import { languageName, type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
@@ -659,10 +660,12 @@ export class Team {
 
     const where = `${placeOf(ch)} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
-    const lines = [...fresh.map((m) => line(m, ch.id)), ...events];
+    // Queued events carry only a time: if the day turned since the last message, they get their own day line.
+    const lastDay = fresh.length ? dateText(fresh[fresh.length - 1].ts) : "";
+    const lines = [...withDays(fresh, (m) => line(m, ch.id)), ...(events.length && lastDay !== dateText(Date.now()) ? [dayLine(Date.now())] : []), ...events];
     const voiced = fresh.findLast((m) => m.author === "user" && m.meta?.voice);
     const language = voiced ? keepLanguage(all, voiced) : "";
-    const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you.`;
+    const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you. Now: ${nowText(Date.now())}.`;
 
     const had = agentSessions[agentId];
     const resume = !!had;
@@ -930,7 +933,7 @@ export class Team {
         ? `\nThe job: brief\n<brief>\n${clip(job.brief, 4000)}\n</brief>\nreport\n<report>\n${clip(job.report ?? "(none yet)", 6000)}\n</report>\nIts whole run is Claude Code session ${job.sessionId} (~/.claude/projects/*/${job.sessionId}.jsonl).\n`
         : "",
       messagesFile: join(DATA, "messages", `${ch.id}.json`),
-      history: all.slice(Math.max(0, i - 40), i + 1).map((m) => line(m, ch.id)).join("\n"),
+      history: withDays(all.slice(Math.max(0, i - 40), i + 1), (m) => line(m, ch.id)).join("\n"),
       agentFile: agentFile(agentId),
       memoryDir: memoryDir(agentId),
       chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId) }),
