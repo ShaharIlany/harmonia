@@ -143,7 +143,9 @@ function agentDetails(id: string) {
   return { ...t, ...readAgent(id), memoryDir: memoryDir(id), memories: listMemories(id), session: team.sessions().find((s) => s.agentId === id), jobs };
 }
 
-// ---------- Mac helpers ----------
+// ---------- Desktop helpers (the Mac's open/osascript, Windows' start/explorer, xdg-open elsewhere) ----------
+
+const onWindows = process.platform === "win32";
 
 const run = async (cmd: string[]) => {
   const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
@@ -154,6 +156,8 @@ const run = async (cmd: string[]) => {
 
 /** Opens a file in its default app, or shows it in the Finder. */
 const openFile = async (path: string, reveal: boolean) => {
+  // explorer.exe exits with 1 even when it worked, so its exit code says nothing.
+  if (onWindows) return run(reveal ? ["explorer.exe", `/select,${path}`] : ["explorer.exe", path]).then(() => ({ code: 0, out: "" }), () => ({ code: 1, out: "" }));
   if (process.platform !== "darwin") return run(["xdg-open", reveal ? join(path, "..") : path]).catch(() => ({ code: 1, out: "" }));
   return run(reveal ? ["open", "-R", path] : ["open", path]);
 };
@@ -175,8 +179,17 @@ function serveFile(path: string, name: string, type: string) {
   });
 }
 
+/** Opens a URL, folder or file with whatever the system has for it (`open` on the Mac). */
+const openWith = (target: string) =>
+  onWindows
+    ? // The shell's own handler, which goes through no command line to quote (cmd's `start` would read & and % in a URL).
+      run(["rundll32.exe", "url.dll,FileProtocolHandler", target]).catch(() => ({ code: 1, out: "" }))
+    : process.platform === "darwin"
+      ? run(["open", target])
+      : run(["xdg-open", target]).catch(() => ({ code: 1, out: "" }));
+
 /** Opens a CLI session in the Claude desktop app (it imports the session by id). */
-const openInClaude = (sessionId: string) => run(["open", `claude://resume?session=${sessionId}`]);
+const openInClaude = (sessionId: string) => openWith(`claude://resume?session=${sessionId}`);
 
 /**
  * A job's session in the Claude app (the page's button, and View in Claude in Slack). An error, if it couldn't.
@@ -207,14 +220,24 @@ async function cliAuth(fresh = false) {
   return value;
 }
 
-/** Runs a command in a new Terminal window, for sign-ins and installs that need you. */
-const inTerminal = (cmd: string) =>
-  run(["osascript", "-e", `tell application "Terminal" to do script "${cmd.replace(/(["\\])/g, "\\$1")}"`, "-e", `tell application "Terminal" to activate`]);
+/**
+ * Runs a command in a new Terminal window (a console window on Windows), for sign-ins and installs that need you.
+ * On Windows the command line is built here, quoted for cmd, and passed as it is.
+ */
+const inTerminal = (argv: string[]) => {
+  if (!onWindows) {
+    const cmd = argv.join(" ");
+    return run(["osascript", "-e", `tell application "Terminal" to do script "${cmd.replace(/(["\\])/g, "\\$1")}"`, "-e", `tell application "Terminal" to activate`]);
+  }
+  const line = argv.map((a) => (/[\s"&|<>^%]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a)).join(" ");
+  const p = Bun.spawn(["cmd.exe", "/d", "/s", "/c", `"start "Harmonia" cmd.exe /k ${line}"`], { stdout: "ignore", stderr: "ignore", windowsVerbatimArguments: true } as any);
+  return p.exited.then((code) => ({ code, out: "" }));
+};
 
 /** Opens Terminal on `claude auth login`, which hands off to the browser sign-in. */
 function startCliLogin() {
   authCache = undefined;
-  return inTerminal(`${CLAUDE} auth login --claudeai`);
+  return inTerminal([CLAUDE, "auth", "login", "--claudeai"]);
 }
 
 // ---------- HTTP ----------
@@ -448,13 +471,13 @@ Bun.serve({
       if (m[2] === "open-task" && post) {
         // Only the channel's own task link, and only ClickUp, in Chrome (or the default browser without it).
         if (!ch.task || !ch.task.url.startsWith("https://app.clickup.com/")) return json({ error: "This channel has no ClickUp task." }, 404);
-        let r = await run(["open", "-a", "Google Chrome", ch.task.url]);
-        if (r.code !== 0) r = await run(["open", ch.task.url]);
+        let r = onWindows ? { code: 1, out: "" } : await run(["open", "-a", "Google Chrome", ch.task.url]).catch(() => ({ code: 1, out: "" }));
+        if (r.code !== 0) r = await openWith(ch.task.url);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the task." }, 500);
       }
       if (m[2] === "open-folder" && post) {
         if (!existsSync(ch.cwd)) return json({ error: `The folder is gone: ${ch.cwd}` }, 404);
-        const r = await run(["open", ch.cwd]);
+        const r = onWindows ? await openFile(ch.cwd, false) : await openWith(ch.cwd);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the folder." }, 500);
       }
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);

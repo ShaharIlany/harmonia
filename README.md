@@ -151,6 +151,25 @@ or `bun run stub` to try the UI.
 
 No dependencies, no API key: everything runs on the `claude` CLI sign-in.
 
+## Windows
+
+The server also builds for Windows (x64), without the Mac app shell: run
+`harmonia-server.exe` and open http://localhost:4747 in your browser. Each
+release has it as `Harmonia-windows-x64.zip`, with the starter teammates (copy
+them to `%USERPROFILE%\.claude\agents`). To build it yourself, from any OS:
+
+```bash
+bun run build:windows   # build/windows/harmonia-server.exe
+```
+
+It needs the `claude` CLI on your PATH, signed in. Data lives in
+`%APPDATA%\Harmonia` (`HARMONIA_DATA` overrides it). What's Mac-only stays
+off: the sandbox around protected folders (`sandbox-exec`), voice-message
+transcription, the Keychain (Slack tokens go to a private file instead, as on
+Linux) and updating itself (download the next release by hand). Opening files,
+folders, links and the Claude app goes through Explorer and the default
+handlers; the sign-in opens a console window on `claude auth login`.
+
 ## Chat sessions and jobs
 
 Every teammate has two kinds of Claude Code session:
@@ -537,6 +556,7 @@ Jobs and memories stay.
 | `main.ts` | Entry point of the compiled server (`--job-tools` runs the job tools) |
 | `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
 | `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
+| `.github/workflows/windows.yml` | Builds the Windows server and checks that it starts, for every PR and push to main |
 | `.github/workflows/tag.yml` | Tags every push to `main` as the next patch version, and starts its release |
 | `install.sh` | Installs the latest release (or builds from source) |
 | `roster.ts` | Loads and validates `team.json`, @mention parsing |

@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { setting } from "./env";
 import teamDefaults from "./team.json" with { type: "file" };
 
-/** True inside the compiled binary, where the sources live in Bun's embedded file system. */
-export const COMPILED = import.meta.dir.startsWith("/$bunfs");
+/**
+ * True inside the compiled binary, where the sources live in Bun's embedded file system: /$bunfs/… on the Mac and
+ * Linux, B:\\~BUN\\… on Windows.
+ */
+export const COMPILED = import.meta.dir.startsWith("/$bunfs") || /^[a-z]:[\\/]~BUN[\\/]/i.test(import.meta.dir);
 
 const readJson = (path: string) => {
   try {
@@ -16,11 +19,18 @@ const readJson = (path: string) => {
   }
 };
 
-const SUPPORT = join(homedir(), "Library/Application Support");
+/** The per-user app data folder: Application Support on the Mac, %APPDATA% on Windows, $XDG_DATA_HOME elsewhere. */
+const SUPPORT =
+  process.platform === "win32"
+    ? (process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"))
+    : process.platform === "darwin"
+      ? join(homedir(), "Library/Application Support")
+      : (process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"));
 
 /** Channels, messages, sessions and team.json. The app keeps them in Application Support. */
 export const DATA = setting("DATA") ?? (COMPILED ? join(SUPPORT, "Harmonia") : join(import.meta.dir, "data"));
-if (COMPILED && !setting("DATA")) moveFromTeamChat();
+// Team Chat was only ever a Mac app.
+if (COMPILED && !setting("DATA") && process.platform === "darwin") moveFromTeamChat();
 mkdirSync(DATA, { recursive: true });
 
 /**

@@ -7,6 +7,8 @@
 #   Harmonia-arm64.zip (+ .sha256)   the app (stable name: releases/latest/download/… works)
 #   Team-Chat-arm64.zip (+ .sha256)  the same app as "Team Chat.app", for installs from before the rename: their
 #                                    updater looks for that name. Drop it once no Team Chat installs are left.
+#   Harmonia-windows-x64.zip (+ .sha256)  the server for Windows (harmonia-server.exe, cross-compiled by Bun) and the
+#                                    starter teammates. No app shell: it serves the page on http://localhost:4747.
 name: Release
 
 on:
@@ -58,8 +60,20 @@ jobs:
           cat build/Harmonia.app/Contents/Resources/build.json
           [ -x build/Harmonia.app/Contents/Resources/harmonia-transcribe ] || echo "::warning::No transcriber in this build: voice messages from Slack stay audio files. $(cat build/transcribe.log 2>/dev/null | grep -m1 error)"
 
+      # The Windows server, cross-compiled here. It has no build.json, so it doesn't update itself (updates.ts swaps
+      # Mac app bundles): a new release is downloaded by hand.
+      - name: Build for Windows
+        run: |
+          bun run build:windows
+          mkdir -p build/Harmonia-windows-x64/starter-agents
+          cp build/windows/harmonia-server.exe build/Harmonia-windows-x64/
+          cp agents/*.md build/Harmonia-windows-x64/starter-agents/
+          (cd build && zip -qr ../Harmonia-windows-x64.zip Harmonia-windows-x64)
+          shasum -a 256 Harmonia-windows-x64.zip > Harmonia-windows-x64.zip.sha256
+
       - name: Publish the release
         run: |
           gh release create "$GITHUB_REF_NAME" Harmonia-arm64.zip Harmonia-arm64.zip.sha256 \
             Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
+            Harmonia-windows-x64.zip Harmonia-windows-x64.zip.sha256 \
             --verify-tag --latest --title "Harmonia $VERSION" --generate-notes
