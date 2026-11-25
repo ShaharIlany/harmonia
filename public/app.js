@@ -1009,9 +1009,11 @@
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
-    $("agent-view").hidden = view === "channel" || view === "slack" || view === "usage";
+    $("agent-view").hidden = view === "channel" || view === "slack" || view === "usage" || view === "setup";
     $("slack-view").hidden = view !== "slack";
     $("usage-view").hidden = view !== "usage";
+    $("setup-view").hidden = view !== "setup";
+    $("setup-link").setAttribute("aria-current", view === "setup" ? "page" : "false");
     $("app").classList.remove("nav-open");
     renderSidebar();
     renderSlackStatus();
@@ -1200,6 +1202,11 @@
     window.SlackPage.render();
   }
   $("slack-status").addEventListener("click", openSlack);
+  function openSetup() {
+    showView("setup");
+    window.SetupPage.render();
+  }
+  $("setup-link").addEventListener("click", openSetup);
 
   // The plan-usage meters at the top of the sidebar open the Usage page (usage-page.js).
   function openUsage() {
@@ -1825,6 +1832,8 @@
     const live = S.channels.filter((c) => c.status !== "archived");
     await openChannel(S.channels.some((c) => c.id === saved) ? saved : (live[0] || S.channels[0]).id);
     refreshCli();
+    // Something Harmonia needs is missing: open the page that says what.
+    api("/api/setup").then((r) => r.checks.some((c) => !c.ok && !c.info) && openSetup()).catch(() => {});
   }
 
   // Shared with agent-page.js.

@@ -109,6 +109,10 @@ tools (`harmonia-server --job-tools`).
   (default `~/TeamAgents`), `defaultCwd` (default `~`), and for ClickUp
   `clickupWorkspace` and `clickupTaskPrefix` (say `ABC` for task ids like
   `ABC-123`). The first `--install` writes it and copies `data/` over.
+  The **Setup check** link at the bottom of the sidebar lists what Harmonia
+  still needs (Claude Code signed in, the agent files, the folders) and edits
+  these settings; it opens by itself when something is missing. Changes to
+  all but `protectedAllow` and `protectedGuard` need a restart.
 - **Server:** started on 127.0.0.1:4747 with your login shell's PATH, so jobs
   find git, bun and your other tools. If something already answers on 4747 (say
   `bun server.ts`), the app shows that instead of starting a second one. Log:
