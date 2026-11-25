@@ -42,6 +42,7 @@ export type RunOptions = {
   /** A chat turn: no agent file and no built-in tools, only the MCP servers in mcpConfig. */
   chat?: { model: string; effort: string; mcpConfig: string; tools?: string[] };
   ephemeral?: boolean; // don't save the session (dry runs)
+  permissionMode?: string; // Claude Code's --permission-mode: bypassPermissions (default here), acceptEdits or default
   mode?: string[]; // replaces the agent/chat arguments (the router's own flags)
 };
 
@@ -122,9 +123,6 @@ export async function probeUsage(cwd: string) {
     } catch {}
   }
 }
-
-/** Every teammate run skips permission prompts (the user's choice, 2026-11-16). */
-const PERMISSION_MODE = "bypassPermissions";
 
 const short = (s: string, n = 80) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
@@ -216,7 +214,7 @@ export function runAgent(o: RunOptions): Run {
     ...mode,
     "--output-format", "stream-json",
     "--verbose",
-    "--permission-mode", PERMISSION_MODE,
+    "--permission-mode", o.permissionMode ?? "bypassPermissions",
     "--name", o.title,
     ...(o.ephemeral ? ["--no-session-persistence"] : []),
     ...(o.resume ? ["--resume", sessionId] : ["--session-id", sessionId]),

@@ -10,11 +10,11 @@ import type { ServerWebSocket } from "bun";
 import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, dmOf, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
+import { CHANNEL_STATUSES, PERMISSION_MODES, channels, createChannel, dmOf, messages, saveChannels, saveMessages,type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
-import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
+import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, defaultPermissionMode, jobTitle,type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
@@ -122,6 +122,7 @@ const state = () => ({
   teamAgents: TEAM_AGENTS,
   clickupWorkspace: CLICKUP_WORKSPACE,
   clickupTaskPrefix: CLICKUP_TASK_PREFIX,
+  defaultPermissionMode: defaultPermissionMode(),
   update: updateStatus(),
   usage,
   sessions: team.sessions(),
@@ -453,7 +454,7 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
       }
 
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -463,6 +464,14 @@ Bun.serve({
         if (status !== undefined && !CHANNEL_STATUSES.includes(status)) return json({ error: "Unknown status." }, 400);
         const err = setStatus(ch, status);
         return err ? json({ error: err }, 409) : json(ch);
+      }
+      if (m[2] === "permission-mode" && post) {
+        const mode = body.mode || undefined; // empty: back to the default
+        if (mode !== undefined && !PERMISSION_MODES.includes(mode)) return json({ error: "Unknown permission mode." }, 400);
+        if (mode) ch.permissionMode = mode;
+        else delete ch.permissionMode;
+        saveChannels();
+        return json(ch);
       }
       if (m[2] === "task" && post) {
         const err = team.setTask(ch, String(body.task ?? ""));

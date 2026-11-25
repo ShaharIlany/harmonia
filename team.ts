@@ -3,7 +3,7 @@ import { join } from "node:path";
 import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
-import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, SETTINGS, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
 import { filesLines, type Attachment } from "./attachments";
 import { languageName, type Voice } from "./voice";
@@ -12,7 +12,10 @@ import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide } from "./mozart";
 import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
+import { sandboxActive } from "./sandbox";
 import {
+  CLAUDE_PERMISSION_MODE,
+  PERMISSION_MODES,
   addMessage,
   agentSessions,
   channels,
@@ -26,6 +29,7 @@ import {
   type ChannelStatus,
   type Job,
   type Message,
+  type PermissionMode,
   type SlackRef,
 } from "./store";
 
@@ -91,7 +95,12 @@ const shownAs = (ch: Channel) => (ch.dm ? "your DM" : `#${ch.name}`);
 
 /** How sessions are titled in Claude Code: the tag says which teammate it is. */
 export const chatTitle = (agentId: string) => `[${nameOf(agentId)}] Harmonia chat`;
-export const jobTitle = (ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] ${ch.dm ? "DM" : `#${ch.name}`} · ${title}`;
+/** What a channel without its own choice gets: settings.json "permissionMode", else bypass where the sandbox guards the run, else edits only. */
+export const defaultPermissionMode = (): PermissionMode =>
+  PERMISSION_MODES.includes(SETTINGS.permissionMode) ? SETTINGS.permissionMode : sandboxActive() ? "bypass" : "acceptEdits";
+export const permissionModeOf = (ch: Channel): PermissionMode => ch.permissionMode ?? defaultPermissionMode();
+
+export const jobTitle =(ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] ${ch.dm ? "DM" : `#${ch.name}`} · ${title}`;
 
 const time = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
 /** What a teammate answers when a turn needs nothing from it (chat-rules.md, "Is it your turn?"). */
@@ -651,6 +660,7 @@ export class Team {
     if (STUB && /\bjob\b/i.test(last) && !last.includes("(event)")) tools.startJob({ title: "Stub job", brief: last });
     if (STUB && /\bneed a tool\b/i.test(last) && !last.includes("(event)")) tools.requestTool({ tools: ["clickup_delete_task"], reason: "Stub: to delete the duplicate task." });
 
+    const chatTools = chatToolsFor(readAgent(agentId).tools);
     const run = runAgent({
       agentId,
       cwd: TEAM_AGENTS,
@@ -660,10 +670,14 @@ export class Team {
       title: chatTitle(agentId),
       allowedTools: [],
       systemPrompt: chatPrompt(agentId),
+      // Nothing handles a chat turn's denials (only jobs show Allow / Deny cards), so a blocked tool would just fail. The
+      // chat side has no file-edit tools, and its quick lookups must not stop for cards: it stays on bypass, sandbox or
+      // not, as long as it has its restricted tool list. With every tool (no list) and no sandbox, the channel's mode rules.
+      permissionMode: sandboxActive() || chatTools ? CLAUDE_PERMISSION_MODE.bypass : CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
       chat: {
         model: t.chatModel,
         effort: t.chatEffort,
-        tools: chatToolsFor(readAgent(agentId).tools),
+        tools: chatTools,
         mcpConfig: JSON.stringify({
           mcpServers: {
             team: { command: jobToolsCommand()[0], args: jobToolsCommand().slice(1), env: { HARMONIA_URL: this.serverUrl, HARMONIA_TURN: token } },
@@ -931,6 +945,7 @@ export class Team {
       resume,
       title: jobTitle(ch, job.agentId, job.title),
       allowedTools: [...ch.allowedTools, ...job.allowed],
+      permissionMode: CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
       systemPrompt: jobPrompt(ch, job.agentId),
       onActivity: (s) => {
         job.activity = s;
