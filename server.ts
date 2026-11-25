@@ -66,6 +66,7 @@ const slack = new SlackBridge({
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
   channelChanged: (channel) => broadcast({ type: "channel", channel }),
   setStatus: (ch, status) => setStatus(ch, status),
+  setTask: (ch, task) => team.setTask(ch, task),
   answering: (channelId, agentId) => team.answering(channelId, agentId).answers,
   log: (event, fields) => console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields })),
 });

@@ -301,6 +301,8 @@ type Deps = {
   channelChanged: (ch: Channel) => void;
   /** Sets a channel's status (`@Harmonia status`, `@Harmonia archive`), as the page does. An error to show, if it can't. */
   setStatus: (ch: Channel, status: ChannelStatus | undefined) => string | undefined;
+  /** Sets a channel's ClickUp task (`@Harmonia task`), as the page does; "" clears it. An error to show, if it can't. */
+  setTask: (ch: Channel, task: string) => string | undefined;
   /** The message a teammate at work in a channel is answering, if any: its typing message goes in that one's thread. */
   answering: (channelId: string, agentId: string) => string | undefined;
   log: (event: string, fields?: Record<string, unknown>) => void;
@@ -1481,6 +1483,7 @@ export class SlackBridge {
           `• *${at}new private channel <name>*: the same, but only the people in it see it.`,
           `• *${at}status <status>*: sets this channel's status in Harmonia: ${STATUS_CHOICES}.`,
           `• *${at}archive*: archives this channel in Harmonia. A Slack channel ${APP_NAME} made is archived too; one you brought me into, I leave.`,
+          `• *${at}task <id or link>*: tags this channel with a ClickUp task (DC-123, 123 or the task's link). *${at}task none* clears it.`,
           `• *${at}project*: this channel's Claude project, the folder the teammates' jobs run in. Pick another to change it.`,
           `• \`/invite @${APP_NAME}\` in any channel: it's linked to a new Harmonia channel, and the teammates join once you pick its project.`,
           `• *${at}help*: this.`,
@@ -1501,6 +1504,14 @@ export class SlackBridge {
       return;
     }
     const name = `*#${escapeSlack(ch.name)}*`;
+    if (cmd.kind === "task") {
+      if (cmd.task === undefined)
+        return this.say(ev.channel, `${name} ${ch.task ? `is tagged with <${ch.task.url}|ClickUp ${escapeSlack(ch.task.id)}>` : "has no ClickUp task"}. Set it with *${at}task <id or link>*, or clear it with *${at}task none*.`, thread);
+      const err = this.deps.setTask(ch, cmd.task);
+      if (err) return this.say(ev.channel, `Couldn't: ${escapeSlack(err)}`, thread);
+      this.deps.log("slack.task_set", { channelId: ch.id, task: ch.task?.id ?? null });
+      return this.say(ev.channel, ch.task ? `:white_check_mark: ${name} is tagged with <${ch.task.url}|ClickUp ${escapeSlack(ch.task.id)}> now.` : `:white_check_mark: ${name} has no ClickUp task now.`, thread);
+    }
     const status = cmd.kind === "archive" ? "archived" : cmd.status;
     if (status === undefined) {
       const now = ch.status ? `is *${STATUS_LABELS[ch.status]}*` : "has no status";
@@ -2228,6 +2239,7 @@ export type Command =
   | { kind: "newChannel"; name: string; private: boolean }
   | { kind: "archive" }
   | { kind: "project" } // the list of your Claude projects, to see or change the channel's
+  | { kind: "task"; task?: string } // a ClickUp task id or link; "" clears it, undefined shows it
   /** `status` undefined: show it (or, with `asked`, a status nobody knows); "" clears it. */
   | { kind: "status"; status?: ChannelStatus | ""; asked: string };
 
@@ -2256,7 +2268,7 @@ export const commandText = (raw: string) => slackToText(raw.replace(/<@[^>]+>/g,
 /**
  * The app's commands: "new channel <name>" (also "create channel …"), "new private channel <name>" (also "new group
  * chat …", "new chat …"), "status <status>" (just "status" says what it is), "archive", "project" (also "change
- * project") and "help". In a channel they
+ * project"), "task <id or link>" ("task none" clears it) and "help". In a channel they
  * only count when the app was @mentioned; in your DM with it, always. Emails and a trailing "with" (the people to
  * invite) aren't part of the name.
  */
@@ -2270,6 +2282,11 @@ export function parseCommand(text: string): Command | undefined {
   if (/^(help|\?|commands)$/i.test(t)) return { kind: "help" };
   if (/^archive[.!]?$/i.test(t)) return { kind: "archive" };
   if (/^(?:(?:change|set|switch|pick|choose)\s+(?:the\s+)?)?project[.!]?$/i.test(t)) return { kind: "project" };
+  const task = t.match(/^(?:clickup\s+)?task\b[\s:]*(\S*?)[.!]?$/i); // one word: "task 1 is done" in your DM is a message
+  if (task) {
+    const id = task[1].trim();
+    return { kind: "task", task: !id ? undefined : /^(none|clear|remove)$/i.test(id) ? "" : id };
+  }
   const st = t.match(/^status\b[\s:]*(.*?)[.!?]?$/is);
   if (st) {
     const asked = st[1].trim().replace(/^["“']+|["”']+$/g, "");
