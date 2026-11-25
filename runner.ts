@@ -89,7 +89,7 @@ export async function quickAnswer(system: string, prompt: string, cwd: string): 
       "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),
     { cwd, env: childEnv(), stdin: new TextEncoder().encode(prompt), stdout: "pipe", stderr: "ignore" },
   );
-  const timer = setTimeout(() => proc.kill(), 90_000);
+  const timer = setTimeout(() => stopTree(proc), 90_000);
   const out = await new Response(proc.stdout).text();
   clearTimeout(timer);
   let result = "";
@@ -174,10 +174,27 @@ function descendants(pid: number): number[] {
   return all;
 }
 
-/** Stops a run and what it started. Claude Code ends its own shells; anything still up after that is stopped too. */
-function stopTree(proc: Subprocess) {
-  const started = descendants(proc.pid);
-  proc.kill();
+/**
+ * Stops a run and what it started. Never throws: it is also called from timers. Windows has no `ps`, but taskkill /T ends
+ * the whole tree. Elsewhere Claude Code ends its own shells; anything still up after that is stopped too.
+ */
+export function stopTree(proc: Subprocess) {
+  if (process.platform === "win32") {
+    try {
+      if (Bun.spawnSync(["taskkill", "/PID", String(proc.pid), "/T", "/F"]).exitCode === 0) return;
+    } catch {} // no taskkill: fall back to the process itself
+    try {
+      proc.kill();
+    } catch {}
+    return;
+  }
+  let started: number[] = [];
+  try {
+    started = descendants(proc.pid);
+  } catch {} // best effort: the run itself is still killed
+  try {
+    proc.kill();
+  } catch {}
   setTimeout(() => {
     for (const p of started) {
       try {
