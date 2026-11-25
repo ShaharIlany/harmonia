@@ -15,6 +15,7 @@ export type RunResult = {
   inputTotal?: number; // input tokens across the turn's API calls: fresh + cache write + cache read
   cacheRead?: number; // the part of inputTotal served from the prompt cache
   context?: number; // conversation size at the turn's last API call
+  firstInput?: number; // input size of the run's first API call: what it carries before it has done anything
   denials: Denial[];
   answered?: boolean; // it gave its answer, even if it was stopped or closed after that
   leftRunning?: string[]; // closed after its answer because of these background tasks, still running
@@ -43,7 +44,18 @@ export type RunOptions = {
   chat?: { model: string; effort: string; mcpConfig: string; tools?: string[] };
   ephemeral?: boolean; // don't save the session (dry runs)
   mode?: string[]; // replaces the agent/chat arguments (the router's own flags)
+  model?: string; // jobs: run at this model instead of the agent file's
+  effort?: string; // jobs: and at this effort
 };
+
+/** A small job (a lookup, a summary, a mechanical change) doesn't need the agent file's Opus at high effort. */
+export const SMALL_JOB = { model: "sonnet", effort: "medium" };
+
+/**
+ * `--model` / `--effort` for a job. They sit next to `--agent` and are meant to override the agent file's own
+ * model and effort (the chat turns already pass them the same way); nothing is added when there is no override.
+ */
+export const overrideArgs = (model?: string, effort?: string) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])];
 
 /** File edits always go through a job, so every change has a card and its own session. */
 export const NO_CHAT_TOOLS = ["Edit", "Write", "NotebookEdit"];
@@ -210,7 +222,7 @@ export function runAgent(o: RunOptions): Run {
         "--mcp-config", o.chat.mcpConfig,
         "--disable-slash-commands",
       ]
-    : ["--agent", o.agentId, "--append-system-prompt", systemPrompt]);
+    : ["--agent", o.agentId, ...overrideArgs(o.model, o.effort), "--append-system-prompt", systemPrompt]);
   const args = [
     "-p",
     ...mode,
@@ -245,6 +257,7 @@ export function runAgent(o: RunOptions): Run {
     let closedAfter = 0;
     let lastText = "";
     let context: number | undefined;
+    let firstInput: number | undefined;
     let buf = "";
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
@@ -271,7 +284,11 @@ export function runAgent(o: RunOptions): Run {
         }
         if (ev.type === "assistant") {
           const u = ev.message?.usage;
-          if (u && !ev.parent_tool_use_id) context = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+          if (u && !ev.parent_tool_use_id) {
+            const input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+            firstInput ??= input;
+            context = input + (u.output_tokens ?? 0);
+          }
           for (const c of ev.message?.content ?? []) {
             if (c.type === "tool_use") {
               if (c.name === "Bash" && Number(c.input?.timeout) > 0) timeouts.set(c.id, Number(c.input.timeout));
@@ -329,6 +346,7 @@ export function runAgent(o: RunOptions): Run {
       inputTotal,
       cacheRead: u.cache_read_input_tokens ?? 0,
       context,
+      firstInput,
       denials: [...denials.values()],
       answered: answers.length > 0,
       ...(leftRunning && { leftRunning, closedAfter }),

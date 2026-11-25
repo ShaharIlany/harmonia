@@ -19,6 +19,11 @@ const TOOLS = [
           description: "Complete, self-contained instructions: the goal, relevant files, task ids and links, constraints, what done looks like, and what to report back.",
         },
         continue_job: { type: "string", description: "Optional id of an earlier job of yours (like j3) whose session this job should continue." },
+        size: {
+          type: "string",
+          enum: ["small", "normal"],
+          description: "Optional, default normal. \"small\" runs the job on a smaller, cheaper model: use it when the job only reads, searches, summarises or makes a mechanical change. Design, debugging, multi-file changes and reviews are normal. When unsure, normal.",
+        },
       },
       required: ["title", "brief"],
     },
