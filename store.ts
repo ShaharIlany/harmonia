@@ -72,6 +72,11 @@ export type Job = {
 export const CHANNEL_STATUSES = ["inProgress", "waiting", "later", "archived"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
 
+/** How much a channel's jobs may do without asking. Claude Code's own names: bypassPermissions, acceptEdits, default. */
+export const PERMISSION_MODES = ["bypass", "acceptEdits", "ask"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+export const CLAUDE_PERMISSION_MODE: Record<PermissionMode, string> = { bypass: "bypassPermissions", acceptEdits: "acceptEdits", ask: "default" };
+
 export type Channel = {
   id: string;
   name: string;
@@ -80,6 +85,7 @@ export type Channel = {
   sessions?: Record<string, string>; // unused since the chat sessions moved to TeamAgents
   lastSeen: Record<string, number>; // teammate id → message count when it last read this channel
   allowedTools: string[]; // "Always in this channel" permission rules
+  permissionMode?: PermissionMode; // unset = the machine's default (see defaultPermissionMode in team.ts)
   waitingOn?: string; // teammate that asked the user a question
   task?: { id: string; url: string }; // the ClickUp task this channel is about
   status?: ChannelStatus; // your tag for the channel; "archived" makes it read-only and nobody is woken in it

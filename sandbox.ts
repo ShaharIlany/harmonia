@@ -70,9 +70,12 @@ export function profile(cwd: string): string {
   ].join("\n");
 }
 
+/** Whether runs are sandboxed on this machine: on the Mac, unless settings.json turns it off. Windows and Linux have none. */
+export const sandboxActive = () => settings().protectedGuard !== false && existsSync(SANDBOX_EXEC);
+
 /** Wraps a command in the sandbox, unless it's turned off. */
 export function guarded(cmd: string[], cwd: string): string[] {
-  if (settings().protectedGuard === false || !existsSync(SANDBOX_EXEC)) return cmd;
+  if (!sandboxActive()) return cmd;
   return [SANDBOX_EXEC, "-p", profile(cwd), ...cmd];
 }
 

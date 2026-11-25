@@ -759,6 +759,8 @@
       { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
     ];
     const st = (id, label) => ({ label, checked: (c.status || "") === id, run: () => setStatus(c, id) });
+    // The mark is on the channel's own choice, or on the machine's default when it has none.
+    const pm = (id, label) => ({ label, checked: (c.permissionMode || S.defaultPermissionMode) === id, run: () => setPermissionMode(c, id) });
     const n = S.unread[c.id] || 0;
     return [
       { label: "Open", icon: "💬", run: () => openChannel(c.id) },
@@ -771,6 +773,11 @@
       st("waiting", "Waiting for response"),
       st("later", "For later"),
       st("", "No status"),
+      { sep: true },
+      { head: "Permissions" },
+      pm("bypass", "Run everything without asking"),
+      pm("acceptEdits", "Edit files freely, ask before commands"),
+      pm("ask", "Ask before edits and commands"),
       { sep: true },
       c.task && { label: `Open ${c.task.id} in Chrome`, icon: "↗", run: () => openTask(c) },
       { label: c.task ? "Change the ClickUp task…" : "Add a ClickUp task…", icon: "🏷", run: () => editTask(c) },
@@ -1106,6 +1113,16 @@
       renderSidebar();
       if (c.id === S.current) (renderStatus(), renderMessages());
       toast(status ? `#${c.name}: ${statusLabel(status)}.` : `#${c.name} has no status now.`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  async function setPermissionMode(c, mode) {
+    try {
+      const updated = await api(`/api/channels/${c.id}/permission-mode`, { mode });
+      const i = S.channels.findIndex((x) => x.id === c.id);
+      S.channels[i] = { ...updated, jobs: c.jobs };
+      toast(`#${c.name}: permissions set.`);
     } catch (err) {
       toast(err.message);
     }
@@ -1777,6 +1794,7 @@
     S.sessions = st.sessions;
     window.TEAM_TASK_BASE = st.clickupWorkspace ? `https://app.clickup.com/t/${st.clickupWorkspace}/` : "";
     window.TEAM_TASK_PREFIX = st.clickupTaskPrefix || "";
+    S.defaultPermissionMode = st.defaultPermissionMode;
     $("task-input").placeholder = `${window.TEAM_TASK_PREFIX || "ABC"}-123`;
     S.usage = st.usage || null;
     renderUpdate(st.update);

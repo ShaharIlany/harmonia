@@ -172,7 +172,9 @@ off: the sandbox around protected folders (`sandbox-exec`), voice-message
 transcription, the Keychain (Slack tokens go to a private file instead, as on
 Linux) and updating itself (download the next release by hand). Opening files,
 folders, links and the Claude app goes through Explorer and the default
-handlers; the sign-in opens a console window on `claude auth login`.
+handlers; the sign-in opens a console window on `claude auth login`. With no
+sandbox, jobs ask before running commands by default (see Permissions): pick
+"Run everything without asking" in a channel's menu to turn that off.
 
 ## Chat sessions and jobs
 
@@ -376,9 +378,14 @@ Jobs and memories stay.
 - **Errors:** a failed turn leaves its messages unread, and the error has a
   **Try again** button. A chat session file that disappeared is replaced by a
   new session automatically.
-- **Permissions:** every run uses `--permission-mode bypassPermissions`
-  (`PERMISSION_MODE` in `runner.ts`). Allow / Deny cards only appear if that
-  constant is changed back to a stricter mode.
+- **Permissions:** each channel's menu has a Permissions choice for its jobs:
+  run everything without asking (`bypassPermissions`), edit files freely and
+  ask before commands (`acceptEdits`), or ask before edits and commands
+  (`default`). Asking shows the Allow once / Always / Deny cards. A channel with
+  no choice gets settings.json `"permissionMode"` (`bypass`, `acceptEdits` or
+  `ask`), else `bypass` where the sandbox is on (the Mac) and `acceptEdits`
+  where it isn't. Chat turns stay on bypass (no file-edit tools, and they have
+  no cards) unless they have no tool list and no sandbox.
 - **DMs:** click a teammate in the sidebar for your DM with them: a channel
   of its own (`dm` set on it, made the first time you open it), shown under the
   teammate with its unread count. Only that teammate reads it and only that
