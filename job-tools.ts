@@ -1,4 +1,4 @@
-// The chat sessions' team tools: start_job, check_jobs, stop_job and request_tool, as a stdio MCP server.
+// The chat sessions' team tools: start_job, check_jobs, read_job, stop_job and request_tool, as a stdio MCP server.
 // Claude Code starts it for each chat turn; every call goes back to the Harmonia server for that turn.
 const URL_ = process.env.HARMONIA_URL!;
 const TURN = process.env.HARMONIA_TURN!;
@@ -17,7 +17,13 @@ const TOOLS = [
         title: { type: "string", description: "Short title, 3 to 8 words, shown on the job card and the session name." },
         brief: {
           type: "string",
-          description: "Complete, self-contained instructions: the goal, relevant files, task ids and links, constraints, what done looks like, and what to report back.",
+          description: "The goal plus context, self-contained: relevant files, task ids and links, constraints, and what to report back.",
+        },
+        done_when: { type: "string", description: "What finished looks like and how the job can check it (a command to run, a file that exists, a question answered)." },
+        approved_actions: {
+          type: "array",
+          items: { type: "string", enum: ["commit", "push", "open_pr", "deploy", "send_message", "none"] },
+          description: "What the user has said yes to in this chat. Use [\"none\"] when they haven't approved anything beyond the work itself.",
         },
         continue_job: { type: "string", description: "Optional id of an earlier job of yours (like j3) whose session this job should continue." },
         size: {
@@ -26,13 +32,18 @@ const TOOLS = [
           description: "Optional, default normal. \"small\" runs the job on a smaller, cheaper model: use it when the job only reads, searches, summarises or makes a mechanical change. Design, debugging, multi-file changes and reviews are normal. When unsure, normal.",
         },
       },
-      required: ["title", "brief"],
+      required: ["title", "brief", "done_when", "approved_actions"],
     },
   },
   {
     name: "check_jobs",
     description: "List the recent jobs in this channel (everyone's), with their status and what each is doing right now.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "read_job",
+    description: "Read one job in this channel (any teammate's): its title, teammate, status, brief and full report.",
+    inputSchema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] },
   },
   {
     name: "stop_job",

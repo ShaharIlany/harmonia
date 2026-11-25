@@ -265,7 +265,7 @@ Bun.serve({
     }
 
     // A chat session's job tools (job-tools.ts) call back here, with a token that's only good for that turn.
-    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|stop_job|request_tool)$/);
+    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|read_job|stop_job|request_tool)$/);
     if (turn && req.method === "POST") {
       const r = team.turnTool(turn[1], turn[2], await req.json().catch(() => ({})));
       return r.error ? json({ error: r.error }, 403) : json({ text: r.text });
