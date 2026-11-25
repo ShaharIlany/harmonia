@@ -279,8 +279,9 @@ Jobs and memories stay.
   needed now). A woken teammate first checks it's really
   its turn; if not, it answers `(no reply)` and nothing is posted (chat-rules.md,
   "Is it your turn?"). After 8 agent turns without you, the chat pauses.
-- **Job status updates:** every 5 minutes while a job runs
-  (`HARMONIA_STATUS_MINUTES`), its teammate posts what's happening, what's
+- **Job status updates:** at 5, 15 and 35 minutes into a job, then every 20
+  (`HARMONIA_STATUS_MINUTES` scales it), and only when something changed since
+  the last one (or an ETA warning is new), its teammate posts what's happening, what's
   done and what the job is waiting for. A one-shot Haiku call (`quickAnswer`
   in `runner.ts`, no tools, no saved session) writes it from the job's last 30
   steps: its narration, tool calls and results. The chat session isn't
