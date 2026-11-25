@@ -22,8 +22,6 @@ The data folder is `~/Library/Application Support/Harmonia` on a Mac,
 | `protectedAllow` | `[]` | Folders macOS protects that teammates may use anyway, like `["~/Downloads"]`. Mac only. Read on every turn, no restart. |
 | `protectedGuard` | `true` | `false` turns the macOS sandbox off. Mac only. Read on every turn, no restart. |
 | `permissionMode` | `bypass` where the sandbox is on (the Mac), else `acceptEdits` | What a channel with no Permissions choice of its own gets for its jobs: `bypass`, `acceptEdits` or `ask`. |
-| `chatRotateTokens` | `60000` | A chat session that grows past this many tokens is replaced by a new one. |
-| `chatRotateIdleTokens` | `30000` | The same, for a session that has been idle for an hour. |
 | `autoUpdate` | `true` | `false` only shows updates, without installing them. |
 | `updateFrom` | `release` | `source` follows a branch's commits instead of releases. |
 | `updateBranch` | the branch the app was built from (`main`) | With `"updateFrom": "source"`, the branch to follow. |
@@ -31,8 +29,7 @@ The data folder is `~/Library/Application Support/Harmonia` on a Mac,
 | `updateChannel` | `stable` | `beta` also takes betas (prereleases). |
 | `voiceLanguages` | the Mac's preferred languages | The languages voice messages are heard in, like `["he-IL", "en-US"]`. |
 
-`permissionMode`, `chatRotateTokens`, `chatRotateIdleTokens` and `updateChannel`
-are not on the settings page: edit `settings.json` for them.
+`permissionMode` and `updateChannel` are not on the settings page: edit `settings.json` for them.
 
 ## Environment variables
 

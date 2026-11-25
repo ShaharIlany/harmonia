@@ -31,9 +31,6 @@ holds nothing per channel or per turn, and each turn only appends the channel's
 new lines, so the cached prefix stays put. Runs set
 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. Hover a message's time, or look at the
 sessions panel, to see how much input came from the cache.
-A chat session that grows past 60,000 tokens, or past 30,000 after an hour idle,
-is replaced by a new one (it re-reads each channel's recent lines); tune with
-`chatRotateTokens` and `chatRotateIdleTokens` in `settings.json`.
 
 **Compaction.** Every API call re-reads the whole conversation, so a session
 that only grows costs more with each step, and more again when its cache has
@@ -45,9 +42,7 @@ channel's new messages anyway) and 200k for jobs. Claude Code compacts about
 13k below it, and the typing bar or the job says "compacting the conversation"
 meanwhile. `HARMONIA_CHAT_COMPACT_WINDOW` and `HARMONIA_JOB_COMPACT_WINDOW`
 change them (`150k`, `300000`; Claude Code's smallest is 100k), and `off`
-leaves the model's own window. A chat session usually starts fresh before it
-gets there (60,000 tokens by default, `chatRotateTokens`); raise that setting
-above the compact window to let compaction do the work instead.
+leaves the model's own window.
 
 **Plan usage.** The top of the sidebar shows your Claude plan's 5-hour and
 weekly usage, with when each resets. Every CLI run reports them (the

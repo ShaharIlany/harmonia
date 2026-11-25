@@ -12,7 +12,6 @@ import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
 import { recordResult } from "./usage";
 import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
-import { shouldRotate } from "./rotation";
 import { parseTask } from "./tasks";
 import { defaultPermissionMode, permissionModeOf } from "./permission-mode";
 import { RULES, APPROVALS, TEAM_RULES_FILE, chatPrompt, chatTitle, composeBrief, fill, jobPrompt, jobTitle, roster } from "./prompts";
@@ -47,7 +46,7 @@ const STUB = !!setting("STUB");
 export { DEFAULT_CWD, TEAM_AGENTS };
 
 // What used to be defined here and is imported from this file elsewhere (server.ts, the tests).
-export { shouldRotate, parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
+export { parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
 export { CATCH_UP_LINES, OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, capCatchUp, catchUpLines, clipOthers, reportInChat } from "./lines";
 export { etaWarning, nextStatusDelay, readEta, skipStatus, statusFingerprint } from "./eta";
 
@@ -550,12 +549,6 @@ export class Team {
       this.setActivity(ch, agentId, null);
       this.post(ch, { author: "system", text: `Paused after ${MAX_TURNS_PER_USER_MESSAGE} turns. Reply to keep the team going.` });
       return false;
-    }
-    const old = agentSessions[agentId];
-    const why = old && shouldRotate(old, Date.now());
-    if (why) {
-      console.log(`[harmonia] ${nameOf(agentId)}: starting a new chat session (${why})`);
-      this.dropSession(agentId);
     }
     const all = messages.get(ch.id) ?? [];
     const seen = ch.lastSeen[agentId];

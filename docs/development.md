@@ -78,7 +78,6 @@ under Mozart in [How it behaves](behaviour.md). It starts real `claude` runs, on
 | `prompts.ts` | The chat and job system prompts from the rule templates, the team rules file, session titles, the job brief |
 | `eta.ts` | Status-update timing: the wait before the next one, when to skip, the ETA a job gave and its overrun |
 | `status-prompt.ts` | The text a job's status update is written from |
-| `rotation.ts` | When a chat session is too big to keep resuming |
 | `permission-mode.ts` | The permission mode a channel gets when it has no choice of its own |
 | `tasks.ts` | Reading a ClickUp task from an id, a number or a link |
 | `runner.ts` | Runs `claude -p --agent …` (and closes a run that stays open after its answer), plus the stub used by `bun run stub` |
