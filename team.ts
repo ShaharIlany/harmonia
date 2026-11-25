@@ -3,7 +3,7 @@ import { join } from "node:path";
 import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
-import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, SETTINGS, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
 import { dateText, dayLine, nowText, withDays } from "./dates";
 import { filesLines, type Attachment } from "./attachments";
@@ -37,6 +37,28 @@ const STATUS_HISTORY = 6;
 /** Agent turns allowed after one user message before the chat pauses (stops ping-pong). */
 const MAX_TURNS_PER_USER_MESSAGE = 8;
 const STUB = !!setting("STUB");
+/** A chat session this big (tokens) is replaced by a new one (`settings.json`: chatRotateTokens). */
+const ROTATE_TOKENS = Number(SETTINGS.chatRotateTokens) || 60_000;
+/** After sitting idle this long, a session above ROTATE_IDLE_TOKENS is replaced too (`chatRotateIdleTokens`). */
+const ROTATE_IDLE_TOKENS = Number(SETTINGS.chatRotateIdleTokens) || 30_000;
+/** The prompt cache keeps a conversation for an hour (CLAUDE_CODE_PROMPT_CACHE_TTL=1h). */
+const ROTATE_IDLE_MS = 60 * 60_000;
+
+/**
+ * Whether a teammate's chat session is too big to keep resuming, and why (undefined: keep it). Every turn reads
+ * the whole conversation from the prompt cache, and once the cache has expired (an hour idle) the whole thing is
+ * written again at a premium, so a session that is large, or only moderately large and cold, costs more than a
+ * new one that re-reads the channels' recent lines.
+ */
+export function shouldRotate(
+  s: Pick<AgentSession, "context" | "lastAt">,
+  now: number,
+  limits = { tokens: ROTATE_TOKENS, idleTokens: ROTATE_IDLE_TOKENS },
+): string | undefined {
+  const context = s.context ?? 0;
+  if (context > limits.tokens) return `${context} tokens is over ${limits.tokens}`;
+  if (s.lastAt && now - s.lastAt > ROTATE_IDLE_MS && context > limits.idleTokens) return `idle over an hour with ${context} tokens, over ${limits.idleTokens}`;
+}
 
 // TEAM_AGENTS: the Claude Code project that holds the six chat sessions. Claude Code files a session (and its
 // prompt cache) under the folder it started in, so every chat turn runs there, whatever the channel. Jobs run in
@@ -454,11 +476,16 @@ export class Team {
     }
   }
 
+  /** Forget the session and what the teammate has read in every channel (it re-reads them as "new" next time). */
+  private dropSession(agentId: string) {
+    delete agentSessions[agentId];
+    for (const c of channels.values()) delete c.lastSeen[agentId];
+  }
+
   /** Forget the teammate's chat session: its next turn starts a new one and re-reads each channel. Jobs are untouched. */
   resetSession(agentId: string): string | undefined {
     if (this.busy.has(agentId)) return `${nameOf(agentId)} is in the middle of a reply. Try again when it's done.`;
-    delete agentSessions[agentId];
-    for (const c of channels.values()) delete c.lastSeen[agentId];
+    this.dropSession(agentId);
     saveAgentSessions();
     saveChannels();
     this.emitSessions();
@@ -638,6 +665,12 @@ export class Team {
       this.setActivity(ch, agentId, null);
       this.post(ch, { author: "system", text: `Paused after ${MAX_TURNS_PER_USER_MESSAGE} turns. Reply to keep the team going.` });
       return false;
+    }
+    const old = agentSessions[agentId];
+    const why = old && shouldRotate(old, Date.now());
+    if (why) {
+      console.log(`[harmonia] ${nameOf(agentId)}: starting a new chat session (${why})`);
+      this.dropSession(agentId);
     }
     const all = messages.get(ch.id) ?? [];
     const seen = ch.lastSeen[agentId];
