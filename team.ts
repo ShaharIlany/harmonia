@@ -10,7 +10,7 @@ import { languageName, type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
-import { decide } from "./mozart";
+import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
 import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
 import {
   addMessage,
@@ -327,7 +327,11 @@ export class Team {
       if (ch.status !== "archived" && teammate(ch.dm)) this.wake(ch, ch.dm, msg);
       return msg;
     }
-    this.coordinate(ch, msg, waitingOn, named.length ? named : atStart ? [atStart] : undefined);
+    const addressed = named.length ? named : atStart ? [atStart] : undefined;
+    // Only a short acknowledgment can be a reaction, so a message that names its teammate and is more than that goes
+    // straight to it, without waiting for Mozart.
+    if (addressed && !mayBeAcknowledgment(msg)) for (const id of addressed) this.wake(ch, id, msg);
+    else this.coordinate(ch, msg, waitingOn, addressed);
     return msg;
   }
 
@@ -752,7 +756,8 @@ export class Team {
       // waits for the user. In a DM there's nobody else to wake, and nobody for Mozart to pick.
       const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
       for (const id of to) this.wake(ch, id, first);
-      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0) setTimeout(() => this.coordinate(ch, first), after);
+      // Mozart is only asked when the reply could concern someone else: it names a teammate, or one is busy or waited on.
+      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0 && mayNeedFollowUp(r.text, agentId, ch)) setTimeout(() => this.coordinate(ch, first), after);
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
