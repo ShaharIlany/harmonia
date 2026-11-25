@@ -1,0 +1,23 @@
+# Runs the tests (`bun test`: unit tests plus one end-to-end run of the server with stub teammates).
+# It's also called by tag.yml, so a push to main is only tagged and released when these pass. Pushes to main don't
+# trigger it on their own for that reason: tag.yml runs it, and a second run would only repeat it.
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - run: bun test

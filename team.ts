@@ -1098,7 +1098,7 @@ export class Team {
  * The ETA a status update gave ("ETA ~15 min", "ETA ~1.5 h"), in minutes, and whether it gave a reason for it
  * ("ETA ~15 min because the build took longer"). Not "Over the ETA by…" nor "the first ETA (20 min)".
  */
-function readEta(text: string): { eta?: number; reason?: boolean } {
+export function readEta(text: string): { eta?: number; reason?: boolean } {
   const m = text.match(/\bETA\s*[:~≈]?\s*~?(\d+(?:\.\d+)?)\s*(h|hr|hours?|m|mins?|minutes?)\b(.*)/i);
   if (!m) return {};
   return { eta: Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)), reason: /^\s*[,(–—-]?\s*because\s+\S/i.test(m[3]) };
@@ -1114,7 +1114,7 @@ function overrun(u: { ts: number; eta: number }, at: number) {
  * Whether a job's next status update leads with a warning. It's measured against the latest ETA; once that's overrun,
  * a later ETA replaces it only when it gives a reason ("because …"). And past twice the job's first ETA, it warns whatever.
  */
-function etaWarning(updates: { ts: number; eta?: number; reason?: boolean }[], startedAt: number, now: number) {
+export function etaWarning(updates: { ts: number; eta?: number; reason?: boolean }[], startedAt: number, now: number) {
   let ref: { ts: number; eta: number } | undefined;
   for (const u of updates) {
     if (u.eta === undefined) continue;

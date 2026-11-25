@@ -149,6 +149,9 @@ tools (`harmonia-server --job-tools`).
 To run from source instead: `HARMONIA_DATA="$HOME/Library/Application Support/Harmonia" bun server.ts`
 or `bun run stub` to try the UI.
 
+Tests: `bun test` runs the unit tests and one end-to-end run of the server with stub teammates (no `claude` runs,
+nothing outside a temp folder is touched). Releases wait for them: `tag.yml` only tags a push to `main` once they pass.
+
 No dependencies, no API key: everything runs on the `claude` CLI sign-in.
 
 ## Windows
