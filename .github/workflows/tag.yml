@@ -1,7 +1,8 @@
 # Tags every push to main as the next patch version (v2.1.1 -> v2.1.2) and starts a release build for it.
 #
 # A tag pushed with the workflow's own token doesn't start other workflows, so this starts release.yml itself
-# (workflow_dispatch on the new tag). Tags you push by hand still release on their own, as before.
+# (workflow_dispatch on the new tag), as a prerelease: only apps on the beta channel get it until the Promote
+# workflow (promote.yml) makes it the latest release. Tags you push by hand still release on their own, in full.
 #
 # For a minor or major version, tag the commit yourself and push both at once:
 #   git tag v2.2.0 && git push --atomic origin main v2.2.0
@@ -66,4 +67,4 @@ jobs:
         if: steps.next.outputs.tag
         env:
           TAG: ${{ steps.next.outputs.tag }}
-        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f prerelease=true

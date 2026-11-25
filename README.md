@@ -69,11 +69,15 @@ Every version tag is a release, built on GitHub
 ([.github/workflows/release.yml](.github/workflows/release.yml), on an Apple
 Silicon runner), and every push to `main` gets a version tag: the next patch
 after the newest one (v2.1.1, then v2.1.2), from
-[.github/workflows/tag.yml](.github/workflows/tag.yml). So pushing to `main`
-ships a release, and installed apps update to it.
+[.github/workflows/tag.yml](.github/workflows/tag.yml). A push to `main` is
+published as a **beta** (a GitHub prerelease): only apps that opted in get it.
+To give a build to everyone, run the **Promote** workflow
+([promote.yml](.github/workflows/promote.yml), Actions tab) with its tag, say
+`v2.1.7`; that makes it the latest release, which is what other installed apps
+and `install.sh` use. To opt in, put `"updateChannel": "beta"` in `settings.json`.
 
 For a minor or major version, tag the commit yourself and push it with the
-commit. A commit that already has a version tag gets no other, and the patches
+commit. A tag you push by hand is a full release at once, no promoting. A commit that already has a version tag gets no other, and the patches
 after it count up from it:
 
 ```bash
@@ -124,7 +128,8 @@ tools (`harmonia-server --job-tools`).
   between all of these, only @mentions of you, or off (saved per browser). In
   a browser they're web notifications.
 - **Updates over the air:** every 30 minutes the app asks GitHub for the
-  repo's latest release (`updates.ts`; the repo is in `build.json`, written by
+  repo's latest full release, or on the beta channel the newest one including
+  betas (`updates.ts`; the repo is in `build.json`, written by
   `build.sh`). When it's newer than the running version, the app downloads the
   zip in the background, checks its SHA-256, unpacks it and signs it ad hoc. It swaps the new build in when no
   teammate or job is working and you haven't sent anything for 10 minutes: the
@@ -135,7 +140,8 @@ tools (`harmonia-server --job-tools`).
   pending, with **Restart to update** to install it as soon as nobody's
   working. Harmonia → Check for Updates… checks now. A build without a
   version (made from source) counts as older than any release.
-  `settings.json`: `updateRepo` (`owner/name`), `autoUpdate: false` to only
+  `settings.json`: `updateRepo` (`owner/name`), `"updateChannel": "beta"`,
+  `autoUpdate: false` to only
   show updates, and `"updateFrom": "source"` to follow a branch's commits
   instead (`updateBranch`): the app then fetches them into its own clone
   (`source/` in the data folder) and builds them there with `build.sh`, which
