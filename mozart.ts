@@ -35,7 +35,7 @@ const FIRST_READ = 30;
 /** Messages back the fallback rules look for the teammate the user is talking with. */
 const CONVERSATION = 4;
 
-const RULES = readFileSync(mozartRulesFile, "utf8");
+const RULES = readFileSync(mozartRulesFile, "utf8").replace(/\r\n/g, "\n"); // LF whatever the checkout used
 const said = (m: Message) => m.author !== "system" && m.author !== "guest" && m.kind !== "status" && m.kind !== "job";
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 /** One emoji (with its skin tone or ZWJ parts). */
@@ -79,6 +79,36 @@ export function mayNeedFollowUp(text: string, authorId: string, ch: Channel): bo
   if (ch.jobs.some((j) => j.status === "running" && j.agentId !== authorId)) return true;
   return ROSTER.some((r) => r.id !== authorId && new RegExp(`(?<![\\p{L}\\p{N}_])${r.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "iu").test(text));
 }
+
+/**
+ * What Mozart is shown for one decision: the channel's new lines, the latest message and the question. Pure, so the
+ * routing eval (evals/mozart-eval.ts) builds exactly the prompt `decide` sends.
+ */
+export function mozartUserPrompt(o: { channel: string; fresh: boolean; lines: string[]; who: string; text: string; waitingOn?: string; addressed?: string[] }) {
+  const { addressed } = o;
+  const waiting = o.waitingOn && teammate(o.waitingOn) ? `\n(${nameOf(o.waitingOn)} asked ${USER_NAME} a question and is waiting for the answer.)` : "";
+  const names = addressed?.map(nameOf).join(" and ");
+  return [
+    o.fresh ? `You're new in #${o.channel}. Its recent lines:` : `New in #${o.channel}:`,
+    ...o.lines,
+    "",
+    `The latest message is ${o.who}'s: "${clip(o.text.replace(/\s+/g, " ").trim(), 400)}".${waiting}`,
+    addressed?.length
+      ? `It's for ${names} (named, or a reply to their message): they answer it, unless a reaction is all it needs. Only the JSON, with only ${addressed.join(", ")} in it.`
+      : "Who should answer it now? Only the JSON.",
+  ].join("\n");
+}
+
+/** The `claude` flags of a Mozart run: Haiku, no tools, the channel's rules. The routing eval runs with the same ones. */
+export const mozartMode = (ch: Channel) => [
+  "--model", MODEL,
+  "--effort", "low",
+  "--system-prompt", mozartPrompt(ch),
+  "--tools", "",
+  "--strict-mcp-config",
+  "--setting-sources", "project",
+  "--disable-slash-commands",
+];
 
 export const mozartTitle = (ch: Channel) => `[Mozart] #${ch.name}`;
 
@@ -165,18 +195,15 @@ export async function decide(o: {
   // mayNeedFollowUp: no call made) is still ahead of `seen` and shows up in the next call. That's why skipping is safe.
   const from = fresh ? Math.max(0, i + 1 - FIRST_READ) : Math.min(old!.seen, i);
   const lines = withDays(all.slice(from, i + 1).filter((m) => m.kind !== "status"), o.line);
-  const who = msg.author === "user" ? USER_NAME : nameOf(msg.author);
-  const waiting = o.waitingOn && teammate(o.waitingOn) ? `\n(${nameOf(o.waitingOn)} asked ${USER_NAME} a question and is waiting for the answer.)` : "";
-  const names = addressed?.map(nameOf).join(" and ");
-  const prompt = [
-    fresh ? `You're new in #${ch.name}. Its recent lines:` : `New in #${ch.name}:`,
-    ...lines,
-    "",
-    `The latest message is ${who}'s: "${clip(text.replace(/\s+/g, " ").trim(), 400)}".${waiting}`,
-    addressed?.length
-      ? `It's for ${names} (named, or a reply to their message): they answer it, unless a reaction is all it needs. Only the JSON, with only ${addressed.join(", ")} in it.`
-      : "Who should answer it now? Only the JSON.",
-  ].join("\n");
+  const prompt = mozartUserPrompt({
+    channel: ch.name,
+    fresh,
+    lines,
+    who: msg.author === "user" ? USER_NAME : nameOf(msg.author),
+    text,
+    waitingOn: o.waitingOn,
+    addressed,
+  });
 
   const session: MozartSession = fresh ? { sessionId: crypto.randomUUID(), createdAt: Date.now(), seen: 0, turns: 0, cost: 0 } : old!;
   const run = runAgent({
@@ -188,15 +215,7 @@ export async function decide(o: {
     title: mozartTitle(ch),
     allowedTools: [],
     systemPrompt: "",
-    mode: [
-      "--model", MODEL,
-      "--effort", "low",
-      "--system-prompt", mozartPrompt(ch),
-      "--tools", "",
-      "--strict-mcp-config",
-      "--setting-sources", "project",
-      "--disable-slash-commands",
-    ],
+    mode: mozartMode(ch),
     onActivity: () => {},
   });
   const timer = setTimeout(() => run.stop(), addressed?.length ? ADDRESSED_TIMEOUT_MS : TIMEOUT_MS);
