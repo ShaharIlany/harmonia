@@ -248,13 +248,16 @@ Jobs and memories stay.
   its emoji (🙏, 👍, 🎉…) goes on your message, here and in Slack, and the line
   under it says "🎼 Mozart: Elliot reacted instead · thanks Elliot". Anything
   that also asks something, gives work, says yes to an offer or pushes back
-  gets an answer. For a message that names its teammate, the decision waits at
+  gets an answer. Only a short message (about 12 words, no question, file,
+  voice note, code or link) is even asked about: anything longer that names
+  its teammate goes straight to them. For the short ones the decision waits at
   most 15 s; then the teammate answers as usual. The teammates read your
   message later with "(reacted: Elliot 🙏)", so they don't answer it again.
 - **After a teammate's message, too.** A teammate's `@Name` wakes that
   teammate (a handoff), unless it's in the same sentence as a question to you,
-  and a question to you waits for you. Otherwise Mozart reads the reply and
-  decides whether anyone follows up: usually nobody, but "Murphy, can you try
+  and a question to you waits for you. Otherwise, if the reply names another
+  teammate (or one has a job running, or is waiting on you), Mozart reads it and
+  decides whether anyone follows up; a reply that doesn't skips Mozart: usually nobody, but "Murphy, can you try
   to break it?" without the `@` wakes Murphy. A note shows only when it wakes
   someone.
 - **Protected folders:** every `claude` the app starts runs in a macOS

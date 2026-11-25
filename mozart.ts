@@ -56,6 +56,29 @@ export function mozartPrompt(ch: Channel) {
   return RULES.replace(/\{\{(\w+)\}\}/g, (all, k) => vars[k] ?? all);
 }
 
+/**
+ * Could this message of yours be a bare acknowledgment ("thanks!", "ok", "no need, thanks")? Only then is it worth
+ * asking Mozart whether an emoji is enough. Anything long, with a question, a file, a voice note, a code block or a
+ * link has something in it to answer.
+ */
+export function mayBeAcknowledgment(msg: Message): boolean {
+  const text = msg.text.trim();
+  if (msg.meta?.files?.length || msg.meta?.voice) return false;
+  if (text.includes("?") || text.includes("`") || /https?:\/\/|www\./i.test(text)) return false;
+  return text.split(/\s+/).filter(Boolean).length <= 12;
+}
+
+/**
+ * Could a teammate's reply concern another teammate? It names one (as a whole word, no `@` needed: "Murphy, can you
+ * try to break it?"), another teammate has a job running in the channel, or the reply's channel is waiting on another
+ * teammate's question to you. Otherwise Mozart would say nobody, so asking it only costs time and tokens.
+ */
+export function mayNeedFollowUp(text: string, authorId: string, ch: Channel): boolean {
+  if (ch.waitingOn && ch.waitingOn !== authorId) return true;
+  if (ch.jobs.some((j) => j.status === "running" && j.agentId !== authorId)) return true;
+  return ROSTER.some((r) => r.id !== authorId && new RegExp(`(?<![\\p{L}\\p{N}_])${r.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "iu").test(text));
+}
+
 export const mozartTitle = (ch: Channel) => `[Mozart] #${ch.name}`;
 
 /**
@@ -137,6 +160,8 @@ export async function decide(o: {
   const text = parts.map((m) => m.text).join("\n");
   const old = ch.mozart;
   const fresh = !old || (old.context ?? 0) > MAX_CONTEXT;
+  // `seen` only moves when Mozart actually reads a line, so a message the caller skipped (mayBeAcknowledgment,
+  // mayNeedFollowUp: no call made) is still ahead of `seen` and shows up in the next call. That's why skipping is safe.
   const from = fresh ? Math.max(0, i + 1 - FIRST_READ) : Math.min(old!.seen, i);
   const lines = withDays(all.slice(from, i + 1).filter((m) => m.kind !== "status"), o.line);
   const who = msg.author === "user" ? USER_NAME : nameOf(msg.author);
