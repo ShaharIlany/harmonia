@@ -181,7 +181,7 @@ Every teammate has two kinds of Claude Code session:
   agent (`--agents`) with the agent's own tool allowlist minus file edits
   (`Edit`, `Write`, `NotebookEdit`), so quick lookups (an email, a meeting, a
   ClickUp task, a file, `git status`) and Outlook drafts happen in the chat
-  turn. It also gets `start_job`, `check_jobs` and `stop_job` (`job-tools.ts`, a
+  turn. It also gets `start_job` (brief, done_when, approved_actions), `check_jobs`, `read_job` and `stop_job` (`job-tools.ts`, a
   stdio MCP server that calls back into the app with a token that's valid for
   that turn only). Its system prompt is `chat-rules.md` plus the agent's
   instructions. Model and

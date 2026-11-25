@@ -47,7 +47,7 @@ export type RunOptions = {
 
 /** File edits always go through a job, so every change has a card and its own session. */
 export const NO_CHAT_TOOLS = ["Edit", "Write", "NotebookEdit"];
-export const JOB_TOOLS = ["mcp__team__start_job", "mcp__team__check_jobs", "mcp__team__stop_job", "mcp__team__request_tool"];
+export const JOB_TOOLS = ["mcp__team__start_job", "mcp__team__check_jobs", "mcp__team__read_job", "mcp__team__stop_job", "mcp__team__request_tool"];
 
 /** The chat side's tools: the agent's allowlist without file edits, plus the job tools. Undefined = every tool. */
 export const chatToolsFor = (allowlist: string[]) =>

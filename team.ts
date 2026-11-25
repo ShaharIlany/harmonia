@@ -1,11 +1,11 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chatRulesFile from "./chat-rules.md" with { type: "file" };
 import jobRulesFile from "./job-rules.md" with { type: "file" };
 import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
-import { filesLines, type Attachment } from "./attachments";
+import { attachmentPath, filesLines, type Attachment } from "./attachments";
 import { languageName, type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
@@ -120,6 +120,17 @@ export function bubbles(text: string): string[] {
   return out.map((b) => b.trim()).filter(Boolean);
 }
 
+/** The text a job is given and its card shows: the brief, what done looks like, and what the user approved. */
+function composeBrief(input: { brief: string; done_when?: string; approved_actions?: string[] }): string {
+  let text = input.brief.trim();
+  if (input.done_when?.trim()) text += `\n\nDone when: ${input.done_when.trim()}`;
+  if (input.approved_actions) {
+    const yes = input.approved_actions.filter((a) => a !== "none").map((a) => APPROVAL_WORDS[a] ?? a);
+    text += yes.length ? `\n\nApproved by ${USER_NAME}: ${yes.join(", ")}` : `\n\nApproved by ${USER_NAME}: nothing. Draft, don't send, commit, push or deploy.`;
+  }
+  return text;
+}
+
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "\n…(cut)" : s);
 
 /**
@@ -177,7 +188,11 @@ if (firstChatSessions) {
 }
 
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
-type ChatTools = { startJob(input: any): string; checkJobs(): string; stopJob(jobId: string): string; requestTool(input: any): string };
+type ChatTools = { startJob(input: any): string; checkJobs(): string; readJob(jobId: string): string; stopJob(jobId: string): string; requestTool(input: any): string };
+
+/** What the user can have said yes to in the chat, as start_job takes it (job-tools.ts has the same list). */
+const APPROVALS = ["commit", "push", "open_pr", "deploy", "send_message", "none"];
+const APPROVAL_WORDS: Record<string, string> = { commit: "commit", push: "push", open_pr: "open a PR", deploy: "deploy", send_message: "send messages" };
 /** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
 type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[]; answers?: string };
 
@@ -671,7 +686,7 @@ export class Team {
         }),
       },
       onActivity: (s) => {
-        const status = /start_job/.test(s) ? "starting a job" : /check_jobs/.test(s) ? "checking jobs" : /stop_job/.test(s) ? "stopping a job" : /request_tool/.test(s) ? "asking for a tool" : s;
+        const status = /start_job/.test(s) ? "starting a job" : /read_job/.test(s) ? "reading a job" : /check_jobs/.test(s) ? "checking jobs" : /stop_job/.test(s) ? "stopping a job" : /request_tool/.test(s) ? "asking for a tool" : s;
         busy.activity = status;
         this.setActivity(ch, agentId, status);
         this.emitSessions();
@@ -794,9 +809,16 @@ export class Team {
     try {
       if (tool === "start_job") {
         if (typeof input?.title !== "string" || typeof input?.brief !== "string" || !input.brief.trim()) return { text: "start_job needs a title and a brief." };
+        if (typeof input.done_when !== "string" || !input.done_when.trim())
+          return { text: "start_job needs done_when: what finished looks like and how the job can check it. Nothing was started; call it again with done_when." };
+        const ok = Array.isArray(input.approved_actions) ? input.approved_actions : undefined;
+        if (!ok || !ok.length || ok.some((a: unknown) => typeof a !== "string" || !APPROVALS.includes(a)))
+          return { text: `start_job needs approved_actions: a list with some of ${APPROVALS.join(", ")} (what ${USER_NAME} said yes to in this chat), or ["none"]. Nothing was started; call it again with approved_actions.` };
+        if (ok.includes("none") && ok.length > 1) return { text: 'approved_actions has "none" together with other actions. Use ["none"] alone, or list only what was approved. Nothing was started.' };
         return { text: turn.tools.startJob(input) };
       }
       if (tool === "check_jobs") return { text: turn.tools.checkJobs() };
+      if (tool === "read_job") return { text: turn.tools.readJob(String(input?.job_id ?? "")) };
       if (tool === "stop_job") return { text: turn.tools.stopJob(String(input?.job_id ?? "")) };
       if (tool === "request_tool") return { text: turn.tools.requestTool(input) };
       return { error: `Unknown tool ${tool}.` };
@@ -814,6 +836,12 @@ export class Team {
         const list = ch.jobs.filter((j) => j.kind === "job").slice(-15);
         if (!list.length) return "No jobs in this channel yet.";
         return list.map((j) => `${j.id} · ${nameOf(j.agentId)} · ${j.status}${j.activity ? ` (${j.activity})` : ""} · ${j.title}`).join("\n");
+      },
+      readJob: (jobId) => {
+        const j = ch.jobs.find((x) => x.id === jobId.trim() && x.kind === "job");
+        if (!j) return `There's no job ${jobId} in this channel.`;
+        const report = j.report ? clip(j.report, 20000) : j.status === "running" ? "(none yet, it's still running)" : "(none)";
+        return `Job ${j.id} · ${j.title}\nTeammate: ${nameOf(j.agentId)}\nStatus: ${j.status}${j.activity ? ` (${j.activity})` : ""}\n\nBrief:\n${j.brief}\n\nReport:\n${report}`;
       },
       stopJob: (jobId) => this.stopJob(ch, jobId),
       requestTool: (input) => this.requestTool(ch, agentId, input),
@@ -891,7 +919,7 @@ export class Team {
   }
 
   /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string; feedback?: boolean }, prompt?: string): string {
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; done_when?: string; approved_actions?: string[]; continue_job?: string; feedback?: boolean }, prompt?: string): string {
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
@@ -901,7 +929,7 @@ export class Team {
       agentId,
       sessionId: prev?.sessionId ?? crypto.randomUUID(),
       title: input.title.trim().slice(0, 80) || "Job",
-      brief: input.brief.trim(),
+      brief: composeBrief(input),
       status: "running",
       startedAt: Date.now(),
       cost: 0,
@@ -912,8 +940,25 @@ export class Team {
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
     this.emitJob(ch, job); // before the card, so the page can draw it
     this.post(ch, { author: agentId, kind: "job", text: `started job ${job.id}: ${job.title}`, meta: { jobId: job.id, ...this.answering(ch.id, agentId) } });
-    this.runJob(ch, job, prompt ?? job.brief, !!prev);
+    // A new job also gets the channel's context, built here; a resumed one already has it in its session.
+    this.runJob(ch, job, prompt ?? (prev ? job.brief : `${job.brief}\n\n${this.contextPack(ch, job)}`), !!prev);
     return `Started job ${job.id}. Its report comes back to you here when it finishes.`;
+  }
+
+  /** What a job can't get from the chat: where it is, its ClickUp task, the recent files, and a transcript to read if the brief falls short. */
+  private contextPack(ch: Channel, job: Job): string {
+    const all = messages.get(ch.id) ?? [];
+    const out = [`Context: this job was started from ${placeOf(ch)}.`];
+    if (ch.task) out.push(`ClickUp task: ${ch.task.id} ${ch.task.url}`);
+    const files = all.slice(-30).flatMap((m) => (m.meta?.files ?? []).map((f) => attachmentPath(ch.id, f)));
+    if (files.length) out.push(`Files attached in the channel's recent messages:\n${files.map((f) => `- ${f}`).join("\n")}`);
+    const path = join(DATA, "transcripts", `${ch.id}-${job.id}.txt`);
+    try {
+      mkdirSync(join(DATA, "transcripts"), { recursive: true });
+      writeFileSync(path, all.slice(-100).map((m) => line(m, ch.id)).join("\n") + "\n");
+      out.push(`The channel's last 100 lines are in ${path}; read it only if the brief leaves something unclear.`);
+    } catch {}
+    return out.join("\n");
   }
 
   /** `fresh`: when resuming, what to start over with if the job's session never got saved. */
