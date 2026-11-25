@@ -4,6 +4,7 @@ import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync }
 import { dirname, join } from "node:path";
 import { agentFile, readAgent } from "./agents";
 import { DATA, DEFAULT_CWD, SETTINGS, TEAM_AGENTS } from "./paths";
+import { isMac, isWindows } from "./platform";
 import { ROSTER } from "./roster";
 import { CLAUDE } from "./runner";
 import type { UpdateStatus } from "./updates";
@@ -38,7 +39,7 @@ function writable(dir: string): boolean {
   }
 }
 
-const OS = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "this system";
+const OS = isWindows ? "Windows" : isMac ? "macOS" : "this system";
 
 export async function setupChecks(cliAuth: () => Promise<any>, update: UpdateStatus): Promise<Check[]> {
   const checks: Check[] = [];
@@ -106,7 +107,7 @@ export async function setupChecks(cliAuth: () => Promise<any>, update: UpdateSta
   });
 
   // platform features: information, not failures
-  const mac = process.platform === "darwin";
+  const mac = isMac;
   const guard = mac && existsSync("/usr/bin/sandbox-exec") && liveSettings().protectedGuard !== false;
   add({
     id: "sandbox",
