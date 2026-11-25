@@ -15,6 +15,7 @@ import { MOZART_DIR } from "./paths";
 import { setting } from "./env";
 import { ROSTER, TRIAGE, USER_NAME, nameOf, teammate } from "./roster";
 import { runAgent } from "./runner";
+import { recordResult } from "./usage";
 import { saveChannels, type Channel, type Message, type MozartSession } from "./store";
 
 /** A teammate's emoji on the message, instead of a turn. */
@@ -175,6 +176,7 @@ export async function decide(o: {
   const timer = setTimeout(() => run.stop(), addressed?.length ? ADDRESSED_TIMEOUT_MS : TIMEOUT_MS);
   const r = await run.done.catch((e) => ({ text: String(e), isError: true, cost: 0, context: undefined }));
   clearTimeout(timer);
+  recordResult("mozart", r, { channelId: ch.id });
 
   if (r.isError) {
     // A lost session file (deleted, another Mac): the next decision starts a new one.

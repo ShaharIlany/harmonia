@@ -1002,8 +1002,9 @@
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
-    $("agent-view").hidden = view === "channel" || view === "slack";
+    $("agent-view").hidden = view === "channel" || view === "slack" || view === "usage";
     $("slack-view").hidden = view !== "slack";
+    $("usage-view").hidden = view !== "usage";
     $("app").classList.remove("nav-open");
     renderSidebar();
     renderSlackStatus();
@@ -1183,6 +1184,13 @@
   }
   $("slack-status").addEventListener("click", openSlack);
 
+  // The plan-usage meters at the top of the sidebar open the Usage page (usage-page.js).
+  function openUsage() {
+    showView("usage");
+    window.UsagePage.render();
+  }
+  $("usage").addEventListener("click", openUsage);
+
   // ---------- Plan usage (top of the sidebar) ----------
   // Same pacing as the usage-limits-band mod (~/.claude/mods/usage-limits-band): the marker is where usage
   // would be now if it were spread evenly over the window. Fill past it means you're burning faster than time.
@@ -1254,7 +1262,7 @@
     const u = S.usage;
     const at = Date.now();
     const views = u ? [usageView("fiveHour", u.fiveHour, at), usageView("sevenDay", u.sevenDay, at)].filter(Boolean) : [];
-    $("usage").innerHTML = views.length ? views.map(meter).join("") : `<div class="u-empty">Checking usage…</div>`;
+    $("usage").innerHTML = (views.length ? views.map(meter).join("") : `<div class="u-empty">Checking usage…</div>`) + `<div class="u-more">What the runs cost ›</div>`;
     // Narrow screens hide the sidebar, so the header carries a short copy.
     $("usage-mini").innerHTML = views
       .map((v) => `<span title="${esc(v.title)}">${USAGE_LABEL[v.kind]} <b class="u-${v.level}">${v.used}%</b></span>`)

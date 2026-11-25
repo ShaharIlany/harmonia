@@ -4,6 +4,7 @@ import indexHtml from "./public/index.html" with { type: "file" };
 import appJs from "./public/app.js" with { type: "file" };
 import agentPageJs from "./public/agent-page.js" with { type: "file" };
 import slackPageJs from "./public/slack-page.js" with { type: "file" };
+import usagePageJs from "./public/usage-page.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
@@ -17,6 +18,7 @@ import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus,
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
+import { usageSummary } from "./usage";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 4747);
@@ -26,6 +28,7 @@ const PUBLIC: Record<string, string> = {
   "app.js": appJs,
   "agent-page.js": agentPageJs,
   "slack-page.js": slackPageJs,
+  "usage-page.js": usagePageJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
 };
@@ -316,6 +319,14 @@ Bun.serve({
       if (p === "/api/usage" && post) {
         refreshUsage(5 * 60_000);
         return json({ usage });
+      }
+
+      if (p === "/api/usage/summary" && !post) {
+        const days = Math.min(Math.max(Number(url.searchParams.get("days")) || 7, 1), 365);
+        // "1 day" means today: from local midnight, so the by-day table's last row is the whole total.
+        const from = new Date();
+        from.setHours(0, 0, 0, 0);
+        return json(usageSummary(from.getTime() - (days - 1) * 86_400_000));
       }
 
       if (p === "/api/cli-auth" && !post) return json(await cliAuth(url.searchParams.has("fresh")));

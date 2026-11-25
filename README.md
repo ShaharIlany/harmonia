@@ -209,6 +209,11 @@ over the window, the fill turns amber or red when you're 5 or 15 points ahead
 of it (or past 80% / 90%), and a line says whether you're on pace and, if
 you're running hot, when you'd run out before the reset.
 
+**Usage page.** Click the meters to see what the runs cost: every chat turn, job,
+Mozart decision, job status update and usage probe adds a line to `usage.jsonl`
+in the data folder, and the page adds them up by kind, teammate, channel and day
+(Claude Code's own cost estimates).
+
 **One reply at a time.** A teammate's chat session answers one channel at a
 time. Other channels that need it wait in a queue (the typing bar says "busy in
 #x, then here"). Jobs run in parallel and don't block the chat.
