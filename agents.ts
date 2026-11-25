@@ -3,6 +3,12 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import dali from "./agents/dali.md" with { type: "file" };
+import elliot from "./agents/elliot.md" with { type: "file" };
+import emily from "./agents/emily.md" with { type: "file" };
+import leo from "./agents/leo.md" with { type: "file" };
+import murphy from "./agents/murphy.md" with { type: "file" };
+import sherlock from "./agents/sherlock.md" with { type: "file" };
 
 const AGENTS_DIR = join(homedir(), ".claude/agents");
 const MEMORY_ROOT = join(homedir(), ".claude/agent-memory");
@@ -13,7 +19,26 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const agentFile = (id: string) => join(AGENTS_DIR, `${id}.md`);
 export const memoryDir = (id: string) => join(MEMORY_ROOT, id);
 
+// The six starter teammates, carried inside the app so a fresh machine (Windows has no installer step) has them.
+const STARTERS: Record<string, string> = { dali, elliot, emily, leo, murphy, sherlock };
+
+/** Writes the bundled file for each id whose ~/.claude/agents/<id>.md is missing. Never overwrites; an id with no bundled file is left alone. */
+export function installStarterAgents(ids: string[]) {
+  for (const id of ids) {
+    const bundled = STARTERS[id];
+    if (!bundled || existsSync(agentFile(id))) continue;
+    try {
+      mkdirSync(AGENTS_DIR, { recursive: true });
+      writeFileSync(agentFile(id), readFileSync(bundled, "utf8").replace(/\r\n/g, "\n"), { flag: "wx" }); // LF, which split() expects, even from a CRLF checkout
+      console.log(`Installed starter teammate ${agentFile(id)}`);
+    } catch (e) {
+      console.error(`Could not install ${agentFile(id)}: ${(e as Error).message}`);
+    }
+  }
+}
+
 function split(id: string) {
+  if (!existsSync(agentFile(id))) throw new Error(`${agentFile(id)} is missing, and Harmonia could not create it. Copy ${id}.md from the agents folder of the Harmonia repository to ${AGENTS_DIR}.`);
   const text = readFileSync(agentFile(id), "utf8");
   const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) throw new Error(`${agentFile(id)} has no frontmatter`);

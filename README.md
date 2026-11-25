@@ -155,8 +155,9 @@ No dependencies, no API key: everything runs on the `claude` CLI sign-in.
 
 The server also builds for Windows (x64), without the Mac app shell: run
 `harmonia-server.exe` and open http://localhost:4747 in your browser. Each
-release has it as `Harmonia-windows-x64.zip`, with the starter teammates (copy
-them to `%USERPROFILE%\.claude\agents`). To build it yourself, from any OS:
+release has it as `Harmonia-windows-x64.zip`. On start it adds any missing starter
+teammate to `%USERPROFILE%\.claude\agents` (never overwriting yours). To build it
+yourself, from any OS:
 
 ```bash
 bun run build:windows   # build/windows/harmonia-server.exe
