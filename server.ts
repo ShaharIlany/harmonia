@@ -6,6 +6,10 @@ import agentPageJs from "./public/agent-page.js" with { type: "file" };
 import slackPageJs from "./public/slack-page.js" with { type: "file" };
 import usagePageJs from "./public/usage-page.js" with { type: "file" };
 import setupPageJs from "./public/setup-page.js" with { type: "file" };
+import planUsageJs from "./public/plan-usage.js" with { type: "file" };
+import notificationsJs from "./public/notifications.js" with { type: "file" };
+import pictureViewerJs from "./public/picture-viewer.js" with { type: "file" };
+import feedbackJs from "./public/feedback.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
@@ -34,6 +38,10 @@ const PUBLIC: Record<string, string> = {
   "slack-page.js": slackPageJs,
   "usage-page.js": usagePageJs,
   "setup-page.js": setupPageJs,
+  "plan-usage.js": planUsageJs,
+  "notifications.js": notificationsJs,
+  "picture-viewer.js": pictureViewerJs,
+  "feedback.js": feedbackJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
 };
