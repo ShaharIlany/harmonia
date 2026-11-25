@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA } from "./paths";
 import type { Attachment } from "./attachments";
@@ -116,16 +116,46 @@ const MSG_DIR = join(DATA, "messages");
 const SESSIONS = join(DATA, "chat-sessions.json");
 mkdirSync(MSG_DIR, { recursive: true });
 
-const readJson = <T>(path: string, fallback: T): T => {
+/**
+ * Reads a JSON file. A missing file gives the fallback. A file that exists but can't be parsed (a crash cut a save short)
+ * is copied aside as `<name>.corrupt-<time>` and never overwritten with the fallback silently: `fatal` files stop the
+ * server with a message, the others load as the fallback and log a line.
+ */
+const readJson = <T>(path: string, fallback: T, fatal = false): T => {
+  if (!existsSync(path)) return fallback;
   try {
     return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
+  } catch (e) {
+    const copy = `${path}.corrupt-${Date.now()}`;
+    try {
+      copyFileSync(path, copy);
+    } catch {}
+    if (fatal) {
+      console.error(
+        `
+Harmonia can't start: ${path} is damaged (${(e as Error).message}).
+` +
+          `A copy of it is at ${copy}.
+` +
+          `Repair the file, or delete it to start without it, then start Harmonia again.
+`,
+      );
+      process.exit(1);
+    }
+    console.error(`[store] ${path} is damaged (${(e as Error).message}); a copy is at ${copy}. Loading it as empty.`);
     return fallback;
   }
 };
 
+/** A save that a crash cut short leaves `<name>.tmp` next to the real file: it is never read, so just remove it. */
+for (const dir of [DATA, MSG_DIR]) {
+  for (const f of readdirSync(dir)) {
+    if (f.endsWith(".json.tmp")) try { unlinkSync(join(dir, f)); } catch {}
+  }
+}
+
 export const channels = new Map<string, Channel>(
-  readJson<Channel[]>(join(DATA, "channels.json"), []).map((c) => {
+  readJson<Channel[]>(join(DATA, "channels.json"), [], true).map((c) => {
     c.jobs ??= [];
     if (c.archivedAt && !c.status) Object.assign(c, { status: "archived", statusAt: c.archivedAt });
     delete c.archivedAt;
@@ -139,15 +169,32 @@ export const channels = new Map<string, Channel>(
 export const messages = new Map<string, Message[]>();
 /** True on the first start with TeamAgents chat sessions: every channel is then unread for every teammate. */
 export const firstChatSessions = !existsSync(SESSIONS);
-export const agentSessions: Record<string, AgentSession> = readJson(SESSIONS, {});
+export const agentSessions: Record<string, AgentSession> = readJson(SESSIONS, {}, true);
 for (const f of readdirSync(MSG_DIR)) {
   if (f.endsWith(".json")) messages.set(f.slice(0, -5), readJson<Message[]>(join(MSG_DIR, f), []));
 }
 
-// One write at a time per file, latest content wins.
+// One write at a time per file, latest content wins. A save goes to `<name>.tmp` and is renamed over the file, so a crash
+// leaves either the old file or the new one, never half of one.
 const queues = new Map<string, Promise<unknown>>();
+async function atomicWrite(path: string, text: string) {
+  const tmp = `${path}.tmp`;
+  await Bun.write(tmp, text);
+  // On Windows the rename can fail for a moment when something else (antivirus, a sync client) has the file open.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(tmp, path);
+      return;
+    } catch (e) {
+      if (attempt >= 6) throw e;
+      await new Promise((r) => setTimeout(r, 20 * attempt));
+    }
+  }
+}
 function write(path: string, data: () => unknown) {
-  const next = (queues.get(path) ?? Promise.resolve()).then(() => Bun.write(path, JSON.stringify(data(), null, 1)));
+  const next = (queues.get(path) ?? Promise.resolve())
+    .then(() => atomicWrite(path, JSON.stringify(data(), null, 1)))
+    .catch((e) => console.error(`[store] saving ${path} failed:`, e));
   queues.set(path, next);
 }
 
