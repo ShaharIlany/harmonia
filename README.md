@@ -162,11 +162,23 @@ them to `%USERPROFILE%\.claude\agents`). To build it yourself, from any OS:
 bun run build:windows   # build/windows/harmonia-server.exe
 ```
 
+### The Windows app
+
+`Harmonia-Setup-x64.exe` (also on each release) installs Harmonia with its own
+window (Edge WebView2) into `%LOCALAPPDATA%\Programs\Harmonia`. Like the Mac
+app it updates itself: every 30 minutes it looks for a newer release, downloads
+`Harmonia-windows-x64.zip` in the background, checks its SHA-256, and swaps the
+files in at a quiet moment (or right away with "Restart to update"); the window
+reopens on the new build. The settings are the Mac's (`autoUpdate`,
+`updateRepo` in `settings.json`); `updateFrom: "source"` is Mac-only. To build
+the app and installer yourself: `winappuild.ps1`, then
+`ISCC winapp\installer.iss`.
+
 It needs the `claude` CLI on your PATH, signed in. Data lives in
 `%APPDATA%\Harmonia` (`HARMONIA_DATA` overrides it). What's Mac-only stays
 off: the sandbox around protected folders (`sandbox-exec`), voice-message
 transcription, the Keychain (Slack tokens go to a private file instead, as on
-Linux) and updating itself (download the next release by hand). Opening files,
+Linux). The bare server doesn't update itself; the installed app (below) does. Opening files,
 folders, links and the Claude app goes through Explorer and the default
 handlers; the sign-in opens a console window on `claude auth login`.
 
