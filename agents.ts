@@ -10,8 +10,10 @@ import leo from "./agents/leo.md" with { type: "file" };
 import murphy from "./agents/murphy.md" with { type: "file" };
 import sherlock from "./agents/sherlock.md" with { type: "file" };
 
-const AGENTS_DIR = join(homedir(), ".claude/agents");
-const MEMORY_ROOT = join(homedir(), ".claude/agent-memory");
+// Claude Code's own folder: ~/.claude, or CLAUDE_CONFIG_DIR when that moves it (as paths.ts and projects.ts read it).
+const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+const AGENTS_DIR = join(CLAUDE_HOME, "agents");
+const MEMORY_ROOT = join(CLAUDE_HOME, "agent-memory");
 
 export const MODELS = ["opus", "sonnet", "haiku", "fable", "inherit"] as const;
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;

@@ -17,5 +17,7 @@ process.env.HARMONIA_USER = "Alex";
 process.env.HARMONIA_STUB = "1";
 process.env.USERPROFILE = join(root, "home");
 process.env.HOME = join(root, "home");
+// On Linux the home folder doesn't follow HOME once the process is running, so name Claude Code's folder outright.
+process.env.CLAUDE_CONFIG_DIR = join(root, "home", ".claude");
 process.env.CLICKUP_TASK_PREFIX = "ABC";
 process.env.CLICKUP_WORKSPACE = "999";
