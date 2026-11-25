@@ -195,6 +195,10 @@ Every teammate has two kinds of Claude Code session:
   memory, model and effort from `~/.claude/agents/<id>.md` and `job-rules.md`
   appended. Each appears as a card in the chat and in the sessions panel. When
   it finishes, its report goes back to the teammate's chat session as an event.
+  A job started with `size: "small"` (lookups, summaries, mechanical changes)
+  runs with `--model sonnet --effort medium` instead of the agent file's, and
+  keeps that when continued. Each job also records `baseline`: the input tokens
+  of its first API call, i.e. what it carries before it has done anything.
 
 **Prompt caching.** All chat turns run in one folder. The chat system prompt
 holds nothing per channel or per turn, and each turn only appends the channel's

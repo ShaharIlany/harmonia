@@ -65,6 +65,8 @@ export type Job = {
   report?: string;
   allowed: string[]; // permission rules granted to this job
   feedback?: boolean; // a feedback job: the teammate amending its own rules (its title quotes the feedback)
+  size?: "small"; // runs at a smaller model and effort; kept when the job is resumed or continued
+  baseline?: number; // input tokens of its first API call: what a job carries before it has done anything
 };
 
 export const CHANNEL_STATUSES = ["inProgress", "waiting", "later", "archived"] as const;

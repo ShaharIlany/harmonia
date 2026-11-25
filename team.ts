@@ -12,7 +12,7 @@ import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
-import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
+import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import {
   addMessage,
   agentSessions,
@@ -1018,7 +1018,7 @@ export class Team {
   }
 
   /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string; feedback?: boolean }, prompt?: string): string {
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string; feedback?: boolean; size?: string }, prompt?: string): string {
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
@@ -1034,6 +1034,8 @@ export class Team {
       cost: 0,
       allowed: [...(prev?.allowed ?? [])],
       ...(input.feedback && { feedback: true }),
+      ...((input.size ? input.size === "small" : prev?.size === "small") && { size: "small" as const }),
+      ...(prev?.baseline && { baseline: prev.baseline }),
     };
     ch.jobs.push(job);
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
@@ -1059,6 +1061,7 @@ export class Team {
       title: jobTitle(ch, job.agentId, job.title),
       allowedTools: [...ch.allowedTools, ...job.allowed],
       systemPrompt: jobPrompt(ch, job.agentId),
+      ...(job.size === "small" && SMALL_JOB),
       onActivity: (s) => {
         job.activity = s;
         this.emitJob(ch, job);
@@ -1096,6 +1099,7 @@ export class Team {
           return this.runJob(ch, job, fresh, false);
         }
         job.cost += r.cost ?? 0;
+        job.baseline ??= r.firstInput;
         job.activity = undefined;
         job.endedAt = Date.now();
         job.report = r.leftRunning
