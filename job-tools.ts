@@ -1,5 +1,7 @@
 // The chat sessions' team tools: start_job, check_jobs, read_job, stop_job and request_tool, as a stdio MCP server.
 // Claude Code starts it for each chat turn; every call goes back to the Harmonia server for that turn.
+// An empty export makes this a module, so top-level await type-checks.
+export {};
 const URL_ = process.env.HARMONIA_URL!;
 const TURN = process.env.HARMONIA_TURN!;
 

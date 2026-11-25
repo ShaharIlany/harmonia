@@ -75,7 +75,7 @@ test("Elliot answers a message in the first channel, and the server stays up", a
   let reply: any;
   const deadline = Date.now() + 20_000;
   while (!reply && Date.now() < deadline) {
-    const all: any[] = await (await fetch(`${base}/api/channels/${channel.id}/messages`, { headers })).json();
+    const all = (await (await fetch(`${base}/api/channels/${channel.id}/messages`, { headers })).json()) as any[];
     reply = all.find((m) => m.author === "elliot");
     if (!reply) await sleep(300);
   }

@@ -26,7 +26,8 @@ import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttac
 const PORT = Number(process.env.PORT ?? 4747);
 // The page's files, embedded in the compiled app.
 const PUBLIC: Record<string, string> = {
-  "index.html": indexHtml,
+  // Bun's types call an imported .html a bundle, but with `type: "file"` it is the path, like the others.
+  "index.html": indexHtml as unknown as string,
   "app.js": appJs,
   "agent-page.js": agentPageJs,
   "slack-page.js": slackPageJs,

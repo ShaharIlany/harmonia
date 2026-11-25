@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["*.ts", "tests/**/*.ts", "evals/**/*.ts"],
+  "exclude": ["node_modules", "build", "public", "winapp", "macapp"]
+}
