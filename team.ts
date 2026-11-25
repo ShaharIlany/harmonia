@@ -1079,12 +1079,12 @@ export class Team {
     this.jobRuns.set(key, run);
 
     // While it runs, the job reports in every few minutes, under its teammate's name.
-    const ticker = setInterval(() => void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e)), STATUS_EVERY_MS);
+    const stopStatus = this.scheduleStatus(ch, job);
 
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
       .then((r) => {
-        clearInterval(ticker);
+        stopStatus();
         if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
         this.jobRuns.delete(key);
@@ -1128,6 +1128,29 @@ export class Team {
   /** Running jobs that have answered and stay open only for background tasks they left running. */
   private answered = new Map<Job, { at: number; closesAt: number; leftRunning: string[]; noted?: boolean }>();
 
+  /** What each job's last posted update was written from, and whether it led with an ETA warning. */
+  private lastStatus = new WeakMap<Job, { fingerprint: string; warned: boolean }>();
+
+  /** Chains the job's status updates on a widening schedule. Returns the function that stops them. */
+  private scheduleStatus(ch: Channel, job: Job) {
+    let ticks = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const next = () => {
+      timer = setTimeout(() => {
+        if (stopped) return;
+        ticks++;
+        void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e));
+        next();
+      }, nextStatusDelay(ticks));
+    };
+    next();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }
+
   private logStep(job: Job, step: string) {
     const log = this.jobLogs.get(job) ?? [];
     const flat = step.replace(/\s+/g, " ").trim();
@@ -1165,6 +1188,12 @@ export class Team {
         .filter((m) => m.kind === "status" && m.author === job.agentId && m.meta?.jobId === job.id && m.ts >= job.startedAt)
         .map((m) => ({ ts: m.ts, text: m.text.split("\n").slice(1).join("\n").trim(), ...readEta(m.text) }));
       const warning = etaWarning(earlier, job.startedAt, now);
+      const log = this.jobLogs.get(job) ?? [];
+      const fingerprint = statusFingerprint(log, job.activity);
+      const last = this.lastStatus.get(job);
+      // Nothing new since the last update, and no new warning to give: stay quiet (no Haiku call either).
+      if (skipStatus(last, fingerprint, !!warning)) return;
+      const unchanged = last?.fingerprint === fingerprint;
       const system = [
         `You write a short status update for ${USER_NAME} about a job that ${t.name} (${t.role}) is running for them.`,
         `Write as ${t.name}, in the first person, in the language of the brief.`,
@@ -1197,7 +1226,8 @@ export class Team {
         "",
         `Right now: ${job.activity ?? "thinking"}`,
       ].join("\n");
-      let summary = await quickAnswer(system, prompt, ch.cwd);
+      // With the log unchanged, only the warning is new: the fallback text below says it, no Haiku call.
+      let summary = unchanged ? "" : await quickAnswer(system, prompt, ch.cwd);
       if (job.status !== "running") return; // it finished meanwhile; its report says the rest
       if (!summary) {
         // No summary (the call failed): fall back to the job's own latest words and current step.
@@ -1210,6 +1240,7 @@ export class Team {
           .filter(Boolean)
           .join("\n");
       }
+      this.lastStatus.set(job, { fingerprint, warned: !!warning });
       this.post(ch, { author: job.agentId, kind: "status", text: `⏳ **${job.id}** · ${job.title} · ${minutes} min\n${summary}`, meta: { jobId: job.id } });
     } finally {
       this.summarizing.delete(job);
@@ -1219,6 +1250,21 @@ export class Team {
   findJob(ch: Channel, jobId: string) {
     return ch.jobs.find((j) => j.id === jobId);
   }
+}
+
+/** Wait before status update number `updatesSoFar + 1`: 1×, 2×, then 4× the base (5, 15, 35 min, then every 20). */
+export function nextStatusDelay(updatesSoFar: number, base = STATUS_EVERY_MS) {
+  return base * Math.min(2 ** updatesSoFar, 4);
+}
+
+/** What a status update is written from, cheaply: how many steps are logged, the last one, and what it's doing now. */
+export function statusFingerprint(log: string[], activity?: string) {
+  return `${log.length}\n${log[log.length - 1] ?? ""}\n${activity ?? ""}`;
+}
+
+/** Skip an update when it'd be written from the same steps as the last one, unless it has a warning the last one lacked. */
+export function skipStatus(last: { fingerprint: string; warned: boolean } | undefined, fingerprint: string, warns: boolean) {
+  return !!last && last.fingerprint === fingerprint && !(warns && !last.warned);
 }
 
 /**
