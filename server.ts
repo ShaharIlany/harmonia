@@ -84,6 +84,9 @@ function setStatus(ch: Channel, status: ChannelStatus | undefined): string | und
 if (!channels.size) createChannel("general", DEFAULT_CWD);
 dropUnsent(messages);
 
+// A bug in a timer or promise chain is logged, not fatal: the server and everyone's chats keep running.
+process.on("uncaughtException", (e) => console.error("Uncaught exception:", e instanceof Error ? e.stack ?? e : e));
+process.on("unhandledRejection", (e) => console.error("Unhandled rejection:", e instanceof Error ? e.stack ?? e : e));
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (slack.stop(), process.exit(0)));
 
 // Over-the-air updates (updates.ts). "Restart to update" restarts now: whatever is working is written down first and
