@@ -14,7 +14,13 @@
 // "autoUpdate" (default true: get and install on their own; false: only show that an update is there),
 // "updateChannel" ("stable", the default: full releases only; "beta": also the prereleases every push to main
 // makes before someone promotes it, see .github/workflows/promote.yml). Release updates only.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+//
+// Windows (the app installed by winapp/installer.iss: Harmonia.exe, the window, next to harmonia-server.exe) updates
+// from releases only: it downloads Harmonia-windows-x64.zip, checks it, and swaps its files in place. A running .exe
+// can be renamed but not overwritten, so each file is renamed to `<name>.old` and the new one copied in; the window
+// sees the server exit with RELAUNCH_EXIT and opens the new Harmonia.exe.
+import { createHash } from "node:crypto";
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { COMPILED, DATA, SETTINGS } from "./paths";
 import { setting } from "./env";
@@ -32,8 +38,9 @@ export type UpdateStatus = {
   auto: boolean;
 };
 
+const WIN = process.platform === "win32";
 const RESOURCES = dirname(process.execPath);
-const APP = dirname(dirname(RESOURCES)); // …/Harmonia.app
+const APP = WIN ? RESOURCES : dirname(dirname(RESOURCES)); // …/Harmonia.app, or the install folder on Windows
 const SOURCE = join(DATA, "source");
 /** The build before the last update, to go back by hand. */
 const PREVIOUS = join(DATA, "previous");
@@ -52,15 +59,16 @@ const build: Build | undefined = (() => {
 const repo: string = SETTINGS.updateRepo ?? build?.repo ?? "";
 const branch: string = SETTINGS.updateBranch ?? build?.branch ?? "main";
 const auto: boolean = SETTINGS.autoUpdate ?? true;
-const from: "release" | "source" = SETTINGS.updateFrom === "source" ? "source" : "release";
+const from: "release" | "source" = SETTINGS.updateFrom === "source" && !WIN ? "source" : "release";
 /** "owner/name" from a GitHub URL or the setting itself. */
 const slug = repo.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1] ?? (/^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : "");
 const channel: "stable" | "beta" = SETTINGS.updateChannel === "beta" ? "beta" : "stable";
 const API = setting("RELEASES_API") ?? "https://api.github.com";
-const APP_ASSET = "Harmonia-arm64.zip";
+const APP_ASSET = WIN ? "Harmonia-windows-x64.zip" : "Harmonia-arm64.zip";
 const DOWNLOAD = join(DATA, "download");
 /** Where the next build waits until it's installed: the clone's build, or the unpacked release. */
-const fresh = () => (from === "release" ? join(DOWNLOAD, "Harmonia.app") : join(SOURCE, "build", "Harmonia.app"));
+const fresh = () =>
+  from === "release" ? join(DOWNLOAD, WIN ? "Harmonia-windows-x64" : "Harmonia.app") : join(SOURCE, "build", "Harmonia.app");
 
 let status: UpdateStatus = { state: "off", from, auto, current: build?.commit, version: build?.version || undefined };
 let onStatus: (s: UpdateStatus) => void = () => {};
@@ -105,6 +113,8 @@ export function startUpdates(o: { notify: (s: UpdateStatus) => void; busy: () =>
   if (!build) return set({ state: "off", detail: COMPILED ? "This build has no build.json." : "Running from source: update with git." });
   if (!repo) return set({ state: "off", detail: "The build has no git remote. Set updateRepo in settings.json." });
   if (from === "release" && !slug) return set({ state: "off", detail: `Releases come from GitHub, and ${repo} isn't a GitHub repo. Set updateRepo, or "updateFrom": "source".` });
+  if (WIN && !existsSync(join(APP, "Harmonia.exe"))) return set({ state: "off", detail: "This is the bare server, without the Harmonia window to restart it. Install Harmonia with its setup program, or update by hand." });
+  if (WIN) cleanOld();
   // Installing would clear previous/, this very app. (Builds before 2.1.12 moved the whole bundle there, and macOS
   // finds an app it reopens at login by its file, so it could reopen this backup instead of the new build.)
   if (dirname(APP) === PREVIOUS) return set({ state: "off", detail: `This is the backup copy of Harmonia (${APP}). Quit it and open Harmonia from your Applications folder.` });
@@ -207,6 +217,7 @@ export const RELAUNCH_EXIT = 75;
  * The old build is kept in the data folder's `previous/`, to go back by hand.
  */
 async function install() {
+  if (WIN) return installWindows();
   set({ state: "installing", detail: "restarting" });
   const next = fresh();
   const contents = join(APP, "Contents");
@@ -239,6 +250,49 @@ async function install() {
     log(`saving running work failed: ${(e as Error).message}`);
   }
   setTimeout(() => process.exit(RELAUNCH_EXIT), 300);
+}
+
+/** The files of an install, swapped in place. The old ones stay beside them as `<name>.old` until the next start. */
+async function installWindows() {
+  set({ state: "installing", detail: "restarting" });
+  const next = fresh();
+  const done: string[] = [];
+  try {
+    for (const f of ["Harmonia.exe", "harmonia-server.exe", "build.json"])
+      if (!existsSync(join(next, f))) throw new Error(`the new build has no ${f}`);
+    cleanOld();
+    for (const e of readdirSync(next, { withFileTypes: true })) {
+      if (!e.isFile()) continue; // starter-agents/ and the like are for a fresh install
+      const dest = join(APP, e.name);
+      if (existsSync(dest)) renameSync(dest, `${dest}.old`);
+      done.push(dest);
+      copyFileSync(join(next, e.name), dest);
+    }
+  } catch (e) {
+    for (const dest of done.reverse()) {
+      try {
+        rmSync(dest, { force: true });
+        if (existsSync(`${dest}.old`)) renameSync(`${dest}.old`, dest);
+      } catch {}
+    }
+    installNow = false;
+    log(`install failed: ${(e as Error).message}`);
+    return set({ state: "failed", detail: `Couldn't install the update: ${(e as Error).message}` });
+  }
+  log(`installed ${status.latestVersion ?? status.latest} into ${APP}; relaunching`);
+  try {
+    beforeRestart();
+  } catch (e) {
+    log(`saving running work failed: ${(e as Error).message}`);
+  }
+  setTimeout(() => process.exit(RELAUNCH_EXIT), 300);
+}
+
+/** The previous build's files, left by the last update. The ones still running can't go yet; they go next time. */
+function cleanOld() {
+  try {
+    for (const f of readdirSync(APP)) if (f.endsWith(".old")) rmSync(join(APP, f), { force: true });
+  } catch {}
 }
 const LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
@@ -312,8 +366,11 @@ async function download(assets: Asset[], name: string, to: string) {
   const w = Bun.file(to).writer();
   for await (const chunk of r.body) w.write(chunk);
   await w.end();
-  const actual = (await sh(["shasum", "-a", "256", to])).split(/\s+/)[0];
-  if (!/^[0-9a-f]{64}$/.test(expected) || actual !== expected) throw new Error(`${name} doesn't match its checksum`);
+  const actual = await new Promise<string>((ok, no) => {
+    const h = createHash("sha256");
+    createReadStream(to).on("data", (c) => h.update(c)).on("end", () => ok(h.digest("hex"))).on("error", no);
+  });
+  if (!/^[0-9a-f]{64}$/i.test(expected) || actual !== expected.toLowerCase()) throw new Error(`${name} doesn't match its checksum`);
 }
 
 /** Gets the latest release ready next to the running app: unpacked and signed. Nothing is replaced yet. */
@@ -328,14 +385,18 @@ async function getRelease(rel?: Release) {
     const zip = join(DOWNLOAD, APP_ASSET);
     await download(rel.assets, APP_ASSET, zip);
     set({ state: "building", detail: "unpacking" });
-    await sh(["ditto", "-x", "-k", zip, DOWNLOAD]);
+    // Windows 10 and 11 ship bsdtar, which reads zips. (Not just `tar`: Git's GNU tar may come first on the PATH.)
+    if (WIN) await sh([join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe"), "-xf", zip, "-C", DOWNLOAD]);
+    else await sh(["ditto", "-x", "-k", zip, DOWNLOAD]);
     rmSync(zip);
     const next = fresh();
-    const got: Build = JSON.parse(readFileSync(join(next, "Contents", "Resources", "build.json"), "utf8"));
+    const got: Build = JSON.parse(readFileSync(WIN ? join(next, "build.json") : join(next, "Contents", "Resources", "build.json"), "utf8"));
     if (got.version !== v) throw new Error(`the download is version ${got.version}, not ${v}`);
-    // Files the app downloads itself aren't quarantined; clear it anyway, then sign the whole app again (ad hoc).
-    await sh(["xattr", "-dr", "com.apple.quarantine", next]).catch(() => {});
-    await sh(["codesign", "--force", "--deep", "--sign", "-", next]);
+    if (!WIN) {
+      // Files the app downloads itself aren't quarantined; clear it anyway, then sign the whole app again (ad hoc).
+      await sh(["xattr", "-dr", "com.apple.quarantine", next]).catch(() => {});
+      await sh(["codesign", "--force", "--deep", "--sign", "-", next]);
+    }
     log(`downloaded ${rel.tag_name}`);
     set({ state: "ready", detail: undefined });
   } catch (e) {

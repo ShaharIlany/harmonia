@@ -22,7 +22,7 @@
   {
     "id": "elliot",
     "name": "Elliot",
-    "avatar": "🧑🏻‍💻",
+    "avatar": "👨🏻‍💻",
     "role": "Code",
     "color": "#22c55e",
     "chatModel": "claude-opus-5-5",

@@ -45,8 +45,8 @@ To build it yourself instead (an Intel Mac, or to follow a branch):
 
 No dependencies, no API key: everything runs on the `claude` CLI sign-in.
 
-**Windows:** run `harmonia-server.exe` from `Harmonia-windows-x64.zip` (each release has it) and open
-http://localhost:4747 in your browser. It needs the `claude` CLI on your PATH, signed in.
+**Windows:** install `Harmonia-Setup-x64.exe` from a release for the app with its own window, or run
+`harmonia-server.exe` from `Harmonia-windows-x64.zip` and open http://localhost:4747 in your browser. It needs the `claude` CLI on your PATH, signed in.
 More in [Windows](docs/windows.md).
 
 ## First steps

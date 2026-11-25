@@ -24,6 +24,28 @@ nothing outside a temp folder is touched). Releases wait for them: `tag.yml` onl
 (`HARMONIA_STUB=1`). The last line of a message picks a canned behaviour: `stub-slow`, `stub-react`, `stub-tools`,
 `stub-bubbles` or `stub-permission`; a word `job` starts a stub job, and `need a tool` makes a tool request.
 
+## Trying a change before it's merged
+
+If you use Harmonia and work on it, keep the installed app as it is and run the
+change as a **candidate**: a second Harmonia with its own port, its own copy of
+your data and its own git worktree.
+
+```
+bun candidate.ts my-branch          # that branch, at the first free port from 4749
+bun candidate.ts                    # this checkout as it is now, uncommitted changes too
+bun candidate.ts my-branch --stub   # canned teammates, no Claude runs
+bun candidate.ts my-branch --refresh   # copy your data again first
+bun candidate.ts list | clean [ref] | restore [ref]
+```
+
+The candidate copies your data folder once (`~/.harmonia-candidates/<name>/`,
+`HARMONIA_CANDIDATES` moves it), without Slack's settings and tokens, so it
+can't take your Slack messages, and with updates off. Your teammates' agent
+files and memories live in `~/.claude` and can't be moved: they're copied aside
+before each run and compared after it, and `restore` puts them back. A
+channel's working folder is still your real folder, so jobs in a candidate can
+change real files; try those in a channel pointed at a scratch folder.
+
 ## The Mozart eval
 
 After changing `mozart-rules.md`, run `bun run eval:mozart` (the same as `bun evals/mozart-eval.ts`); the details are
@@ -48,6 +70,7 @@ under Mozart in [How it behaves](behaviour.md). It starts real `claude` runs, on
 | `feedback-rules.md` | The prompt of a feedback job (a teammate amending its rules) |
 | `job-tools.ts` | The chat sessions' MCP server: start, check and stop jobs |
 | `mozart.ts`, `mozart-rules.md` | Mozart, each channel's coordinator: decides who answers each message (Haiku), with fallback rules |
+| `candidate.ts` | Runs a branch as a second Harmonia (own port, data copy and worktree) to try it before it's merged |
 | `updates.ts` | Over-the-air updates: check for a release (or commits), get it in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
 | `team.ts` | The `Team` class: routing, the chat-session queue, chat turns, jobs, status updates, restarts, the turn limit |
