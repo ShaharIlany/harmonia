@@ -50,7 +50,14 @@ under Mozart in [How it behaves](behaviour.md). It starts real `claude` runs, on
 | `mozart.ts`, `mozart-rules.md` | Mozart, each channel's coordinator: decides who answers each message (Haiku), with fallback rules |
 | `updates.ts` | Over-the-air updates: check for a release (or commits), get it in the background, swap in when idle |
 | `tool-catalog.ts` | The tools a teammate can ask for (`request_tool`) and their allowlist names |
-| `team.ts` | Routing, the chat-session queue, chat turns, jobs, the turn limit |
+| `team.ts` | The `Team` class: routing, the chat-session queue, chat turns, jobs, status updates, restarts, the turn limit |
+| `lines.ts` | How messages are written for the teammates: a message as a line, the catch-up, reports cut for the channel, bubbles |
+| `prompts.ts` | The chat and job system prompts from the rule templates, the team rules file, session titles, the job brief |
+| `eta.ts` | Status-update timing: the wait before the next one, when to skip, the ETA a job gave and its overrun |
+| `status-prompt.ts` | The text a job's status update is written from |
+| `rotation.ts` | When a chat session is too big to keep resuming |
+| `permission-mode.ts` | The permission mode a channel gets when it has no choice of its own |
+| `tasks.ts` | Reading a ClickUp task from an id, a number or a link |
 | `runner.ts` | Runs `claude -p --agent …` (and closes a run that stays open after its answer), plus the stub used by `bun run stub` |
 | `sandbox.ts` | The macOS sandbox that keeps teammates out of protected folders |
 | `projects.ts` | Your Claude projects (the folders your Claude Code sessions run in), for a channel's folder |

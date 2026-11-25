@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import chatRulesFile from "./chat-rules.md" with { type: "file" };
-import jobRulesFile from "./job-rules.md" with { type: "file" };
-import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
-import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, SETTINGS, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { CLICKUP_TASK_PREFIX, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
 import { dateText, dayLine, nowText, withDays } from "./dates";
-import { attachmentPath, filesLines, type Attachment } from "./attachments";
-import { languageName, type Voice } from "./voice";
+import { attachmentPath, type Attachment } from "./attachments";
+import { type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
@@ -15,9 +12,15 @@ import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
 import { recordResult } from "./usage";
 import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
+import { shouldRotate } from "./rotation";
+import { parseTask } from "./tasks";
+import { defaultPermissionMode, permissionModeOf } from "./permission-mode";
+import { RULES, APPROVALS, TEAM_RULES_FILE, chatPrompt, chatTitle, composeBrief, fill, jobPrompt, jobTitle, roster } from "./prompts";
+import { HOLD_ON_AFTER, EMOJI_ONLY, NO_REPLY, bubbles, catchUpLines, clip, keepLanguage, line, placeOf, replyText, reportInChat, shownAs, time } from "./lines";
+import { etaWarning, nextStatusDelay, readEta, skipStatus, statusFingerprint } from "./eta";
+import { statusPrompt } from "./status-prompt";
 import {
   CLAUDE_PERMISSION_MODE,
-  PERMISSION_MODES,
   addMessage,
   agentSessions,
   channels,
@@ -31,44 +34,22 @@ import {
   type ChannelStatus,
   type Job,
   type Message,
-  type PermissionMode,
   type SlackRef,
 } from "./store";
 
-/** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
-const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
-/** How many of a job's earlier status updates its next one is written against. */
-const STATUS_HISTORY = 6;
 /** Agent turns allowed after one user message before the chat pauses (stops ping-pong). */
 const MAX_TURNS_PER_USER_MESSAGE = 8;
 const STUB = !!setting("STUB");
-/** A chat session this big (tokens) is replaced by a new one (`settings.json`: chatRotateTokens). */
-const ROTATE_TOKENS = Number(SETTINGS.chatRotateTokens) || 60_000;
-/** After sitting idle this long, a session above ROTATE_IDLE_TOKENS is replaced too (`chatRotateIdleTokens`). */
-const ROTATE_IDLE_TOKENS = Number(SETTINGS.chatRotateIdleTokens) || 30_000;
-/** The prompt cache keeps a conversation for an hour (CLAUDE_CODE_PROMPT_CACHE_TTL=1h). */
-const ROTATE_IDLE_MS = 60 * 60_000;
-
-/**
- * Whether a teammate's chat session is too big to keep resuming, and why (undefined: keep it). Every turn reads
- * the whole conversation from the prompt cache, and once the cache has expired (an hour idle) the whole thing is
- * written again at a premium, so a session that is large, or only moderately large and cold, costs more than a
- * new one that re-reads the channels' recent lines.
- */
-export function shouldRotate(
-  s: Pick<AgentSession, "context" | "lastAt">,
-  now: number,
-  limits = { tokens: ROTATE_TOKENS, idleTokens: ROTATE_IDLE_TOKENS },
-): string | undefined {
-  const context = s.context ?? 0;
-  if (context > limits.tokens) return `${context} tokens is over ${limits.tokens}`;
-  if (s.lastAt && now - s.lastAt > ROTATE_IDLE_MS && context > limits.idleTokens) return `idle over an hour with ${context} tokens, over ${limits.idleTokens}`;
-}
 
 // TEAM_AGENTS: the Claude Code project that holds the six chat sessions. Claude Code files a session (and its
 // prompt cache) under the folder it started in, so every chat turn runs there, whatever the channel. Jobs run in
 // the channel's folder.
 export { DEFAULT_CWD, TEAM_AGENTS };
+
+// What used to be defined here and is imported from this file elsewhere (server.ts, the tests).
+export { shouldRotate, parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
+export { CATCH_UP_LINES, OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, capCatchUp, catchUpLines, clipOthers, reportInChat } from "./lines";
+export { etaWarning, nextStatusDelay, readEta, skipStatus, statusFingerprint } from "./eta";
 
 export type SessionView = AgentSession & {
   agentId: string;
@@ -88,180 +69,8 @@ export type Event =
 
 type Emit = (e: Event) => void;
 
-/** A prompt template, with LF line ends whatever the checkout used: the teammates read the same text on every machine. */
-const template = (file: string) => readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-const RULES = { chat: template(chatRulesFile), job: template(jobRulesFile), feedback: template(feedbackRulesFile) };
-/** Fills {{key}} placeholders in one pass, so text put in is never filled again. Unknown keys stay as they are. */
-const fill = (tpl: string, vars: Record<string, string>) => tpl.replace(/\{\{(\w+)\}\}/g, (all, k) => vars[k] ?? all);
-const roster = (agentId: string) => ROSTER.map((r) => `- ${r.name} (@${r.name}): ${r.role}${r.id === agentId ? " (you)" : ""}`).join("\n");
 
-/** The optional team rules file: a short list of rules for every teammate, kept by feedback jobs (feedback-rules.md). */
-export const TEAM_RULES_FILE = join(DATA, "team-rules.md");
-/** Its text as a section of the chat rules, or "" when there's no file or it's empty, so the prompt stays as it was. */
-function teamRulesSection() {
-  let text = "";
-  try {
-    text = readFileSync(TEAM_RULES_FILE, "utf8").trim();
-  } catch {}
-  return text ? `## Team rules from ${USER_NAME}\n\n${text}\n\n` : "";
-}
 
-/** The chat session's whole system prompt. Nothing in it is per channel or per turn, so the cached prefix stays put. */
-export function chatPrompt(agentId: string) {
-  const t = teammate(agentId)!;
-  return RULES.chat
-    .replaceAll("{{user}}", USER_NAME)
-    .replaceAll("{{name}}", t.name)
-    .replaceAll("{{role}}", t.role)
-    .replaceAll("{{roster}}", roster(agentId))
-    .replaceAll("{{instructions}}", readAgent(agentId).instructions.trim())
-    .replace("{{teamRules}}", () => teamRulesSection()); // last, so nothing in the file is filled in again
-}
-
-function jobPrompt(ch: Channel, agentId: string) {
-  return RULES.job
-    .replaceAll("{{user}}", USER_NAME)
-    .replaceAll("{{name}}", nameOf(agentId))
-    .replaceAll("{{channel}}", ch.dm ? `a DM with ${USER_NAME}` : `the channel #${ch.name}`)
-    .replaceAll("{{cwd}}", ch.cwd);
-}
-
-/** Where a channel is, as the teammates read it: "#name", or "your DM with <you>". */
-const placeOf = (ch: Channel) => (ch.dm ? `your DM with ${USER_NAME}` : `#${ch.name}`);
-/** The same, as you read it (in the typing bar). */
-const shownAs = (ch: Channel) => (ch.dm ? "your DM" : `#${ch.name}`);
-
-/** How sessions are titled in Claude Code: the tag says which teammate it is. */
-export const chatTitle = (agentId: string) => `[${nameOf(agentId)}] Harmonia chat`;
-/** What a channel without its own choice gets: settings.json "permissionMode", else bypass where the sandbox guards the run, else edits only. */
-export const defaultPermissionMode = (): PermissionMode =>
-  PERMISSION_MODES.includes(SETTINGS.permissionMode) ? SETTINGS.permissionMode : sandboxActive() ? "bypass" : "acceptEdits";
-export const permissionModeOf = (ch: Channel): PermissionMode => ch.permissionMode ?? defaultPermissionMode();
-
-export const jobTitle =(ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] ${ch.dm ? "DM" : `#${ch.name}`} · ${title}`;
-
-const time = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
-/** What a teammate answers when a turn needs nothing from it (chat-rules.md, "Is it your turn?"). */
-const NO_REPLY = /^`?\(?no reply\)?`?\.?$/i;
-/** A hold-on line ("checking") shows only if the turn is still going this long after it was written. */
-const HOLD_ON_AFTER = 3000;
-
-/** A reply that's only an emoji or three ("👍", "✅🙏"): shown as a reaction, not as a message. */
-const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*\s*){1,3}$/u;
-
-/** A reply split into WhatsApp-style bubbles at lines with only `---` (never inside a code block). */
-export function bubbles(text: string): string[] {
-  const out: string[] = [];
-  let cur: string[] = [];
-  let fence = false;
-  for (const l of text.split("\n")) {
-    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
-    if (!fence && /^\s*---\s*$/.test(l)) {
-      out.push(cur.join("\n"));
-      cur = [];
-      continue;
-    }
-    cur.push(l);
-  }
-  out.push(cur.join("\n"));
-  return out.map((b) => b.trim()).filter(Boolean);
-}
-
-/** The text a job is given and its card shows: the brief, what done looks like, and what the user approved. */
-function composeBrief(input: { brief: string; done_when?: string; approved_actions?: string[] }): string {
-  let text = input.brief.trim();
-  if (input.done_when?.trim()) text += `\n\nDone when: ${input.done_when.trim()}`;
-  if (input.approved_actions) {
-    const yes = input.approved_actions.filter((a) => a !== "none").map((a) => APPROVAL_WORDS[a] ?? a);
-    text += yes.length ? `\n\nApproved by ${USER_NAME}: ${yes.join(", ")}` : `\n\nApproved by ${USER_NAME}: nothing. Draft, don't send, commit, push or deploy.`;
-  }
-  return text;
-}
-
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "\n…(cut)" : s);
-
-/**
- * A message as the teammates (and Mozart) read it: "[14:02] Name: text". With `channelId`, each attached file follows
- * on a line of its own with its path, so a teammate can open it; without (Mozart), only the files' names.
- */
-function line(m: Message, channelId?: string): string {
-  if (m.kind === "permission") {
-    const p = m.meta!.permission!;
-    const verdict = { pending: "is waiting on", once: "allowed once", always: "allowed for this channel", denied: "denied" }[p.status];
-    return `[${time(m.ts)}] (event) ${USER_NAME} ${verdict}: ${nameOf(p.agentId)}${p.jobId ? `'s job ${p.jobId}` : ""} wants ${p.rule}`;
-  }
-  if (m.kind === "tools") {
-    const r = m.meta!.toolRequest!;
-    const verdict = { pending: "hasn't decided yet on", approved: "approved", denied: "denied" }[r.status];
-    return `[${time(m.ts)}] (event) ${USER_NAME} ${verdict} ${nameOf(r.agentId)}'s request for ${r.tools.map((t) => t.name).join(", ")}`;
-  }
-  if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
-  if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
-  const files = m.meta?.files?.length ? (channelId ? filesLines(channelId, m.meta.files) : ` (attached: ${m.meta.files.map((f) => f.name).join(", ")})`) : "";
-  const voice = m.meta?.voice ? ` (voice message in ${languageName(m.meta.voice.language)}, transcribed by speech recognition, so a word may be misheard)` : "";
-  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"})${voice}: ${m.text}${files}`;
-  const re = m.meta?.replyTo;
-  // A teammate's emoji on your message (instead of a turn, or as its whole answer): it's been answered.
-  const reacted = m.author === "user" ? (m.meta?.reactions ?? []).filter((x) => teammate(x.by)).map((x) => `${nameOf(x.by)} ${x.emoji}`) : [];
-  const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
-  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}${voice}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
-}
-
-/** Most lines a chat turn replays from the channel, however long the teammate was away. */
-export const CATCH_UP_LINES = 40;
-/** A message from someone else is replayed to a teammate up to this long; the channel file has the rest. */
-export const OTHERS_MESSAGE_CHARS = 1200;
-/** A finished job's report is put in the channel up to this long; the job card keeps all of it. */
-export const REPORT_IN_CHAT = 3000;
-
-/** The last CATCH_UP_LINES of `fresh`, plus any dropped permission or tools card still waiting on a decision. */
-export function capCatchUp(fresh: Message[]): { kept: Message[]; dropped: number } {
-  if (fresh.length <= CATCH_UP_LINES) return { kept: fresh, dropped: 0 };
-  const cut = fresh.length - CATCH_UP_LINES;
-  const pending = (m: Message) => (m.kind === "permission" && m.meta?.permission?.status === "pending") || (m.kind === "tools" && m.meta?.toolRequest?.status === "pending");
-  const rescued = fresh.slice(0, cut).filter(pending);
-  return { kept: [...rescued, ...fresh.slice(cut)], dropped: cut - rescued.length };
-}
-
-/** A message's text for another teammate's turn: long ones cut, saying where the rest is. */
-export function clipOthers(m: Message): Message {
-  if (m.author === "user" || m.text.length <= OTHERS_MESSAGE_CHARS) return m;
-  const more = m.text.length - OTHERS_MESSAGE_CHARS;
-  return { ...m, text: `${m.text.slice(0, OTHERS_MESSAGE_CHARS)}…(cut: ${more} more characters; the full message is in the channel file, id ${m.id})` };
-}
-
-/** The lines of a chat turn: the capped catch-up, a note when lines were dropped, long messages by others clipped. */
-export function catchUpLines(fresh: Message[], channelId: string): string[] {
-  const { kept, dropped } = capCatchUp(fresh);
-  const note = dropped ? [`(${dropped} earlier messages here are not shown. The whole channel is in ${join(DATA, "messages", `${channelId}.json`)}; read it if you need them.)`] : [];
-  return [...note, ...withDays(kept, (m) => line(clipOthers(m), channelId))];
-}
-
-/** A job's report for the channel: cut, with where the whole of it is. */
-export function reportInChat(text: string, jobId: string): string {
-  if (text.length <= REPORT_IN_CHAT) return text;
-  return `${text.slice(0, REPORT_IN_CHAT)}\n…(cut: ${text.length - REPORT_IN_CHAT} more characters; the full report is on the job card and in ${join(DATA, "channels.json")} under job ${jobId}, field report)`;
-}
-
-/**
- * A voice message doesn't change the conversation's language: it goes on in the language it started in. The
- * conversation is the thread the voice message replies in (its first message), else the channel. Empty when the voice
- * message starts it, or it started in the same language.
- */
-function keepLanguage(all: Message[], voiced: Message): string {
-  const said = (m: Message) => (m.author === "user" || teammate(m.author)) && (!m.kind || m.kind === "text") && !m.meta?.interim && !!m.text.trim();
-  const root = voiced.meta?.replyTo && all.find((m) => m.id === voiced.meta!.replyTo!.id);
-  const first = root && said(root) ? root : all.find(said);
-  const spoken = voiced.meta!.voice!.language;
-  if (!first || first.id === voiced.id) return "";
-  const lang = (tag: string) => tag.split(/[-_]/)[0].toLowerCase();
-  if (first.meta?.voice) {
-    if (lang(first.meta.voice.language) === lang(spoken)) return "";
-    return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but this conversation started in ${languageName(first.meta.voice.language)}: keep writing in ${languageName(first.meta.voice.language)}.`;
-  }
-  const opening = first.text.replace(/\s+/g, " ").trim().slice(0, 160);
-  return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but keep writing in the language this ${root ? "thread" : "conversation"} started in, the language of its first message: "${opening}".`;
-}
 
 // First start with TeamAgents chat sessions: they're new, so each teammate re-reads each channel's recent messages.
 if (firstChatSessions) {
@@ -273,9 +82,6 @@ if (firstChatSessions) {
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
 type ChatTools = { startJob(input: any): string; checkJobs(): string; readJob(jobId: string): string; stopJob(jobId: string): string; requestTool(input: any): string };
 
-/** What the user can have said yes to in the chat, as start_job takes it (job-tools.ts has the same list). */
-const APPROVALS = ["commit", "push", "open_pr", "deploy", "send_message", "none"];
-const APPROVAL_WORDS: Record<string, string> = { commit: "commit", push: "push", open_pr: "open a PR", deploy: "deploy", send_message: "send messages" };
 /** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
 type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[]; answers?: string };
 
@@ -1276,38 +1082,7 @@ export class Team {
       // Nothing new since the last update, and no new warning to give: stay quiet (no Haiku call either).
       if (skipStatus(last, fingerprint, !!warning)) return;
       const unchanged = last?.fingerprint === fingerprint;
-      const system = [
-        `You write a short status update for ${USER_NAME} about a job that ${t.name} (${t.role}) is running for them.`,
-        `Write as ${t.name}, in the first person, in the language of the brief.`,
-        "2 to 4 short markdown lines, no heading, no preamble, no sign-off.",
-        "The first line starts with the ETA to finish, as `ETA ~N min:` (minutes, even past an hour), then what's happening right now, in plain words (not tool names).",
-        "Estimate it from the brief (what done looks like), the steps done so far and what's left; a wait on a build, a deploy or someone's answer counts.",
-        "Then, if worth saying: what's done so far, and what we're waiting for (a build, a deploy, a test run, a query, someone's answer).",
-        "If the input has a WARNING line, don't give a cheerful new ETA: lead with the warning it gives, then `: <what it's doing or waiting on, and the last real progress, with its time>`.",
-        "After a warning, give a new ETA only if the log shows a concrete reason for the delay and a clear way to finish, written as `ETA ~N min because <reason>:`",
-        "(keep the words `ETA` and `because` as they are, e.g. `ETA ~15 min because the backend restarted, rerunning the specs:`). With no concrete reason, give no new ETA: the warning stays.",
-        "If the job is stuck, failing or retrying the same thing, say so plainly.",
-        "Only state what the log shows. Don't invent results.",
-      ].join("\n");
-      const prompt = [
-        `Job ${job.id}: ${job.title}`,
-        `Now: ${time(now)}. Started ${time(job.startedAt)}, running for ${minutes} min, in ${ch.cwd}.`,
-        "",
-        "Brief:",
-        job.brief.length > 2000 ? job.brief.slice(0, 2000) + "…" : job.brief,
-        "",
-        "Your earlier updates on this job, oldest first:",
-        ...(earlier.length
-          ? earlier.slice(-STATUS_HISTORY).map((u) =>
-              `- ${time(u.ts)} (${Math.round((now - u.ts) / 60_000)} min ago${u.eta === undefined ? "" : `, ETA ~${u.eta} min`}): ${u.text.replace(/\s+/g, " ")}`)
-          : ["(none yet)"]),
-        ...(warning ? ["", `WARNING: ${warning.why} Lead with "${warning.lead}: …".`] : []),
-        "",
-        "Recent steps, oldest first:",
-        ...(this.jobLogs.get(job) ?? ["(nothing yet)"]).slice(-30).map((x) => `- ${x}`),
-        "",
-        `Right now: ${job.activity ?? "thinking"}`,
-      ].join("\n");
+      const { system, prompt } = statusPrompt({ ch, job, t, now, minutes, earlier, warning, steps: this.jobLogs.get(job) });
       // With the log unchanged, only the warning is new: the fallback text below says it, no Haiku call.
       let summary = unchanged ? "" : await quickAnswer(system, prompt, ch.cwd, { agentId: job.agentId, channelId: ch.id, jobId: job.id });
       if (job.status !== "running") return; // it finished meanwhile; its report says the rest
@@ -1332,75 +1107,6 @@ export class Team {
   findJob(ch: Channel, jobId: string) {
     return ch.jobs.find((j) => j.id === jobId);
   }
-}
-
-/** Wait before status update number `updatesSoFar + 1`: 1×, 2×, then 4× the base (5, 15, 35 min, then every 20). */
-export function nextStatusDelay(updatesSoFar: number, base = STATUS_EVERY_MS) {
-  return base * Math.min(2 ** updatesSoFar, 4);
-}
-
-/** What a status update is written from, cheaply: how many steps are logged, the last one, and what it's doing now. */
-export function statusFingerprint(log: string[], activity?: string) {
-  return `${log.length}\n${log[log.length - 1] ?? ""}\n${activity ?? ""}`;
-}
-
-/** Skip an update when it'd be written from the same steps as the last one, unless it has a warning the last one lacked. */
-export function skipStatus(last: { fingerprint: string; warned: boolean } | undefined, fingerprint: string, warns: boolean) {
-  return !!last && last.fingerprint === fingerprint && !(warns && !last.warned);
-}
-
-/**
- * The ETA a status update gave ("ETA ~15 min", "ETA ~1.5 h"), in minutes, and whether it gave a reason for it
- * ("ETA ~15 min because the build took longer"). Not "Over the ETA by…" nor "the first ETA (20 min)".
- */
-export function readEta(text: string): { eta?: number; reason?: boolean } {
-  const m = text.match(/\bETA\s*[:~≈]?\s*~?(\d+(?:\.\d+)?)\s*(h|hr|hours?|m|mins?|minutes?)\b(.*)/i);
-  if (!m) return {};
-  return { eta: Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)), reason: /^\s*[,(–—-]?\s*because\s+\S/i.test(m[3]) };
-}
-
-/** Minutes past an update's ETA at `at`, when that counts as overrun: 10 min, or half the ETA when that's more (ETA 20 → 30). */
-function overrun(u: { ts: number; eta: number }, at: number) {
-  const by = Math.round((at - u.ts) / 60_000 - u.eta);
-  return by >= Math.max(10, u.eta / 2) ? by : undefined;
-}
-
-/**
- * Whether a job's next status update leads with a warning. It's measured against the latest ETA; once that's overrun,
- * a later ETA replaces it only when it gives a reason ("because …"). And past twice the job's first ETA, it warns whatever.
- */
-export function etaWarning(updates: { ts: number; eta?: number; reason?: boolean }[], startedAt: number, now: number) {
-  let ref: { ts: number; eta: number } | undefined;
-  for (const u of updates) {
-    if (u.eta === undefined) continue;
-    if (!ref || overrun(ref, u.ts) === undefined || u.reason) ref = { ts: u.ts, eta: u.eta };
-  }
-  const by = ref && overrun(ref, now);
-  if (ref && by !== undefined)
-    return { lead: `Over the ETA by ${by} min, may be stuck`, why: `the ${time(ref.ts)} update gave ETA ~${ref.eta} min; ${Math.round((now - ref.ts) / 60_000)} min have passed, ${by} min over.` };
-  const first = updates.find((u) => u.eta !== undefined)?.eta;
-  const elapsed = Math.round((now - startedAt) / 60_000);
-  if (first && elapsed >= 2 * first)
-    return { lead: `Over 2× the first ETA (${first} min), may be stuck`, why: `the first update gave ETA ~${first} min, and the job has run ${elapsed} min.` };
-  return undefined;
-}
-
-/** What a reply quotes from a message: its text, what the card is, or the files it carries. */
-function replyText(m: Message): string {
-  if (m.kind === "job") return m.text;
-  if (m.kind === "permission") return `asks to use ${m.meta?.permission?.tool}`;
-  if (m.kind === "tools") return `asks for ${m.meta?.toolRequest?.tools.map((t) => t.name).join(", ")}`;
-  return m.text || (m.meta?.files?.length ? `📎 ${m.meta.files.map((f) => f.name).join(", ")}` : "");
-}
-
-/** "ABC-123", "123" (→ ABC-123 when the task prefix is ABC), "1amkz0hxp0q" (an internal id) or a ClickUp task link. */
-export function parseTask(text: string): { id: string; url: string } | undefined {
-  const byCustomId = (id: string) => ({ id, url: `https://app.clickup.com/t/${CLICKUP_WORKSPACE ? CLICKUP_WORKSPACE + "/" : ""}${id}` });
-  const link = text.match(/^https:\/\/app\.clickup\.com\/t\/(?:\d+\/)?([A-Za-z0-9-]+)\/?(?:[?#].*)?$/);
-  if (link) return { id: /^[A-Za-z]+-\d+$/.test(link[1]) ? link[1].toUpperCase() : link[1], url: text };
-  if (/^[A-Za-z]+-\d+$/.test(text)) return byCustomId(text.toUpperCase());
-  if (/^\d+$/.test(text) && CLICKUP_TASK_PREFIX) return byCustomId(`${CLICKUP_TASK_PREFIX}-${text}`);
-  if (/^[a-z0-9]{7,12}$/.test(text)) return { id: text, url: `https://app.clickup.com/t/${text}` };
 }
 
 export const allChannels = () => [...channels.values()].sort((a, b) => a.createdAt - b.createdAt);
