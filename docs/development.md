@@ -64,7 +64,7 @@ under Mozart in [How it behaves](behaviour.md). It starts real `claude` runs, on
 | `agents.ts` | Reads and writes agent files and agent memories |
 | `store.ts` | Channels, jobs, messages and the chat sessions as JSON under `data/` |
 | `attachments.ts` | Files on messages: where they're kept, their limits, uploads waiting for their message, the lines the teammates read |
-| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, typing messages, `new channel`, `status`, `archive` and `project` (a new channel's project list), a Slack channel for every channel here |
+| `slack.ts` | The Slack bridge: the app's manifest, the tokens in the Keychain, pairing, your DM and linked channels both ways, files both ways, the teammates' names and emoji (and their own Slack apps), threads, reactions, ⚠️ feedback, buttons on requests, typing messages, `new channel`, `status`, `archive` and `project` (a new channel's project list), a Slack channel for every channel here. The code outside the `SlackBridge` class is in `slack/` (manifests, tokens, text, commands, emoji, blocks, types) |
 | `slack-socket.ts` | Slack Socket Mode and the Web API without the SDK: the WebSocket, acks, refreshes, rate limits |
 | `public/` | The web UI (`app.js` chat and sessions, `agent-page.js` settings, `slack-page.js` Slack) |
 | `server.ts` | The HTTP and WebSocket API, and the static files |
