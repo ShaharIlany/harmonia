@@ -197,6 +197,9 @@ holds nothing per channel or per turn, and each turn only appends the channel's
 new lines, so the cached prefix stays put. Runs set
 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. Hover a message's time, or look at the
 sessions panel, to see how much input came from the cache.
+A chat session that grows past 60,000 tokens, or past 30,000 after an hour idle,
+is replaced by a new one (it re-reads each channel's recent lines); tune with
+`chatRotateTokens` and `chatRotateIdleTokens` in `settings.json`.
 
 **Plan usage.** The top of the sidebar shows your Claude plan's 5-hour and
 weekly usage, with when each resets. Every CLI run reports them (the
