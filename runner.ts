@@ -185,6 +185,19 @@ function waitAfterAnswer(stopsAt: (number | undefined)[]) {
   return Math.min(MAX_WAIT_MS, Math.max(LINGER_MS, last));
 }
 
+/**
+ * The size at which Claude Code compacts a session (CLAUDE_CODE_AUTO_COMPACT_WINDOW; it compacts about 13k below it).
+ * HARMONIA_CHAT_COMPACT_WINDOW / HARMONIA_JOB_COMPACT_WINDOW change it ("150k", "300000"), "off" leaves the model's
+ * own window. Claude Code's smallest is 100k.
+ * Chat turns get their channel's new messages in the prompt, so a chat session needs little history: 100k. Jobs keep
+ * more of their work in view: 200k, which still compacts a job that goes on for hours or is continued round after round.
+ */
+const COMPACT_WINDOW = { CHAT: "100k", JOB: "200k" };
+function compactWindow(kind: keyof typeof COMPACT_WINDOW): string | undefined {
+  const v = setting(`${kind}_COMPACT_WINDOW`)?.trim() || COMPACT_WINDOW[kind];
+  return v.toLowerCase() === "off" ? undefined : v;
+}
+
 export function runAgent(o: RunOptions): Run {
   if (setting("STUB")) return stubRun(o);
 
@@ -221,6 +234,10 @@ export function runAgent(o: RunOptions): Run {
     ...(o.allowedTools.length ? ["--allowedTools", ...o.allowedTools] : []),
   ];
   const env = childEnv();
+  // Every API call re-reads the whole conversation, so a session that is never compacted gets dearer with each step.
+  // With a 1M window, the chat sessions reached 600k and long jobs 590k. Compacting at a smaller window keeps them small.
+  const window = o.mode ? undefined : compactWindow(o.chat ? "CHAT" : "JOB");
+  if (window) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ??= window;
 
   const proc = Bun.spawn(guarded([CLAUDE, ...args], o.cwd), {
     cwd: o.cwd,
@@ -259,6 +276,8 @@ export function runAgent(o: RunOptions): Run {
         } catch {
           continue;
         }
+        // Compacting takes a while (more on a big conversation): say so, or the turn looks stuck.
+        if (ev.type === "system" && ev.subtype === "status" && ev.status === "compacting") o.onActivity("compacting the conversation");
         if (ev.subtype === "background_tasks_changed")
           tasks = (ev.tasks ?? []).map((t: any) => ({ id: String(t.task_id), description: String(t.description || "a background task") }));
         if (ev.subtype === "task_started" && timeouts.has(ev.tool_use_id)) stopsAt.set(String(ev.task_id), Date.now() + timeouts.get(ev.tool_use_id)!);

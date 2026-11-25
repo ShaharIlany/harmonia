@@ -35,6 +35,20 @@ A chat session that grows past 60,000 tokens, or past 30,000 after an hour idle,
 is replaced by a new one (it re-reads each channel's recent lines); tune with
 `chatRotateTokens` and `chatRotateIdleTokens` in `settings.json`.
 
+**Compaction.** Every API call re-reads the whole conversation, so a session
+that only grows costs more with each step, and more again when its cache has
+gone cold and the whole thing is written back. With a 1M-token window nothing
+ever compacted: chat sessions reached 600k, and jobs continued round after
+round (`continue_job`) reached 590k. So runs set
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW`: 100k for chat sessions (each turn brings the
+channel's new messages anyway) and 200k for jobs. Claude Code compacts about
+13k below it, and the typing bar or the job says "compacting the conversation"
+meanwhile. `HARMONIA_CHAT_COMPACT_WINDOW` and `HARMONIA_JOB_COMPACT_WINDOW`
+change them (`150k`, `300000`; Claude Code's smallest is 100k), and `off`
+leaves the model's own window. A chat session usually starts fresh before it
+gets there (60,000 tokens by default, `chatRotateTokens`); raise that setting
+above the compact window to let compaction do the work instead.
+
 **Plan usage.** The top of the sidebar shows your Claude plan's 5-hour and
 weekly usage, with when each resets. Every CLI run reports them (the
 `rate_limit_event` in its stream). When nothing has reported them for 5 minutes

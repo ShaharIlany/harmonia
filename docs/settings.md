@@ -52,6 +52,8 @@ work.
 | `HARMONIA_CWD` | your home folder | The default working folder for new channels. |
 | `HARMONIA_USER` | your login name | The name the teammates call you. |
 | `HARMONIA_STATUS_MINUTES` | `5` | Scales the interval of job status updates. |
+| `HARMONIA_CHAT_COMPACT_WINDOW` | `100k` | The size at which Claude Code compacts a chat session (`150k`, `300000`); `off` leaves the model's own window. |
+| `HARMONIA_JOB_COMPACT_WINDOW` | `200k` | The same for jobs. |
 | `HARMONIA_LINGER_MINUTES` | `10` | How long a job stays open after its answer for background commands without a `timeout` of their own. |
 | `HARMONIA_SLACK_API` | `https://slack.com/api` | Points the Slack bridge at another Web API (a local fake, to try it without Slack). |
 | `HARMONIA_RELEASES_API` | `https://api.github.com` | Where `updates.ts` looks for releases. |
