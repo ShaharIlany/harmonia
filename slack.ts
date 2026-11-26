@@ -8,9 +8,9 @@
 // and what you type in the app. While a teammate works on your Slack message, a "typing…" message from it says so,
 // deleted once its answer is out (the answer is a new message, so Slack notifies you of it).
 //
-// Every message is kept with its Slack ts (meta.slack), so Slack's own gestures work: a thread reply is a reply to that
-// message here (it wakes that teammate), and the answers to it follow you into the thread (only those: job reports and
-// whatever else comes up stay in the conversation); your reaction on a message is
+// Every message is kept with its Slack ts (meta.slack), so Slack's own gestures work: a thread reply is a reply to the
+// thread's latest teammate message here (it wakes that teammate), and the answers to it follow you into the thread
+// (only those: job reports and whatever else comes up stay in the conversation); your reaction on a message is
 // your reaction here; ⚠️ on a teammate's message gets you a DM asking how it could be better, and your answer (a
 // thread reply, or the box behind its button) is feedback, as ✎ gives it in the app. A teammate's request for a tool
 // (a connector) or a permission comes with buttons, and the card says what you decided, here or there.
@@ -101,6 +101,16 @@ const NO_REACT_RETRY = 10 * 60_000; // a teammate's app that couldn't react is t
 const HELD_MAX = 20; // your messages kept for the teammates while a channel waits for its project
 
 const USER_LOOK = { name: `${USER_NAME} (in Harmonia)`, avatar: "👤" };
+
+/**
+ * What your reply in a Slack thread answers: the thread's latest teammate message (so it wakes whoever wrote last, not
+ * whoever started the thread), or the thread's first message when no teammate wrote in it. Yours, guests' and system
+ * lines don't count. A name in your reply still wins (team.userMessage).
+ */
+export function threadReplyTo(list: Message[], conversation: string, thread: string): Message | undefined {
+  const inThread = (m: Message) => m.meta?.slack?.channel === conversation && (m.meta.slack.ts === thread || m.meta.slack.thread === thread);
+  return list.findLast((m) => inThread(m) && !!teammate(m.author)) ?? list.findLast((m) => inThread(m) && m.meta!.slack!.ts === thread);
+}
 
 /** Message subtypes that are still someone writing: a thread reply sent to the channel too, a file with a caption, /me. */
 const WRITTEN = new Set(["thread_broadcast", "file_share", "me_message"]);
@@ -936,7 +946,8 @@ export class SlackBridge {
   private forward(ch: Channel, h: Held) {
     this.inSlack.add(ch.id);
     const thread = h.slack.thread;
-    this.deps.post(ch, h.text, { replyTo: thread ? this.bySlack(ch.id, h.slack.channel, thread)?.id : undefined, slack: h.slack, files: h.files, voice: h.voice });
+    const replyTo = thread ? threadReplyTo(messages.get(ch.id) ?? [], h.slack.channel, thread)?.id : undefined;
+    this.deps.post(ch, h.text, { replyTo, slack: h.slack, files: h.files, voice: h.voice });
   }
 
   /**

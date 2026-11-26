@@ -708,13 +708,22 @@ export class Team {
       const asksUser = mentions(r.text).includes("user");
       // A question to the user makes the user's next plain message go to this teammate.
       if (asksUser) ch.waitingOn = agentId;
-      // Handoffs (@Name) go straight out, unless the mention is part of the question to the user. Otherwise the
-      // channel's Mozart decides whether anyone follows up, once all the bubbles are out. A question to the user
-      // waits for the user. In a DM there's nobody else to wake, and nobody for Mozart to pick.
+      // Handoffs (@Name) wake their teammates, unless the mention is part of the question to the user. Otherwise the
+      // channel's Mozart decides whether anyone follows up. Both wait until all the bubbles are out, so the turn they
+      // start reads the whole reply. A question to the user waits for the user. In a DM there's nobody else to wake,
+      // and nobody for Mozart to pick.
       const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
-      for (const id of to) this.wake(ch, id, first);
       // Mozart is only asked when the reply could concern someone else: it names a teammate, or one is busy or waited on.
-      if (!ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0 && mayNeedFollowUp(r.text, agentId, ch)) setTimeout(() => this.safely(() => this.coordinate(ch, first)), after);
+      const follow = !ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0 && mayNeedFollowUp(r.text, agentId, ch);
+      if (to.length || follow)
+        setTimeout(
+          () =>
+            this.safely(() => {
+              for (const id of to) this.wake(ch, id, first);
+              if (follow && first) this.coordinate(ch, first);
+            }),
+          after,
+        );
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
