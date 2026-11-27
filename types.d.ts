@@ -13,6 +13,10 @@ declare module "*.js" {
   const path: string;
   export default path;
 }
+declare module "*.ttf" {
+  const path: string;
+  export default path;
+}
 declare module "*.json" {
   const path: string;
   export default path;

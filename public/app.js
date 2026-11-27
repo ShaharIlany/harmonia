@@ -23,6 +23,8 @@
   };
   const byId = (id) => S.roster.find((t) => t.id === id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  /** An icon from the sprite in index.html (lucide paths). */
+  const ic = (name, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   // Right-to-left when most letters are Hebrew/Arabic, even if the message opens with an @mention.
   const textDir = (s) => {
     const rtl = (s.match(/[֐-ࣿ]/g) || []).length;
@@ -157,14 +159,14 @@
     if (!m || (m.author === "system" && !m.text)) return `<span class="c-folder">${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>`;
     // In a DM it's clear who wrote, unless it was you.
     const who = m.author === "user" ? "You" : m.author === "system" || c.dm ? "" : authorName(m.author);
-    const t = byId(m.author);
     const what = {
-      permission: "🔐 needs your OK",
-      tools: "🧰 asks for a tool",
-      job: `⚙️ started a job`,
-      error: `⚠️ ${snippet(m.text)}`,
+      permission: "needs your OK",
+      tools: "asks for a tool",
+      job: "started a job",
+      error: snippet(m.text),
     }[m.kind] || [filesLabel(m.meta && m.meta.files), snippet(m.text)].filter(Boolean).join(" ");
-    return `${who ? `<span class="c-who"${t ? ` style="--c:${t.color}"` : ""}>${esc(who)}:</span> ` : ""}<span dir="auto">${esc(what)}</span>`;
+    const lead = m.kind === "permission" || m.kind === "tools" ? ic("shield", "xs") + " " : "";
+    return `${lead}${who ? `<span class="c-who">${esc(who)}:</span> ` : ""}<span dir="auto">${esc(what)}</span>`;
   }
 
   function renderSidebar() {
@@ -172,33 +174,32 @@
       const n = S.unread[c.id] || 0;
       const active = S.view === "channel" && c.id === S.current;
       const last = S.previews[c.id];
-      return `<li><button data-ch="${c.id}" class="chat-row ${active ? "active" : ""} ${n ? "unread" : ""} ${c.status === "archived" ? "archived" : ""}" aria-haspopup="menu">
-        <span class="c-av" style="--c:${chColor(c)}" aria-hidden="true">#${c.status ? `<span class="c-status status-dot s-${c.status}"></span>` : ""}</span>
-        <span class="c-main">
-          <span class="c-top"><span class="c-name">${esc(c.name)}</span>${c.task ? `<span class="task-pill" title="ClickUp ${esc(c.task.id)}">${esc(c.task.id)}</span>` : ""}<span class="c-time">${last ? listTime(last.ts) : ""}</span></span>
-          <span class="c-bot"><span class="c-prev">${previewHtml(c)}</span>
-            ${muted.has(c.id) ? `<span class="c-icon" title="Muted">🔕</span>` : ""}${pinned.has(c.id) ? `<span class="c-icon" title="Pinned">📌</span>` : ""}${n ? `<span class="badge ${muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</span>
-        </span></button></li>`;
+      // Channels you're working in show their last message under the name; the rest are one line.
+      const tall = Object.keys(S.activity[c.id] || {}).length || c.status === "inProgress" || c.status === "waiting";
+      const task = c.task ? ` <span class="badge mono" title="ClickUp ${esc(c.task.id)}">${esc(c.task.id)}</span>` : "";
+      const name = tall
+        ? `<span class="two"><span class="nm"><span>${esc(c.name)}</span>${task}</span><span class="sub">${previewHtml(c)}</span></span>`
+        : `<span class="lbl">${esc(c.name)}</span>${task}`;
+      return `<li><button data-ch="${c.id}" class="row ${tall ? "tall" : ""} ${active ? "active" : ""} ${n ? "has-unread" : ""} ${c.status === "archived" ? "archived" : ""}" aria-haspopup="menu">
+        ${ic("hash", "sm hash")}${name}<span class="meta">${last && !n ? listTime(last.ts) : ""}</span>
+        ${muted.has(c.id) ? `<span class="flag" title="Muted">${ic("bell-off", "xs")}</span>` : ""}${pinned.has(c.id) ? `<span class="flag" title="Pinned">${ic("pin", "xs")}</span>` : ""}${n ? `<span class="unread ${muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</button></li>`;
     };
     const byLatest = (a, b) => ((S.previews[b.id] || {}).ts || 0) - ((S.previews[a.id] || {}).ts || 0);
     const q = S.filter.trim().toLowerCase();
     const shown = S.channels.filter((c) => !c.dm && (!q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q))));
-    const tagged = shown.some((c) => c.status && c.status !== "archived");
     const pins = shown.filter((c) => pinned.has(c.id) && c.status !== "archived").sort(byLatest);
     $("channels").innerHTML =
-      (pins.length ? `<li class="ch-group">Pinned</li>` + pins.map(row).join("") : "") +
+      (pins.length ? `<li class="group-h ch-group">${ic("pin", "xs")}Pinned</li>` + pins.map(row).join("") : "") +
       STATUSES.map((st) => {
         const list = shown.filter((c) => (c.status || "") === st.id && !(pinned.has(c.id) && st.id !== "archived")).sort(byLatest);
         if (!list.length) return "";
         if (st.id === "archived") {
           list.sort((a, b) => (b.statusAt || 0) - (a.statusAt || 0));
           const open = showArchived || !!q;
-          return `<li><button class="ch-group archived-toggle" data-archived-toggle aria-expanded="${open}">${open ? "▾" : "▸"} Archived <span class="count">${list.length}</span></button></li>` +
+          return `<li><button class="row archived-toggle" data-archived-toggle aria-expanded="${open}">${ic("archive", "sm")}<span class="lbl">Archived</span><span class="meta">${list.length}</span>${ic(open ? "down" : "right", "xs")}</button></li>` +
             (open ? list.map(row).join("") : "");
         }
-        // Untagged channels need no heading until some channel has a tag (or is pinned).
-        const head = st.id || tagged || pins.length ? `<li class="ch-group"><span class="status-dot s-${st.id || "none"}" aria-hidden="true"></span>${st.label}</li>` : "";
-        return head + list.map(row).join("");
+        return `<li class="group-h ch-group">${st.id ? `<span class="dot status-dot s-${st.id}" aria-hidden="true"></span>` : ""}${st.label}</li>` + list.map(row).join("");
       }).join("") +
       (q && !shown.length ? `<li class="c-none">No channel matches “${esc(S.filter)}”.</li>` : "");
     const busy = new Set([
@@ -213,11 +214,10 @@
         const last = c && S.previews[c.id];
         const typing = c && Object.keys(S.activity[c.id] || {}).length;
         const active = (S.view === "channel" && c && c.id === S.current) || S.view === t.id;
-        const prev = typing ? previewHtml(c) : busy.has(t.id) ? `<span class="c-typing">working…</span>` : last ? previewHtml(c) : esc(t.role);
-        return `<li><button class="chat-row person ${busy.has(t.id) ? "busy" : ""} ${active ? "active" : ""} ${n ? "unread" : ""}" data-person="${t.id}" title="Message ${esc(t.name)}" aria-haspopup="menu">
-          <span class="c-av p-avatar" style="--c:${t.color}">${t.avatar}<span class="dot"></span></span>
-          <span class="c-main"><span class="c-top"><span class="c-name">${esc(t.name)}</span><span class="c-time">${last ? listTime(last.ts) : ""}</span></span>
-            <span class="c-bot"><span class="c-prev">${prev}</span>${c && muted.has(c.id) ? `<span class="c-icon" title="Muted">🔕</span>` : ""}${n ? `<span class="badge ${c && muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</span></span></button></li>`;
+        const meta = typing ? "typing…" : busy.has(t.id) ? "in a job" : last && !n ? listTime(last.ts) : "";
+        return `<li><button class="row person ${active ? "active" : ""} ${n ? "has-unread" : ""}" style="--c:${t.color}" data-person="${t.id}" title="Message ${esc(t.name)} (${esc(t.role)})" aria-haspopup="menu">
+          <span class="avatar xs">${t.avatar}<span class="presence ${busy.has(t.id) || typing ? "busy" : ""}"></span></span><span class="lbl">${esc(t.name)}</span>
+          <span class="meta ${busy.has(t.id) || typing ? "busy" : ""}">${meta}</span>${c && muted.has(c.id) ? `<span class="flag" title="Muted">${ic("bell-off", "xs")}</span>` : ""}${n ? `<span class="unread ${c && muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</button></li>`;
       })
       .join("");
   }
@@ -265,12 +265,10 @@
     if (!c) return ($("cli").innerHTML = "");
     const until = c.expiresAt ? new Date(c.expiresAt).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
     $("cli").innerHTML = c.loggedIn
-      ? `<div class="cli-row"><span class="cli-dot ok"></span><span>Claude CLI signed in${until ? ` · until ${until}` : ""}</span>
-          <button class="cli-btn ghost" data-cli-login title="Sign in again">Re-login</button></div>`
-      : `<div class="cli-row"><span class="cli-dot bad"></span><span>Claude CLI is signed out</span></div>
-          <button class="cli-btn" data-cli-login>Quick login</button>`;
+      ? `<span class="dot ok"></span><span title="Claude CLI signed in${until ? ` until ${until}` : ""}">CLI signed in</span>
+          <button type="button" class="cli-btn relogin" data-cli-login title="Sign in again">Re-login</button>`
+      : `<span class="dot bad"></span><span>CLI signed out</span> · <button type="button" class="cli-btn" data-cli-login>Quick login</button>`;
   }
-
   let loginPoll;
   async function refreshCli(fresh) {
     try {
@@ -306,27 +304,32 @@
 
   /** A permission or tool-request card, with its buttons while it waits on you. */
   function cardHtml(m, name) {
+    const where = currentChannel().dm ? "DM" : "channel";
+    const done = (ok, text) => `<div class="decided">${ic(ok ? "check" : "x", `sm ${ok ? "ok" : "no"}`)}<span><b>${text}</b></span></div>`;
     if (m.kind === "permission") {
       const p = m.meta.permission;
-      const decided = { once: "✅ Allowed once", always: `✅ Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "🚫 Denied" }[p.status];
-      return `<div class="perm">
-        <div class="perm-title">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} wants to use ${esc(p.tool)}</div>
-        <code>${esc(p.summary)}</code>
-        ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
-          <button class="btn primary" data-perm="once" data-mid="${m.id}">Allow once</button>
-          <button class="btn" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${currentChannel().dm ? "DM" : "channel"}">Always in this ${currentChannel().dm ? "DM" : "channel"}</button>
-          <button class="btn" data-perm="denied" data-mid="${m.id}">Deny</button></div>`}
+      if (p.status) return done(p.status !== "denied", { once: "Allowed once", always: `Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "Denied" }[p.status] + ` · ${esc(p.tool)}: <code>${esc(p.summary)}</code>`);
+      return `<div class="card approve">
+        <div class="hd"><span class="ic">${ic("shield")}</span><div><div class="ttl">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} needs your OK</div>
+          <div class="desc">It wants to use ${esc(p.tool)}</div></div></div>
+        <div class="cmd"><span class="pr">$</span><span>${esc(p.summary)}</span></div>
+        <div class="ft">
+          <button class="btn default sm" data-perm="once" data-mid="${m.id}">${ic("check", "sm")}Allow once</button>
+          <button class="btn outline sm" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${where}">Always in this ${where}</button>
+          <span class="grow"></span>
+          <button class="btn ghost-destructive sm" data-perm="denied" data-mid="${m.id}">${ic("x", "sm")}Deny</button></div>
       </div>`;
     }
     const r = m.meta.toolRequest;
-    const decided = { approved: `✅ Approved: ${esc(name)} has ${r.tools.length > 1 ? "them" : "it"} from now on`, denied: "🚫 Denied" }[r.status];
-    return `<div class="perm">
-      <div class="perm-title">${esc(name)} asks for ${r.tools.length > 1 ? "new tools" : "a new tool"}</div>
+    if (r.status) return done(r.status === "approved", r.status === "approved" ? `Approved: ${esc(name)} has ${r.tools.length > 1 ? "them" : "it"} from now on` : "Denied");
+    return `<div class="card approve">
+      <div class="hd"><span class="ic">${ic("wrench")}</span><div><div class="ttl">${esc(name)} asks for ${r.tools.length > 1 ? "new tools" : "a new tool"}</div>
+        <div class="desc perm-reason" dir="${textDir(r.reason)}">${esc(r.reason)}</div></div></div>
       <div class="chips">${r.tools.map((x) => `<span class="chip">${esc(x.name)}</span>`).join("")}</div>
-      <div class="perm-reason" dir="${textDir(r.reason)}">${esc(r.reason)}</div>
-      ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
-        <button class="btn primary" data-tools="approved" data-mid="${m.id}" title="Adds ${r.tools.length > 1 ? "them" : "it"} to ${esc(name)}'s tools, in the chat and in jobs">Approve</button>
-        <button class="btn" data-tools="denied" data-mid="${m.id}">Deny</button></div>`}
+      <div class="ft">
+        <button class="btn default sm" data-tools="approved" data-mid="${m.id}" title="Adds ${r.tools.length > 1 ? "them" : "it"} to ${esc(name)}'s tools, in the chat and in jobs">${ic("check", "sm")}Approve</button>
+        <span class="grow"></span>
+        <button class="btn ghost-destructive sm" data-tools="denied" data-mid="${m.id}">${ic("x", "sm")}Deny</button></div>
     </div>`;
   }
 
@@ -338,7 +341,7 @@
     const guest = m.author === "guest" ? (m.meta && m.meta.guest) || { name: "Someone" } : null;
     const guestWhere = m.meta && m.meta.via === "teams" ? "Teams" : "Slack";
     const name = isUser ? S.user : t ? t.name : guest ? guest.name : m.author;
-    // A run of messages from one person within a few minutes, on one day, shares one name and one bubble tail.
+    // A run of messages from one person within a few minutes, on one day, reads as one group: one name, bubbles close together.
     const cont = prev && prev.author === m.author && m.ts - prev.ts < 5 * 60e3 && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
 
     const hasFiles = !!(m.meta && m.meta.files && m.meta.files.length);
@@ -351,36 +354,37 @@
       body = `<div class="text" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
       if (m.kind === "status") body = `<div class="text status-update" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
       if (m.kind === "error") {
-        const fix = AUTH_ERROR.test(m.text) && !/thinking|signature/i.test(m.text) ? `<button class="btn primary" data-cli-login>Quick login to Claude CLI</button>` : "";
-        const again = t && !(m.meta && m.meta.retried) ? `<button class="btn" data-retry="${m.id}">Try again</button>` : "";
+        const fix = AUTH_ERROR.test(m.text) && !/thinking|signature/i.test(m.text) ? `<button class="btn default sm" data-cli-login>Quick login to Claude CLI</button>` : "";
+        const again = t && !(m.meta && m.meta.retried) ? `<button class="btn outline sm" data-retry="${m.id}">${ic("refresh", "sm")}Try again</button>` : "";
         if (fix || again) body += `<div class="err-action">${fix}${again}</div>`;
       }
       if (hasFiles) body = filesHtml(m) + (m.text ? body : "");
     }
 
     if (m.meta && m.meta.replyTo) body = quoteHtml(m.meta.replyTo) + body;
-    if (m.meta && m.meta.feedbackFor) body = `<div class="fb-tag">✎ Feedback for ${esc(authorName(m.meta.feedbackFor))}</div>` + body;
+    if (m.meta && m.meta.feedbackFor) body = `<div class="fb-tag">${ic("pen", "xs")}Feedback for ${esc(authorName(m.meta.feedbackFor))}</div>` + body;
     const tip = msgInfo(m);
-    // Time and ticks sit in the bubble's bottom corner, like WhatsApp.
-    const foot = `<span class="b-meta" title="${esc(tip)}">${fmtTime(m.ts)}${isUser ? `<span class="ticks" data-ticks="${m.id}"></span>` : ""}</span>`;
     const wide = ["job", "permission", "tools"].includes(m.kind);
     const archived = currentChannel()?.status === "archived";
-    const side = archived ? "" : `<div class="m-side">
-        <button class="m-btn" data-react-pick="${m.id}" title="React" aria-label="React">☺</button>
-        <button class="m-btn" data-reply="${m.id}" title="Reply${t ? ` (goes to ${esc(name)})` : ""}" aria-label="Reply">↩</button>${t ? `
-        <button class="m-btn" data-feedback="${m.id}" title="Feedback for ${esc(name)}: ${esc(name)} updates its rules" aria-label="Feedback for ${esc(name)}">✎</button>` : ""}</div>`;
-    return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}">
-      ${isUser ? "" : cont ? `<span class="m-av"></span>` : guest ? `<span class="m-av" title="${esc(name)}, in ${guestWhere}" style="--c:#888">👤</span>` : `<button class="m-av" data-person="${m.author}" title="${esc(name)}'s settings" style="--c:${t ? t.color : "#888"}">${t ? t.avatar : "🤖"}</button>`}
-      <div class="m-col">
-        <div class="bubble ${wide ? "wide" : ""} ${hasFiles ? "has-files" : ""} ${hasFiles && !m.text ? "only-files" : ""}" style="--c:${t ? t.color : "var(--accent)"}">
-          <button class="m-more" data-msg-menu="${m.id}" aria-label="Message menu" title="More">⌄</button>
-          ${!isUser && !cont ? (guest ? `<div class="b-name"><span>${esc(name)}</span><span class="b-role">in ${guestWhere}</span></div>` : `<div class="b-name"><button data-person="${m.author}">${esc(name)}</button>${t ? `<span class="b-role">${esc(t.role)}</span>` : ""}</div>`) : ""}
-          ${body}${foot}
+    const act = (attrs, label, icon) => `<button type="button" class="btn ghost icon sm" ${attrs} title="${label}" aria-label="${label}">${ic(icon, "sm")}</button>`;
+    const actions = `<div class="hover-actions">${archived ? "" : act(`data-react-pick="${m.id}"`, "React", "smile") + act(`data-reply="${m.id}"`, `Reply${t ? ` (goes to ${esc(name)})` : ""}`, "reply") +
+      (t ? act(`data-feedback="${m.id}"`, `Feedback for ${esc(name)}: ${esc(name)} updates its rules`, "pen") : "")}${act(`data-msg-menu="${m.id}"`, "More", "dots").replace('class="btn', 'class="m-more btn')}</div>`;
+    const who = isUser || cont ? "" : guest
+      ? `<div class="who"><span class="nm">${esc(name)}</span><span class="role">in ${guestWhere}</span><time title="${esc(tip)}">${fmtTime(m.ts)}</time></div>`
+      : `<div class="who"><button class="nm" data-person="${m.author}">${esc(name)}</button>${t ? `<span class="role">${esc(t.role)}</span>` : ""}<time title="${esc(tip)}">${fmtTime(m.ts)}</time></div>`;
+    const av = isUser ? "" : cont ? `<span class="m-av"></span>` : guest
+      ? `<span class="avatar m-av" title="${esc(name)}, in ${guestWhere}">👤</span>`
+      : `<button class="avatar m-av" data-person="${m.author}" title="${esc(name)}'s settings">${t ? t.avatar : "🤖"}</button>`;
+    return `<div class="msg ${isUser ? "out" : "in"} ${cont ? "cont" : "first"} ${m.kind === "error" ? "error" : ""}" data-id="${m.id}"${t ? ` style="--c:${t.color}"` : ""}>
+      ${av}
+      <div class="m-col">${who}
+        <div class="bubble ${wide ? "wide" : ""} ${hasFiles ? "has-files" : ""} ${hasFiles && !m.text ? "only-files" : ""}"${cont ? ` title="${esc(fmtTime(m.ts))}"` : ""}>
+          ${body}${actions}
         </div>
         ${m.meta && m.meta.reactions && m.meta.reactions.length ? reactionsHtml(m.id, m.meta.reactions) : ""}
+        ${isUser ? `<div class="receipt" title="${esc(tip)}">${fmtTime(m.ts)}<span class="ticks" data-ticks="${m.id}"></span></div>` : ""}
         ${m.meta && m.meta.routedTo ? routedHtml(m.meta) : ""}
       </div>
-      ${side}
     </div>`;
   }
 
@@ -404,8 +408,8 @@
     const why = meta.routeWhy || "";
     const mozart = /^Mozart: /.test(why);
     const reason = esc(why.replace(/^Mozart: /, ""));
-    const decided = `🎼 Mozart${who ? ` → ${who}` : ":"}${reacted ? `${who ? " ·" : ""} ${reacted} reacted instead` : ""}${reason ? ` · ${reason}` : ""}`;
-    const text = mozart ? (who || reacted ? decided : `🎼 Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
+    const decided = `Mozart${who ? ` → ${who}` : ":"}${reacted ? `${who ? " ·" : ""} ${reacted} reacted instead` : ""}${reason ? ` · ${reason}` : ""}`;
+    const text = mozart ? (who || reacted ? decided : `Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
     const tip = mozart ? "This channel's Mozart decided who answers, and whether a reaction is enough." : "Mozart couldn't answer, so a simple rule chose: whoever you're talking with, else the teammate who takes new topics.";
     return `<div class="routed" title="${tip}">${text}</div>`;
   }
@@ -454,7 +458,7 @@
     }[u.state];
     el.className = `update-status ${u.state}`;
     el.title = [u.state === "failed" ? u.detail : "", ...(u.commits || []), running].filter(Boolean).join("\n");
-    el.innerHTML = `<span class="up-text">⬆ ${esc(text)}</span>${button ? `<button class="cli-btn ghost" data-update-apply>${esc(button)}</button>` : ""}`;
+    el.innerHTML = `${ic(u.state === "failed" ? "x" : "up", "sm")}<span class="up-text">${esc(text)}</span>${button ? `<button class="cli-btn" data-update-apply>${esc(button)}</button>` : ""}`;
   }
   document.addEventListener("click", async (e) => {
     if (!e.target.closest("[data-update-apply]")) return;
@@ -500,7 +504,7 @@
       const i = list.findIndex((m) => m.id === el.dataset.ticks);
       const readers = seen.filter(([, n]) => n > i).map(([id]) => authorName(id));
       el.className = `ticks ${readers.length ? "read" : ""}`;
-      el.textContent = readers.length ? "✓✓" : "✓";
+      el.innerHTML = ic(readers.length ? "checks" : "check", "xs");
       el.title = readers.length ? `Read by ${readers.join(", ")}` : "Sent";
     });
   }
@@ -524,9 +528,9 @@
     bar.hidden = !replyTo;
     if (!replyTo) return;
     const t = byId(replyTo.author);
-    bar.innerHTML = `<span class="rb-label">Replying to <b>${esc(authorName(replyTo.author))}</b>${t ? ` <span class="rb-hint">· only ${esc(t.name)} is woken</span>` : ""}</span>
-      <span class="rb-text" dir="${textDir(replyTo.text)}">${esc(snippet(replyTo.text))}</span>
-      <button type="button" class="rb-x" data-reply-cancel aria-label="Cancel the reply" title="Cancel (Esc)">×</button>`;
+    bar.innerHTML = `${ic("reply", "sm")}<span class="rb-main"><span class="rb-label">Replying to <b>${esc(authorName(replyTo.author))}</b>${t ? ` <span class="rb-hint">· only ${esc(t.name)} is woken</span>` : ""}</span>
+      <span class="rb-text" dir="${textDir(replyTo.text)}">${esc(snippet(replyTo.text))}</span></span>
+      <button type="button" class="btn ghost icon sm rb-x" data-reply-cancel aria-label="Cancel the reply" title="Cancel (Esc)">${ic("x", "sm")}</button>`;
     input.focus();
   }
   const replyTextOf = (m) =>
@@ -560,21 +564,24 @@
 
   function jobCard(ch, jobId) {
     const j = jobById(ch, jobId);
-    if (!j) return `<div class="job" data-job="${esc(jobId)}"><div class="job-title">Job ${esc(jobId)}</div></div>`;
+    if (!j) return `<div class="card job" data-job="${esc(jobId)}"><div class="job-h"><span class="badge mono">${esc(jobId)}</span><span class="t">Job ${esc(jobId)}</span></div></div>`;
     const t = byId(j.agentId);
     const [label, cls] = STATUS[j.status] || [j.status, "off"];
+    const run = j.status === "running";
     const took = j.endedAt ? dur(j.endedAt - j.startedAt) : dur(Date.now() - j.startedAt);
-    return `<div class="job job-${cls}" data-job="${j.id}" style="--c:${t ? t.color : "#888"}">
-      <div class="job-top">
-        <span class="job-id">${esc(j.id)}</span>
-        <span class="job-title">${esc(j.title)}</span>
-        <span class="pill ${cls}">${j.status === "running" ? `<span class="s-pulse"></span>` : ""}${label}</span>
+    const when = run ? `Started ${fmtTime(j.startedAt)}` : j.endedAt ? `Finished ${fmtTime(j.endedAt)}` : "";
+    return `<div class="card job job-${cls}" data-job="${j.id}" style="--c:${t ? t.color : "var(--muted-foreground)"}">
+      <div class="job-h"><span class="badge mono">${esc(j.id)}</span><span class="t">${esc(j.title)}</span>
+        <span class="badge tone tone-${cls}">${run ? `<span class="dot pulse"></span>` : ""}${label}</span></div>
+      ${run ? `<div class="indet"></div>` : ""}
+      <div class="job-b">${run
+        ? `<div class="job-act">${ic("loader", "sm spin")}<span>${esc(j.activity || "starting")}</span><span class="el">${took}</span></div>`
+        : `<div class="facts"><span class="badge">${ic("clock", "xs")}${took}</span></div>`}
+        ${j.report && !run ? `<details class="report"><summary>${ic("right", "sm")}Report</summary><div class="md text" dir="${textDir(j.report)}">${window.renderMarkdown(j.report, { people: S.people })}</div></details>` : ""}
       </div>
-      <div class="job-sub">${j.status === "running" ? `<span class="job-act">${esc(j.activity || "starting")}</span> · ` : ""}${took}</div>
-      ${j.report && j.status !== "running" ? `<details class="job-report"><summary>Report</summary><div class="text" dir="${textDir(j.report)}">${window.renderMarkdown(j.report, { people: S.people })}</div></details>` : ""}
-      <div class="job-btns">
-        <button class="btn" data-open-job="${j.id}" data-ch="${ch.id}" ${j.status === "running" ? `disabled title="${OPEN_WHEN_DONE}"` : ""}>Open in Claude ↗</button>
-        ${j.status === "running" ? `<button class="btn" data-stop-job="${j.id}">Stop</button>` : ""}
+      <div class="job-f"><span class="grow">${when}</span>
+        <button class="btn outline sm" data-open-job="${j.id}" data-ch="${ch.id}" ${run ? `disabled title="${OPEN_WHEN_DONE}"` : ""}>${ic("ext", "sm")}Open in Claude</button>
+        ${run ? `<button class="btn outline sm" data-stop-job="${j.id}">${ic("stop", "sm")}Stop</button>` : ""}
       </div>
     </div>`;
   }
@@ -637,15 +644,25 @@
       const t = dmMate(currentChannel());
       el.innerHTML = t
         ? `<div class="empty"><div class="big">${t.avatar}</div>
-        This is the start of your DM with <b>${esc(t.name)}</b>. Only ${esc(t.name)} reads it, and only ${esc(t.name)} answers.</div>`
+        <div>This is the start of your DM with <b>${esc(t.name)}</b>. Only ${esc(t.name)} reads it, and only ${esc(t.name)} answers.</div></div>`
         : `<div class="empty"><div class="big">${S.roster.map((t) => t.avatar).join("")}</div>
-        This is the start of <b>#${esc(currentChannel().name)}</b>. Say hi, or @mention someone to give them a job.</div>`;
+        <div>This is the start of <b>#${esc(currentChannel().name)}</b>. Say hi, or @mention someone to give them a job.</div></div>`;
       return;
     }
     el.innerHTML = list.map((m, i) => dayDivider(m, list[i - 1]) + msgHtml(m, list[i - 1])).join("");
+    renderStack();
     clampLong(el);
     renderTicks();
     toBottom();
+  }
+
+  /** The header's avatar stack: the teammates who've posted here (in a DM, just the mate). */
+  function renderStack() {
+    const c = currentChannel();
+    const mate = dmMate(c);
+    const ids = mate ? [] : [...new Set((S.msgs[S.current] || []).map((m) => m.author))];
+    const who = S.roster.filter((t) => ids.includes(t.id)).slice(0, 5);
+    $("ch-stack").innerHTML = who.map((t) => `<span class="avatar sm" style="--c:${t.color}" title="${esc(t.name)}">${t.avatar}</span>`).join("");
   }
 
   function appendMessage(m) {
@@ -654,6 +671,7 @@
     const stick = nearBottom() || m.author === "user";
     if (list.length === 1) return renderMessages();
     $("messages").insertAdjacentHTML("beforeend", dayDivider(m, prev) + msgHtml(m, prev));
+    renderStack();
     clampLong($("messages"));
     renderTicks();
     if (stick) toBottom();
@@ -678,7 +696,7 @@
         if (it.info) return `<div class="menu-info">${esc(it.info)}</div>`;
         if (it.emojis) return `<div class="menu-emojis">${it.emojis.map((e) => `<button role="menuitem" data-i="${i}" data-emoji="${esc(e)}" class="${it.current === e ? "sel" : ""}" aria-label="React ${esc(e)}">${esc(e)}</button>`).join("")}</div>`;
         return `<button role="menuitem${it.checked !== undefined ? "checkbox" : ""}" data-i="${i}" class="menu-item ${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""} ${it.checked !== undefined ? `aria-checked="${it.checked}"` : ""}>
-          <span class="mi-icon" aria-hidden="true">${it.checked ? "✓" : it.icon || ""}</span><span>${esc(it.label)}</span></button>`;
+          <span class="mi-icon" aria-hidden="true">${it.checked ? ic("check", "sm") : it.icon ? ic(it.icon, "sm") : ""}</span><span>${esc(it.label)}</span></button>`;
       })
       .join("");
     menuEl.hidden = false;
@@ -735,21 +753,21 @@
     const files = (m.meta && m.meta.files) || [];
     return [
       !archived && m.author !== "system" && { emojis: QUICK, current: mine && mine.emoji, run: (e) => react(m.id, e) },
-      !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "↩", run: () => setReply(m) },
-      t && !archived && { label: `Feedback for ${t.name}…`, icon: "✎", run: () => window.Feedback.open(m) },
-      m.text && { label: "Copy text", icon: "⧉", run: () => copy(m.text, "Text") },
+      !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "reply", run: () => setReply(m) },
+      t && !archived && { label: `Feedback for ${t.name}…`, icon: "pen", run: () => window.Feedback.open(m) },
+      m.text && { label: "Copy text", icon: "copy", run: () => copy(m.text, "Text") },
       files.length && { sep: true },
-      files.length === 1 && { label: `Open ${files[0].name}`, icon: "↗", run: () => fileAction(ch.id, files[0].id, "open") },
-      ...files.map((f) => ({ label: files.length === 1 ? "Show in Finder" : `Show ${f.name} in Finder`, icon: "📁", run: () => fileAction(ch.id, f.id, "reveal") })),
+      files.length === 1 && { label: `Open ${files[0].name}`, icon: "ext", run: () => fileAction(ch.id, files[0].id, "open") },
+      ...files.map((f) => ({ label: files.length === 1 ? "Show in Finder" : `Show ${f.name} in Finder`, icon: "folder", run: () => fileAction(ch.id, f.id, "reveal") })),
       files.length && { sep: true },
-      m.meta?.replyTo && { label: "Show the quoted message", icon: "↑", run: () => gotoMessage(m.meta.replyTo.id) },
-      m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "↻", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
+      m.meta?.replyTo && { label: "Show the quoted message", icon: "up", run: () => gotoMessage(m.meta.replyTo.id) },
+      m.kind === "error" && t && !m.meta?.retried && !archived && { label: "Try again", icon: "refresh", run: () => api(`/api/channels/${S.current}/retry`, { messageId: m.id }).catch((err) => toast(err.message)) },
       job && { sep: true },
-      job && { label: `Open ${job.id} in Claude`, icon: "↗", disabled: job.status === "running", run: () => openJobSession(ch.id, job.id) },
-      job && job.status === "running" && { label: `Stop ${job.id}`, icon: "■", danger: true, run: () => api(`/api/channels/${S.current}/stop-job`, { jobId: job.id }).then((r) => toast(r.message), (err) => toast(err.message)) },
+      job && { label: `Open ${job.id} in Claude`, icon: "ext", disabled: job.status === "running", run: () => openJobSession(ch.id, job.id) },
+      job && job.status === "running" && { label: `Stop ${job.id}`, icon: "stop", danger: true, run: () => api(`/api/channels/${S.current}/stop-job`, { jobId: job.id }).then((r) => toast(r.message), (err) => toast(err.message)) },
       t && { sep: true },
-      t && !archived && { label: `Message @${t.name}`, icon: "@", run: () => mentionInComposer(t) },
-      t && { label: `${t.name}'s settings`, icon: "⚙", run: () => openAgent(t.id) },
+      t && !archived && { label: `Message @${t.name}`, icon: "at", run: () => mentionInComposer(t) },
+      t && { label: `${t.name}'s settings`, icon: "sliders", run: () => openAgent(t.id) },
       { sep: true },
       { info: msgInfo(m) },
     ];
@@ -758,20 +776,20 @@
   function channelMenu(c) {
     const t = dmMate(c);
     if (c.dm) return [
-      t && { label: `${t.name}'s settings and memory`, icon: "⚙", run: () => openAgent(t.id) },
+      t && { label: `${t.name}'s settings and memory`, icon: "sliders", run: () => openAgent(t.id) },
       { label: muted.has(c.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(c.id) ? "🔔" : "🔕", run: () => (muted.toggle(c.id), renderSidebar(), updateTitle()) },
       { sep: true },
-      { label: "Open the folder in Finder", icon: "📁", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
-      { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
+      { label: "Open the folder in Finder", icon: "folder", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
+      { label: "Copy the folder path", icon: "copy", run: () => copy(c.cwd, "Path") },
     ];
     const st = (id, label) => ({ label, checked: (c.status || "") === id, run: () => setStatus(c, id) });
     // The mark is on the channel's own choice, or on the machine's default when it has none.
     const pm = (id, label) => ({ label, checked: (c.permissionMode || S.defaultPermissionMode) === id, run: () => setPermissionMode(c, id) });
     const n = S.unread[c.id] || 0;
     return [
-      { label: "Open", icon: "💬", run: () => openChannel(c.id) },
-      n ? { label: "Mark as read", icon: "✓", run: () => ((S.unread[c.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "●", run: () => ((S.unread[c.id] = 1), unreadChanged()) },
-      { label: pinned.has(c.id) ? "Unpin" : "Pin to the top", icon: "📌", run: () => (pinned.toggle(c.id), renderSidebar()) },
+      { label: "Open", icon: "msg", run: () => openChannel(c.id) },
+      n ? { label: "Mark as read", icon: "check", run: () => ((S.unread[c.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "circle", run: () => ((S.unread[c.id] = 1), unreadChanged()) },
+      { label: pinned.has(c.id) ? "Unpin" : "Pin to the top", icon: "pin", run: () => (pinned.toggle(c.id), renderSidebar()) },
       { label: muted.has(c.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(c.id) ? "🔔" : "🔕", run: () => (muted.toggle(c.id), renderSidebar(), updateTitle()) },
       { sep: true },
       { head: "Status" },
@@ -785,12 +803,12 @@
       pm("acceptEdits", "Edit files freely, ask before commands"),
       pm("ask", "Ask before edits and commands"),
       { sep: true },
-      c.task && { label: `Open ${c.task.id} in Chrome`, icon: "↗", run: () => openTask(c) },
-      { label: c.task ? "Change the ClickUp task…" : "Add a ClickUp task…", icon: "🏷", run: () => editTask(c) },
-      { label: "Open the folder in Finder", icon: "📁", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
-      { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
+      c.task && { label: `Open ${c.task.id} in Chrome`, icon: "ext", run: () => openTask(c) },
+      { label: c.task ? "Change the ClickUp task…" : "Add a ClickUp task…", icon: "tag", run: () => editTask(c) },
+      { label: "Open the folder in Finder", icon: "folder", run: () => api(`/api/channels/${c.id}/open-folder`, {}).catch((err) => toast(err.message)) },
+      { label: "Copy the folder path", icon: "copy", run: () => copy(c.cwd, "Path") },
       { sep: true },
-      c.status === "archived" ? { label: "Unarchive", icon: "📤", run: () => setStatus(c, "") } : { label: "Archive", icon: "🗄", run: () => setStatus(c, "archived") },
+      c.status === "archived" ? { label: "Unarchive", icon: "archive", run: () => setStatus(c, "") } : { label: "Archive", icon: "archive", run: () => setStatus(c, "archived") },
     ];
   }
 
@@ -800,13 +818,13 @@
     const dm = dmWith(t.id);
     const n = (dm && S.unread[dm.id]) || 0;
     return [
-      { label: `Message ${t.name}`, icon: "💬", run: () => openDm(t.id) },
-      ch && !ch.dm && ch.status !== "archived" && { label: `Message @${t.name} in #${ch.name}`, icon: "@", run: () => (S.view !== "channel" ? openChannel(ch.id) : Promise.resolve()).then(() => mentionInComposer(t)) },
-      dm && (n ? { label: "Mark as read", icon: "✓", run: () => ((S.unread[dm.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "●", run: () => ((S.unread[dm.id] = 1), unreadChanged()) }),
+      { label: `Message ${t.name}`, icon: "msg", run: () => openDm(t.id) },
+      ch && !ch.dm && ch.status !== "archived" && { label: `Message @${t.name} in #${ch.name}`, icon: "at", run: () => (S.view !== "channel" ? openChannel(ch.id) : Promise.resolve()).then(() => mentionInComposer(t)) },
+      dm && (n ? { label: "Mark as read", icon: "check", run: () => ((S.unread[dm.id] = 0), unreadChanged()) } : { label: "Mark as unread", icon: "circle", run: () => ((S.unread[dm.id] = 1), unreadChanged()) }),
       dm && { label: muted.has(dm.id) ? "Unmute notifications" : "Mute notifications", icon: muted.has(dm.id) ? "🔔" : "🔕", run: () => (muted.toggle(dm.id), renderSidebar(), updateTitle()) },
       { sep: true },
-      { label: "Settings and memory", icon: "⚙", run: () => openAgent(t.id) },
-      { label: "Open the chat session in Claude", icon: "↗", disabled: !sid, run: () => openAgentSession(t.id) },
+      { label: "Settings and memory", icon: "sliders", run: () => openAgent(t.id) },
+      { label: "Open the chat session in Claude", icon: "ext", disabled: !sid, run: () => openAgentSession(t.id) },
     ];
   }
 
@@ -839,6 +857,26 @@
     if (!found) return;
     e.preventDefault();
     openMenu(found[0], { x: e.clientX, y: e.clientY }, found[1]);
+  });
+  // ⌘K: the channel search.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "k" && (e.metaKey || e.ctrlKey) && !e.altKey) {
+      e.preventDefault();
+      $("search").focus();
+      $("search").select();
+    }
+  });
+  $("theme-btn").addEventListener("click", (e) => {
+    const cur = window.harmoniaTheme.get();
+    const pick = (p) => ({ label: p[0].toUpperCase() + p.slice(1), icon: { system: "monitor", light: "sun", dark: "moon" }[p], checked: cur === p, run: () => window.harmoniaTheme.set(p) });
+    openMenu([{ head: "Theme" }, pick("system"), pick("light"), pick("dark")], atButton(e.currentTarget), e.currentTarget);
+  });
+  $("mention-btn").addEventListener("click", () => {
+    const at = input.selectionStart ?? input.value.length;
+    const lead = at && !/\s/.test(input.value[at - 1]) ? " @" : "@";
+    input.setRangeText(lead, at, input.selectionEnd ?? at, "end");
+    input.focus();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   document.addEventListener("keydown", (e) => {
     if (!(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) return;
@@ -905,9 +943,9 @@
         const t = byId(id);
         if (!t) return "";
         const busyElsewhere = status && /^busy in /.test(status);
-        return `<div class="typing-row" title="${esc(status || "")}"><span class="t-av">${t.avatar}</span><span class="t-bubble"><span class="dots"><i></i><i></i><i></i></span></span>
-          <span class="t-txt">${esc(t.name)}${busyElsewhere ? ` is ${esc(status)}` : ""}</span>
-          <button class="stop" data-stop="${id}" title="Stop ${esc(t.name)}">Stop</button></div>`;
+        return `<div class="typing-row" title="${esc(status || "")}" style="--c:${t.color}"><span class="avatar xs">${t.avatar}</span><span class="dots"><i></i><i></i><i></i></span>
+          <span class="t-txt">${esc(t.name)} ${busyElsewhere ? `is ${esc(status)}` : "is typing"}</span>
+          <button class="btn ghost sm stop" data-stop="${id}" title="Stop ${esc(t.name)}">${ic("stop", "xs")}Stop</button></div>`;
       })
       .join("");
     renderSubtitle();
@@ -927,21 +965,18 @@
     if (!t) return "";
     const where = s.busyIn && S.channels.find((c) => c.id === s.busyIn);
     const status = s.busyIn
-      ? `<span class="s-live"><span class="s-pulse"></span>${where && where.id !== S.current ? `${esc(chLabel(where))} · ` : ""}${esc(s.activity || "thinking")}</span>`
+      ? `<span class="live">${where && where.id !== S.current ? `${esc(chLabel(where))} · ` : ""}${esc(s.activity || "thinking")}</span>`
       : s.sessionId ? `<span>idle${s.lastAt ? ` · ${ago(s.lastAt)}` : ""}</span>` : `<span>starts on the first message</span>`;
     const waiting = s.queue.length ? ` · ${s.queue.length} channel${s.queue.length > 1 ? "s" : ""} waiting` : "";
     const cache = cacheShare(s);
     const stats = s.sessionId && s.turns
-      ? `<span class="s-sub">${s.context ? `${kTok(s.context)} context · ` : ""}${cache !== null ? `${cache}% cached · ` : ""}${s.turns} turn${s.turns === 1 ? "" : "s"}</span>`
+      ? `<span class="ctx">${s.context ? `${kTok(s.context)} context · ` : ""}${cache !== null ? `${cache}% cached · ` : ""}${s.turns} turn${s.turns === 1 ? "" : "s"}</span>`
       : "";
-    return `<li><button class="s-row" data-open-session="${s.agentId}" ${s.sessionId ? `title="Open ${esc(t.name)}'s session in the Claude app"` : "disabled"}>
-      <span class="s-av" style="--c:${t.color}">${t.avatar}</span>
-      <span class="s-main">
-        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> Harmonia chat</span>
-        <span class="s-sub">${status}${waiting}</span>
-        ${stats}
-      </span>
-      <span class="s-side">${s.sessionId ? `<span class="s-open" aria-hidden="true">↗</span>` : ""}</span>
+    return `<li><button class="sess" style="--c:${t.color}" data-open-session="${s.agentId}" ${s.sessionId ? `title="Open ${esc(t.name)}'s session in the Claude app"` : "disabled"}>
+      <span class="avatar sm">${t.avatar}${s.busyIn ? `<span class="presence busy"></span>` : ""}</span>
+      <span class="two"><b><span>${esc(t.name)}</span>${s.busyIn ? `<span class="dot pulse"></span>` : ""}</b>
+        <span class="sub">${status}${waiting}</span>${stats}</span>
+      ${s.sessionId ? ic("ext", "xs") : ""}
     </button></li>`;
   }
 
@@ -950,15 +985,13 @@
     if (!t) return "";
     const [label] = STATUS[j.status] || [j.status];
     const status = j.status === "running"
-      ? `<span class="s-live"><span class="s-pulse"></span>${esc(j.activity || "starting")}</span>`
+      ? `<span class="live">${esc(j.activity || "starting")}</span>`
       : `<span>${label.toLowerCase()} · ${ago(j.endedAt || j.startedAt)}</span>`;
-    return `<li><button class="s-row" data-open-job="${j.id}" data-ch="${ch.id}" title="${j.status === "running" ? OPEN_WHEN_DONE : "Open in the Claude app"}">
-      <span class="s-av" style="--c:${t.color}">${t.avatar}</span>
-      <span class="s-main">
-        <span class="s-title"><span class="tag" style="--c:${t.color}">${esc(t.name)}</span> ${j.kind === "chat" ? esc(chLabel(ch)) : esc(j.title)}</span>
-        <span class="s-sub">${j.kind === "job" ? `${esc(j.id)} · ` : "chat · "}${status}</span>
-      </span>
-      <span class="s-side"><span class="s-open" aria-hidden="true">↗</span></span>
+    return `<li><button class="sess" style="--c:${t.color}" data-open-job="${j.id}" data-ch="${ch.id}" title="${j.status === "running" ? OPEN_WHEN_DONE : "Open in the Claude app"}">
+      <span class="avatar sm">${t.avatar}</span>
+      <span class="two"><b><span>${j.kind === "chat" ? esc(chLabel(ch)) : esc(j.title)}</span></b>
+        <span class="sub">${j.kind === "job" ? `<span class="badge mono">${esc(j.id)}</span>` : "<span>chat</span>"} · ${esc(t.name)} · ${status}</span></span>
+      ${ic("ext", "xs")}
     </button></li>`;
   }
 
@@ -969,14 +1002,18 @@
     const live = jobs.filter((j) => j.status === "running");
     const rest = jobs.filter((j) => j.status !== "running").slice(0, 25);
     const working = S.sessions.filter((x) => x.busyIn).length + live.length;
-    $("sessions-count").textContent = working ? `${working} working` : "";
-    $("sessions").innerHTML = `<div class="s-head"><b>Chat sessions</b><span>TeamAgents</span></div>
+    $("sessions-count").textContent = working || "";
+    $("sessions-count").title = working ? `${working} working` : "";
+    $("sessions").innerHTML = `<div class="p-head"><b>Sessions</b><button class="btn ghost icon sm" data-sessions-close aria-label="Close the panel">${ic("x", "sm")}</button></div>
+      <div class="p-scroll">
+      <div class="group-h">Chat sessions</div>
       <ul>${S.sessions.map(sessionRow).join("")}</ul>
-      <div class="s-head s-head2"><b>Jobs</b><span>in ${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</span></div>
+      <div class="group-h">Jobs in ${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</div>
       ${jobs.length ? "" : `<p class="s-empty">No jobs yet. When a teammate starts one, its Claude Code session shows up here.</p>`}
-      ${live.length ? `<div class="s-group">Running</div><ul>${live.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
-      ${rest.length ? `<div class="s-group">Recent</div><ul>${rest.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
-      <p class="s-hint">Each teammate chats in every channel from one session in the TeamAgents project, and does the real work in job sessions. Click one to open it in the Claude app; a running job opens once it ends.</p>`;
+      ${live.length ? `<div class="group-h"><span class="dot pulse"></span>Running</div><ul>${live.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
+      ${rest.length ? `<div class="group-h">Recent</div><ul>${rest.map((j) => jobRow(j, ch)).join("")}</ul>` : ""}
+      <p class="s-hint">Each teammate chats in every channel from one session in the TeamAgents project, and does the real work in job sessions. Click one to open it in the Claude app; a running job opens once it ends.</p>
+      </div>`;
   }
 
   async function openAgentSession(agentId) {
@@ -1012,6 +1049,9 @@
     $("toggle-sessions").setAttribute("aria-pressed", String(open));
     if (remember) store.set("harmonia:sessions", open ? "1" : "0");
   }
+  $("sessions").addEventListener("click", (e) => {
+    if (e.target.closest("[data-sessions-close]")) setSessionsOpen(false);
+  });
   $("toggle-sessions").addEventListener("click", () => {
     // From the "Waiting on you" panel, Sessions switches to the sessions panel.
     if (!$("asks").hidden) return setAsksOpen(false), setSessionsOpen(true);
@@ -1047,7 +1087,7 @@
       .map((q, n) => {
         const key = `${m.id}:${n}`;
         const opt = (v, rec) =>
-          v ? `<button class="btn ask-opt${(askDrafts[key] || "").trim() === v ? " on" : ""}" data-ask-pick="${key}" data-v="${esc(v)}"${rec ? ` title="${esc(name)}'s pick"` : ""}>${esc(v)}${rec ? `<span class="ask-rec">recommended</span>` : ""}</button>` : "";
+          v ? `<button class="btn outline sm ask-opt${(askDrafts[key] || "").trim() === v ? " on" : ""}" data-ask-pick="${key}" data-v="${esc(v)}"${rec ? ` title="${esc(name)}'s pick"` : ""}>${esc(v)}${rec ? `<span class="ask-rec">recommended</span>` : ""}</button>` : "";
         const opts = archived ? "" : opt(q.recommended, true) + opt(q.alternative, false) + opt(q.other, false);
         return `<div class="ask-q">
           <div class="ask-q-text" dir="${textDir(q.question)}"><b>${n + 1}.</b> ${esc(q.question)}</div>
@@ -1085,13 +1125,13 @@
     const split = !isCard(m) && splitOf(m);
     const when = new Date(m.ts).toDateString() === new Date().toDateString() ? fmtTime(m.ts) : `${listTime(m.ts)} ${fmtTime(m.ts)}`;
     const reply = archived ? "" : `<textarea class="ask-input" data-draft="${m.id}" rows="1" dir="auto" placeholder="Reply to ${esc(name)}…" aria-label="Reply to ${esc(name)}">${esc(askDrafts[m.id] || "")}</textarea>`;
-    return `<li class="ask" style="--c:${t ? t.color : "#888"}">
-      <div class="ask-head"><span class="s-av">${t ? t.avatar : "🤖"}</span><b>${esc(name)}</b><span class="ask-time">${esc(when)}</span>
+    return `<li class="ask" style="--c:${t ? t.color : "var(--muted-foreground)"}">
+      <div class="ask-head"><span class="avatar xs">${t ? t.avatar : "🤖"}</span><b>${esc(name)}</b><span class="ask-time">${esc(when)}</span>
         <button class="ask-link" data-ask-show="${m.id}" title="Show it in the chat">Show in chat</button></div>
       ${before.length ? `<details class="ask-before" data-key="b${m.id}"><summary>What came before it</summary>${before.map((x) => mdHtml(x.text)).join("")}</details>` : ""}
       ${isCard(m) ? cardHtml(m, name) : `${split ? `<details class="ask-before" data-key="m${m.id}"><summary>The whole message</summary>${mdHtml(m.text)}</details>${askQuestions(m, name, archived)}` : `${mdHtml(m.text)}
       ${reply}`}
-      <div class="ask-btns"><button class="btn" data-ask-done="${m.id}" title="Take it off the list without answering">Done</button>${archived ? "" : `<button class="btn primary" data-ask-send="${m.id}">Send</button>`}</div>`}
+      <div class="ask-btns"><button class="btn outline sm" data-ask-done="${m.id}" title="Take it off the list without answering">Done</button>${archived ? "" : `<button class="btn default sm" data-ask-send="${m.id}">Send</button>`}</div>`}
     </li>`;
   }
 
@@ -1126,10 +1166,10 @@
     const active = document.activeElement;
     const typing = active?.dataset?.draft && { id: active.dataset.draft, from: active.selectionStart, to: active.selectionEnd };
     const opened = new Set([...panel.querySelectorAll("details[open]")].map((d) => d.dataset.key));
-    panel.innerHTML = `<div class="s-head"><b>Waiting on you</b><span>${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</span><button class="ask-x" data-ask-close aria-label="Close" title="Close">×</button></div>
-      ${waiting.length ? `<ul>${waiting.map((m) => askItem(m, list, list.indexOf(m), archived)).join("")}</ul>` : `<p class="s-empty">Nothing is waiting on you here.</p>`}
+    panel.innerHTML = `<div class="p-head"><b>Waiting on you <span class="muted">· ${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</span></b><button class="btn ghost icon sm ask-x" data-ask-close aria-label="Close" title="Close">${ic("x", "sm")}</button></div>
+      <div class="p-scroll">${waiting.length ? `<ul>${waiting.map((m) => askItem(m, list, list.indexOf(m), archived)).join("")}</ul>` : `<p class="s-empty">Nothing is waiting on you here.</p>`}
       ${cleared.length ? `<details class="ask-cleared" data-key="cleared"><summary>Recently cleared</summary><ul>${cleared.map((m) => `<li><button class="ask-link grow" data-ask-show="${m.id}" title="Show it in the chat"><b>${esc(authorName(m.author))}</b> ${esc(snippet(m.text))}</button><button class="ask-link" data-ask-reopen="${m.id}">Reopen</button></li>`).join("")}</ul></details>` : ""}
-      <p class="s-hint">Messages that @mention you, and requests for your OK. Replying or reacting to one clears it.</p>`;
+      <p class="s-hint">Messages that @mention you, and requests for your OK. Replying or reacting to one clears it.</p></div>`;
     panel.querySelectorAll("details").forEach((d) => (d.open = opened.has(d.dataset.key)));
     panel.querySelectorAll(".ask-input").forEach(growDraft);
     clampLong(panel);
@@ -1267,8 +1307,8 @@
     const c = currentChannel();
     if (!c) return;
     $("ch-task").innerHTML = c.dm ? "" : c.task
-      ? `<button class="task-pill big" data-open-task title="Open ${esc(c.task.id)} in Chrome">${esc(c.task.id)} <span aria-hidden="true">↗</span></button><button class="task-edit" data-edit-task title="Change or remove the task" aria-label="Change the ClickUp task">✎</button>`
-      : `<button class="task-add" data-edit-task title="Tag this channel with a ClickUp task">+ ClickUp task</button>`;
+      ? `<button class="badge mono task-pill" data-open-task title="Open ${esc(c.task.id)} in Chrome">${esc(c.task.id)}${ic("ext", "xs")}</button><button class="btn ghost icon sm task-edit" data-edit-task title="Change or remove the task" aria-label="Change the ClickUp task">${ic("pen", "xs")}</button>`
+      : `<button class="badge task-add" data-edit-task title="Tag this channel with a ClickUp task">${ic("plus", "xs")}ClickUp task</button>`;
   }
   async function openTask(c) {
     try {
@@ -1322,10 +1362,10 @@
     $("composer").hidden = archived;
     renderAttachBar();
     $("ch-status").hidden = !c.status;
-    $("ch-status").innerHTML = c.status ? `<span class="status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}` : "";
+    $("ch-status").innerHTML = c.status ? `<span class="dot status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}${ic("down", "xs")}` : "";
     const t = dmMate(c);
     $("ch-name").textContent = t ? t.name : c.name;
-    $("ch-av").textContent = t ? t.avatar : "#";
+    $("ch-av").innerHTML = t ? `<span class="avatar sm">${t.avatar}</span>` : ic("hash");
     $("ch-av").style.setProperty("--c", t ? t.color : chColor(c));
   }
   async function setStatus(c, status) {
@@ -1364,9 +1404,9 @@
     const link = (S.slackLinks || []).find((l) => l.channelId === c.id);
     const t = dmMate(c);
     const where = link && (link.kind === "dm" ? "your Slack DM" : link.kind === "mate" ? `your Slack DM with ${t ? t.name : "them"}` : link.kind === "group" ? "a Slack group DM" : `Slack #${link.name || "channel"}`);
-    el.textContent = typing.length
-      ? c.dm ? "typing…" : `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`
-      : `${t ? `${t.role} · ` : ""}${c.cwd.replace(/^\/Users\/[^/]+/, "~")}${link ? ` · linked to ${where}` : ""}`;
+    el.innerHTML = typing.length
+      ? esc(c.dm ? "typing…" : `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`)
+      : `${t ? `<span>${esc(t.role)}</span>·` : ""}${ic("folder", "xs")}<span>${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>${link ? `<span>· linked to ${esc(where)}</span>` : ""}`;
     el.title = c.cwd;
   }
 
@@ -1401,12 +1441,12 @@
     const el = $("slack-status");
     const s = S.slack || { configured: false };
     let cls, text;
-    if (!s.configured) [cls, text] = ["off", "Slack bridge off · set up"];
-    else if (!s.enabled) [cls, text] = ["off", "Slack bridge off"];
-    else if (s.state === "failed") [cls, text] = ["bad", "Slack bridge needs you"];
-    else if (s.state !== "ready") [cls, text] = ["wait", "Slack bridge connecting…"];
-    else if (!s.paired) [cls, text] = ["wait", "Slack bridge: pair it in Slack"];
-    else [cls, text] = ["ok", `Slack bridge on${s.team ? ` · ${s.team}` : ""}`];
+    if (!s.configured) [cls, text] = ["off", "Slack off"];
+    else if (!s.enabled) [cls, text] = ["off", "Slack off"];
+    else if (s.state === "failed") [cls, text] = ["bad", "Slack needs you"];
+    else if (s.state !== "ready") [cls, text] = ["wait", "Slack connecting…"];
+    else if (!s.paired) [cls, text] = ["wait", "Slack: pair it"];
+    else [cls, text] = ["ok", "Slack on"];
     el.className = `bridge-status ${cls}`;
     el.setAttribute("aria-current", S.view === "slack" ? "page" : "false");
     el.title = !s.configured
@@ -1414,7 +1454,7 @@
       : [s.team && `Workspace: ${s.team}`, `Connection: ${s.enabled ? s.state : "off"}${s.detail && s.state !== "ready" ? ` (${s.detail})` : ""}`, s.paired ? `Works for ${s.ownerName || "you"}` : "Not paired yet: send the app the code on the Slack page"]
           .filter(Boolean)
           .join("\n");
-    el.innerHTML = `<span class="cli-dot ${cls}" aria-hidden="true"></span><span class="ts-text">${esc(text)}</span>`;
+    el.innerHTML = `<span class="dot ${cls}" aria-hidden="true"></span><span class="ts-text">${esc(text)}</span>`;
   }
   function openSlack() {
     showView("slack");
@@ -1465,7 +1505,7 @@
     if (!popItems.length) return (pop.hidden = true);
     popSel = Math.min(popSel, popItems.length - 1);
     pop.innerHTML = popItems
-      .map((t, i) => `<button type="button" class="${i === popSel ? "sel" : ""}" data-pick="${t.id}"><span class="mp-av">${t.avatar}</span><b>${esc(t.name)}</b><span class="mp-role">${esc(t.role)}</span></button>`)
+      .map((t, i) => `<button type="button" class="${i === popSel ? "sel" : ""}" data-pick="${t.id}"><span class="mp-av" style="--c:${t.color}">${t.avatar}</span><b>${esc(t.name)}</b><span class="mp-role">${esc(t.role)}</span></button>`)
       .join("");
     pop.hidden = false;
   }
@@ -1617,7 +1657,7 @@
         return `<div class="att ${a.status}" title="${esc(a.status === "failed" ? `${a.name}: ${a.error}` : a.name)}">
           <button type="button" class="att-main" ${a.status === "failed" ? `data-att-retry="${a.key}"` : "tabindex=\"-1\""}>${a.preview ? `<img src="${a.preview}" alt="">` : fileBadge(a.name, a.type)}
             <span class="att-info"><span class="att-name" dir="auto">${esc(a.name)}</span><span class="att-sub">${esc(sub)}</span></span></button>
-          <button type="button" class="att-x" data-att-remove="${a.key}" aria-label="Take off ${esc(a.name)}" title="Take it off">×</button>
+          <button type="button" class="att-x" data-att-remove="${a.key}" aria-label="Take off ${esc(a.name)}" title="Take it off">${ic("x", "xs")}</button>
         </div>`;
       })
       .join("");
@@ -1821,6 +1861,8 @@
   async function boot() {
     const st = await api("/api/state");
     S.user = st.user;
+    $("me-name").textContent = S.user;
+    $("me-av").textContent = (S.user || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
     S.models = st.models;
     S.efforts = st.efforts;
     S.sessions = st.sessions;

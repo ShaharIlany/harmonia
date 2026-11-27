@@ -93,7 +93,7 @@
     const back = window.TeamApp.currentChannel();
     return `
     <header class="ag-header">
-      <button class="icon-btn menu-btn" data-menu aria-label="Channels">☰</button>
+      <button class="btn ghost icon sm menu-btn" data-menu aria-label="Channels"><svg class="i" aria-hidden="true"><use href="#i-menu"/></svg></button>
       <div class="ag-hero">
         <div class="ag-avatar" aria-hidden="true" style="--c:#2bac76">✓</div>
         <div class="ag-hero-text">

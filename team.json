@@ -4,7 +4,7 @@
     "name": "Dali",
     "avatar": "🧙🏻‍♂️",
     "role": "Customer success",
-    "color": "#eab308",
+    "color": "#f5ca40",
     "chatModel": "claude-opus-5-5",
     "chatEffort": "low",
     "routing": "customers, customer emails, updates, presentations"
@@ -14,7 +14,7 @@
     "name": "Leo",
     "avatar": "👨🏻‍🎨",
     "role": "Architecture",
-    "color": "#3b82f6",
+    "color": "#4298ef",
     "chatModel": "claude-opus-5-5",
     "chatEffort": "low",
     "routing": "design, plans, options and trade-offs"
@@ -24,7 +24,7 @@
     "name": "Elliot",
     "avatar": "🧑🏻‍💻",
     "role": "Code",
-    "color": "#22c55e",
+    "color": "#48dabf",
     "chatModel": "claude-opus-5-5",
     "chatEffort": "low",
     "routing": "write, change or fix code"
@@ -34,7 +34,7 @@
     "name": "Sherlock",
     "avatar": "🕵🏻‍♂️",
     "role": "Code review",
-    "color": "#a855f7",
+    "color": "#8968f7",
     "chatModel": "claude-opus-5-5",
     "chatEffort": "low",
     "routing": "review a diff, branch or PR"
@@ -44,7 +44,7 @@
     "name": "Murphy",
     "avatar": "👨🏻‍🔬",
     "role": "QA",
-    "color": "#ef4444",
+    "color": "#f25165",
     "chatModel": "claude-opus-5-5",
     "chatEffort": "low",
     "routing": "test, try to break, reproduce bugs"
@@ -54,7 +54,7 @@
     "name": "Emily",
     "avatar": "👩🏻‍💼",
     "role": "Secretary",
-    "color": "#06b6d4",
+    "color": "#f28e2e",
     "chatModel": "claude-sonnet-5-5",
     "chatEffort": "medium",
     "routing": "calendar, meetings, email drafts, ClickUp tasks, summaries, greetings"
