@@ -74,6 +74,9 @@ bun test               # unit tests and one end-to-end run with stub teammates
 
 Real teammates need the `claude` CLI signed in. More in [Development](docs/development.md).
 
+To try a pull request before it's merged, ask Claude Code in a checkout: **"let me try PR 12"**
+([how](docs/development.md#trying-a-change-before-its-merged)).
+
 ## Documentation
 
 - [How it behaves](docs/behaviour.md): chat sessions and jobs, Mozart, feedback, permissions, files, menus and the rest.

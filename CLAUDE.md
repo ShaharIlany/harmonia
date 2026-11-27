@@ -13,6 +13,7 @@ Harmonia is a local group chat where six Claude Code "teammates" (Dali, Leo, Ell
 - `agents.ts` reads and writes `~/.claude/agents/<id>.md` and `~/.claude/agent-memory/<id>/`.
 - `paths.ts` data folder, `settings.json`, embedded-file detection. `env.ts` reads `HARMONIA_*` (or the old `TEAM_CHAT_*`).
 - `slack.ts` the Slack bridge. Sections: Setup · Teammates as Slack members · DMs with a teammate · Slack → Harmonia · Reactions and ⚠️ feedback · Buttons and boxes · Commands · A channel's project · Harmonia's channels in Slack · Harmonia → Slack · Helpers · Tokens (Keychain). `slack-socket.ts` Socket Mode and the Web API, no SDK. `slack-marks.ts` status and task in a Slack channel's topic.
+- `candidate.ts` runs a pull request or branch as a second Harmonia (see below).
 - `sandbox.ts` macOS sandbox profile. `voice.ts` voice notes to text. `updates.ts` over-the-air updates.
 - `public/` the UI (`app.js`, `agent-page.js`, `slack-page.js`, `markdown.js`, `style.css`). `agents/` starter teammates. `docs/` brand and screenshots.
 
@@ -24,6 +25,23 @@ bun run stub           # canned replies, no Claude runs, port 4748, data in ./da
 Real teammates need `~/.claude/agents/<id>.md` (copy `agents/*.md`) and the `claude` CLI signed in. In stub mode, the last line of a message triggers: `stub-slow`, `stub-react`, `stub-tools`, `stub-bubbles`, `stub-permission` (`stubRun`, `runner.ts`), a word `job` (starts a stub job) and `need a tool` (a tool request) (`team.ts`).
 
 Env vars: `HARMONIA_STUB`, `HARMONIA_DATA`, `PORT` (4747), `HARMONIA_USER`, `HARMONIA_CWD`, `HARMONIA_STATUS_MINUTES` (job status interval, 5), `HARMONIA_LINGER_MINUTES`, `HARMONIA_SLACK_API`. In PowerShell, `HARMONIA_STUB=1 bun ...` does not work: set `$env:HARMONIA_STUB = "1"` first, or use `bun run stub`. If a `tests/` folder exists, `bun test` runs it.
+
+## Trying a change before it's merged
+
+When the developer asks to try, test or run a pull request, a branch or their checkout ("let me try PR 12"), use
+`candidate.ts`. Don't copy data, make worktrees or start `server.ts` by hand, and leave the installed app, its data and
+the current checkout as they are. Trying a change doesn't include merging it, pushing or commenting on it.
+
+1. Start it in the background: `bun candidate.ts pr 12` (a branch: `bun candidate.ts <branch>`; the checkout:
+   `bun candidate.ts`). Add `--stub` if they want canned teammates and no Claude runs. If this checkout's
+   `candidate.ts` doesn't take `pr`, update it from `main` first (ask before touching uncommitted work).
+2. Check that the address it prints responds, and give them the link.
+3. Read the change (`gh pr view 12`, `gh pr diff 12`) and give them a few short steps that try what's new.
+4. Remind them that, without `--stub`, the teammates are real: they use their Claude plan and can change files in a
+   channel's folder. The agent files and memories are shared with the installed app.
+5. When they're done: `bun candidate.ts stop pr 12`, then `bun candidate.ts changes pr 12`. If anything changed, show
+   it and ask before `restore`: it also undoes what their own Harmonia wrote there since the candidate started. Then
+   `bun candidate.ts clean pr 12` (after any restore: `clean` deletes the snapshot).
 
 ## Conventions
 - No runtime dependencies. Embed files with `import x from "./file" with { type: "file" }` and read them through the import, so the compiled binary carries them (`bun run build:windows`; `macapp/build.sh` on the Mac).

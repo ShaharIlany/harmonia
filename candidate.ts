@@ -1,23 +1,30 @@
-// Runs a branch (or this checkout) as a second Harmonia next to the one you use, so a change can be tried before it's
+// Runs a pull request, a branch or this checkout as a second Harmonia next to the one you use, so a change can be tried before it's
 // merged. The installed app stays as it is: the candidate has its own port, its own copy of your data and, unless you
 // ask for it, no Slack and no updates.
 //
+//   bun candidate.ts pr N             fetch pull request N and run it
 //   bun candidate.ts [ref]            run `ref` (a branch, tag or commit; none = this checkout as it is right now)
 //   bun candidate.ts [ref] --stub     the same with canned teammates and no Claude runs
 //   bun candidate.ts [ref] --refresh  copy your data again first (the candidate's own changes are thrown away)
 //   bun candidate.ts [ref] --port N   a port of your choice (default: the first free one from 4749)
 //   bun candidate.ts [ref] --from DIR copy the data from DIR instead of the installed app's folder
 //   bun candidate.ts list             the candidates there are
-//   bun candidate.ts restore [ref]    put your teammates' agent files and memories back as they were before its last run
+//   bun candidate.ts stop [ref]       stop it (Ctrl+C in its terminal does the same)
+//   bun candidate.ts changes [ref]    the agent files and memories that changed since its last run started
+//   bun candidate.ts restore [ref]    put them back as they were then
 //   bun candidate.ts clean [ref]      delete it (its worktree and data)
+//
+// Wherever there's a `ref`, `pr N` works too.
 //
 // What's kept apart: the data folder (channels, messages, sessions, settings), the port, and the git worktree (the
 // branch is checked out in its own folder, so your checkout isn't touched). What isn't copied: slack.json and
 // slack-secrets.json (so the candidate can't join your Slack: Socket Mode would split your messages between the two),
-// and the update source and downloads.
+// resume.json (so it doesn't rerun your jobs), the Claude session ids of the teammates and Mozart (so it doesn't write
+// into your live sessions), and the update source and downloads.
 //
-// What can't be kept apart: the teammates' agent files and memories live in ~/.claude (agents.ts), and a channel's
-// working folder is your real folder. The candidate's teammates can change both. The agent files and memories are
+// What can't be kept apart: the teammates' agent files and memories live in ~/.claude (agents.ts), a channel's
+// working folder is your real folder, and a job that continues an old one resumes its real session. The candidate's
+// teammates can change all of these. The agent files and memories are
 // copied aside before each run and compared after it; `restore` puts them back.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -25,21 +32,17 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { supportDir } from "./platform";
 
 const HERE = import.meta.dir;
 const ROOT = process.env.HARMONIA_CANDIDATES ?? join(homedir(), ".harmonia-candidates");
 const CLAUDE_HOME = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
 const AGENT_DIRS = ["agents", "agent-memory"]; // under CLAUDE_HOME: agents.ts's AGENTS_DIR and MEMORY_ROOT
-const SKIP_DATA = ["slack.json", "slack-secrets.json", "source", "previous", "download", "update.log"];
+const SKIP_DATA = ["slack.json", "slack-secrets.json", "resume.json", "chat-sessions.json", "source", "previous", "download", "update.log"];
 const FIRST_PORT = 4749;
 
 /** The installed app's data folder, as paths.ts finds it. */
-const stableData = () =>
-  process.platform === "win32"
-    ? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Harmonia")
-    : process.platform === "darwin"
-      ? join(homedir(), "Library/Application Support/Harmonia")
-      : join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "harmonia");
+const stableData = () => join(supportDir, "Harmonia");
 
 const fail = (msg: string): never => {
   console.error(`candidate: ${msg}`);
@@ -70,15 +73,32 @@ const stub = flag("--stub");
 const refresh = flag("--refresh");
 const portArg = option("--port");
 const fromArg = option("--from");
-const command = ["list", "restore", "clean"].includes(args[0] ?? "") ? args.shift()! : "run";
-const ref = args[0];
-if (args.length > 1) fail(`unexpected: ${args.slice(1).join(" ")}`);
+const command = ["list", "stop", "changes", "restore", "clean"].includes(args[0] ?? "") ? args.shift()! : "run";
+let pr: string | undefined;
+if (args[0] === "pr") {
+  pr = args.splice(0, 2)[1];
+  if (!/^\d+$/.test(pr ?? "")) fail("which pull request? e.g. bun candidate.ts pr 12");
+}
+const ref = pr ? `pr-${pr}` : args.shift();
+if (args.length) fail(`unexpected: ${args.join(" ")}`);
 
 /** A folder name for a candidate: the ref, or the current branch for "this checkout". */
 const nameFor = () => {
   const label = ref ?? `checkout-${git(HERE, "rev-parse", "--abbrev-ref", "HEAD").out || "here"}`;
   return label.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "candidate";
 };
+
+/** How to name this candidate again on the command line. */
+const again = () => (pr ? ` pr ${pr}` : ref ? ` ${ref}` : "");
+
+/** Fetches the pull request from GitHub and returns its head commit. */
+function fetchPr(): string {
+  // In a fork's clone, `upstream` is where the pull requests are.
+  const remote = git(HERE, "remote", "get-url", "upstream").ok ? "upstream" : "origin";
+  const r = git(HERE, "fetch", remote, `pull/${pr}/head`);
+  if (!r.ok) fail(`couldn't fetch pull request ${pr} from ${remote}: ${r.err}`);
+  return git(HERE, "rev-parse", "FETCH_HEAD").out;
+}
 
 /** Every file under `dir` → a hash of its bytes, by path relative to `dir`. */
 function fingerprint(dir: string): Map<string, string> {
@@ -130,6 +150,14 @@ function copyData(from: string, to: string) {
   if (existsSync(from)) {
     for (const e of readdirSync(from)) if (!SKIP_DATA.includes(e)) cpSync(join(from, e), join(to, e), { recursive: true });
   } else console.log(`No data at ${from}: starting with an empty candidate.`);
+  // The teammates and Mozart start new Claude sessions. The empty file keeps the channels from all reading as unread.
+  writeFileSync(join(to, "chat-sessions.json"), "{}");
+  const channelsFile = join(to, "channels.json");
+  if (existsSync(channelsFile)) {
+    const channels: Record<string, unknown>[] = JSON.parse(readFileSync(channelsFile, "utf8"));
+    for (const c of channels) delete c.mozart;
+    writeFileSync(channelsFile, JSON.stringify(channels, null, 1));
+  }
   // No updates: a candidate is the branch you gave it, whatever the installed app is following.
   const file = join(to, "settings.json");
   let settings: Record<string, unknown> = {};
@@ -160,9 +188,10 @@ async function pickPort() {
 /** The folder to run from: this checkout, or a worktree of `ref` that's made once and moved on to the ref after that. */
 function treeFor(name: string): string {
   if (!ref) return HERE;
+  const target = pr ? fetchPr() : ref;
   const tree = join(ROOT, name, "tree");
-  const known = git(HERE, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`);
-  const remote = known.ok ? known : git(HERE, "rev-parse", "--verify", "--quiet", `origin/${ref}^{commit}`);
+  const known = git(HERE, "rev-parse", "--verify", "--quiet", `${target}^{commit}`);
+  const remote = known.ok ? known : git(HERE, "rev-parse", "--verify", "--quiet", `origin/${target}^{commit}`);
   if (!remote.ok) fail(`"${ref}" isn't a branch, tag or commit here (git fetch it first?)`);
   const sha = remote.out;
   if (existsSync(tree)) {
@@ -176,8 +205,22 @@ function treeFor(name: string): string {
   return tree;
 }
 
+const serverFile = (name: string) => join(ROOT, name, "server.json");
+
+/** The candidate's server, if it's running: its process id and port. */
+async function running(name: string): Promise<{ pid: number; port: number } | undefined> {
+  try {
+    const s = JSON.parse(readFileSync(serverFile(name), "utf8"));
+    // A file left by a run that was killed outright: nothing listens on its port any more.
+    if (!(await portFree(s.port))) return s;
+  } catch {}
+  return undefined;
+}
+
 async function run() {
   const name = nameFor();
+  const up = await running(name);
+  if (up) fail(`"${name}" is already running at http://localhost:${up.port} (bun candidate.ts stop${again()})`);
   const tree = treeFor(name);
   const data = join(ROOT, name, "data");
   const from = resolve(fromArg ?? stableData());
@@ -192,23 +235,38 @@ async function run() {
   const dirty = git(tree, "status", "--porcelain").out ? " + uncommitted changes" : "";
   console.log(`\nHarmonia candidate "${name}" at ${commit}${dirty}\n  http://localhost:${port}\n  data: ${data}\n  Ctrl+C stops it.\n`);
 
-  const child = spawn("bun", ["server.ts"], {
+  // The Bun that runs this: npm on Windows puts a shim named "bun" on the PATH, and stopping it leaves the server up.
+  const child = spawn(process.execPath, ["server.ts"], {
     cwd: tree,
     stdio: "inherit",
     env: { ...process.env, PORT: String(port), HARMONIA_DATA: data, ...(stub && { HARMONIA_STUB: "1" }) },
   });
+  writeFileSync(serverFile(name), JSON.stringify({ pid: child.pid, port }));
   const stop = () => child.kill();
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   await new Promise<void>((done) => child.on("exit", () => done()));
+  rmSync(serverFile(name), { force: true });
 
-  const changes = stub ? [] : agentChanges(name);
-  if (changes.length) {
-    console.log(`\nThe candidate changed your teammates' agent files or memories (${changes.length}):`);
-    for (const c of changes.slice(0, 30)) console.log(`  ${c}`);
-    if (changes.length > 30) console.log(`  … and ${changes.length - 30} more`);
-    console.log(`Undo them with: bun candidate.ts restore${ref ? ` ${ref}` : ""}`);
-  } else console.log("\nYour teammates' agent files and memories are as they were.");
+  reportChanges(name);
+}
+
+function reportChanges(name: string) {
+  if (!existsSync(agentSnapshot(name))) fail(`no snapshot for "${name}": it hasn't run yet`);
+  const changes = agentChanges(name);
+  if (!changes.length) return console.log("\nYour teammates' agent files and memories are as they were.");
+  console.log(`\nYour teammates' agent files or memories changed since the candidate started (${changes.length}):`);
+  for (const c of changes.slice(0, 30)) console.log(`  ${c}`);
+  if (changes.length > 30) console.log(`  … and ${changes.length - 30} more`);
+  console.log(`Your own Harmonia writes there too. To put them all back: bun candidate.ts restore${again()}`);
+}
+
+async function stopServer() {
+  const name = nameFor();
+  const up = await running(name);
+  if (!up) return console.log(`"${name}" isn't running.`);
+  process.kill(up.pid);
+  console.log(`Stopped ${name}`);
 }
 
 function list() {
@@ -222,10 +280,11 @@ function list() {
   }
 }
 
-function clean() {
+async function clean() {
   const name = nameFor();
   const dir = join(ROOT, name);
   if (!existsSync(dir)) fail(`no candidate "${name}"`);
+  if (await running(name)) fail(`"${name}" is running: bun candidate.ts stop${again()}`);
   const tree = join(dir, "tree");
   if (existsSync(tree)) git(HERE, "worktree", "remove", "--force", tree);
   rmSync(dir, { recursive: true, force: true });
@@ -234,7 +293,9 @@ function clean() {
 }
 
 if (command === "list") list();
-else if (command === "clean") clean();
+else if (command === "stop") await stopServer();
+else if (command === "changes") reportChanges(nameFor());
+else if (command === "clean") await clean();
 else if (command === "restore") {
   restoreAgents(nameFor());
   console.log("Agent files and memories put back as they were before the last run.");
