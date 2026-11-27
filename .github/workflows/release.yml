@@ -65,7 +65,6 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" Harmonia-arm64.zip Harmonia-arm64.zip.sha256 \
             Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
-\
             --verify-tag --latest --title "Harmonia $VERSION" --generate-notes
 
   # The Windows app, built on Windows (the window is C#) and added to the release the Mac job made.
