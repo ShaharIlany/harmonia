@@ -11,6 +11,7 @@ import notificationsJs from "./public/notifications.js" with { type: "file" };
 import pictureViewerJs from "./public/picture-viewer.js" with { type: "file" };
 import feedbackJs from "./public/feedback.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
+import listsJs from "./public/lists.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
 import { openFolder, openInChrome, openPath, openUrl, revealPath, run, runInTerminal } from "./platform";
@@ -43,6 +44,7 @@ const PUBLIC: Record<string, string> = {
   "picture-viewer.js": pictureViewerJs,
   "feedback.js": feedbackJs,
   "markdown.js": markdownJs,
+  "lists.js": listsJs,
   "style.css": styleCss,
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

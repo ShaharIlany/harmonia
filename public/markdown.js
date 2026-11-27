@@ -55,6 +55,27 @@
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
   const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
 
+  // One list from items[k] on: the items at its indent, and deeper ones as a list inside the item above them. Each
+  // list is numbered or not by its own first item, and a numbered one starts at that item's number.
+  function list(items, k, ctx) {
+    const level = items[k].indent;
+    const first = items[k].marker;
+    const ordered = /^\d/.test(first);
+    const lis = [];
+    while (k < items.length && items[k].indent >= level) {
+      if (items[k].indent > level && lis.length) {
+        const sub = list(items, k, ctx);
+        lis[lis.length - 1] += sub.html;
+        k = sub.next;
+        continue;
+      }
+      lis.push(inline(items[k++].text, ctx));
+    }
+    const body = lis.map((h) => `<li>${h}</li>`).join("");
+    const start = ordered && parseInt(first, 10) !== 1 ? ` start="${parseInt(first, 10)}"` : "";
+    return { html: ordered ? `<ol${start}>${body}</ol>` : `<ul>${body}</ul>`, next: k };
+  }
+
   window.renderMarkdown = function (src, ctx) {
     const lines = src.replace(/\r\n/g, "\n").split("\n");
     const out = [];
@@ -99,16 +120,21 @@
         continue;
       }
 
-      const li = /^\s*([-*+]|\d+[.)])\s+/;
+      const li = /^(\s*)([-*+]|\d+[.)])\s+/;
       if (li.test(l)) {
-        const ordered = /^\s*\d/.test(l);
         const items = [];
         while (i < lines.length && li.test(lines[i])) {
-          let item = lines[i++].replace(li, "");
-          while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !li.test(lines[i])) item += " " + lines[i++].trim();
-          items.push(`<li>${inline(item, ctx)}</li>`);
+          const m = lines[i].match(li);
+          let text = lines[i++].slice(m[0].length);
+          while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !li.test(lines[i])) text += " " + lines[i++].trim();
+          items.push({ indent: m[1].length, marker: m[2], text });
         }
-        out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+        // A list ends where an item is less indented than its first, so the rest start lists of their own.
+        for (let k = 0; k < items.length; ) {
+          const r = list(items, k, ctx);
+          out.push(r.html);
+          k = r.next;
+        }
         continue;
       }
 
