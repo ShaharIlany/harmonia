@@ -1,0 +1,666 @@
+[
+  {
+    "name": "yes to Elliot's question",
+    "lines": [
+      "[14:01] Elliot: Fixed the empty-email crash. Want me to update the README too?",
+      "[14:02] Alex: yes"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "yes"
+    },
+    "waitingOn": "elliot",
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "\"the second one\" answers Leo's options",
+    "lines": [
+      "[10:30] Leo: Two ways to do it: A) a queue per tenant, B) one shared queue with a tenant key. Which one?",
+      "[10:31] Alex: the second one"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "the second one"
+    },
+    "waitingOn": "leo",
+    "expect": {
+      "answer": [
+        "leo"
+      ]
+    }
+  },
+  {
+    "name": "answer to a question that is only in the lines",
+    "lines": [
+      "[11:00] Murphy: @Alex which environment should I test on, staging or prod?",
+      "[11:02] Alex: staging"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "staging"
+    },
+    "expect": {
+      "answer": [
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "follow-up in a conversation with Sherlock",
+    "lines": [
+      "[15:00] Alex: Sherlock, review the branch fix/upload-limit",
+      "[15:04] Sherlock: Two findings. The retry loop in upload.ts:40 never ends if the server answers 413, and the limit isn't checked for chunked uploads.",
+      "[15:06] Alex: why is the first one a problem if the retry count is capped?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "why is the first one a problem if the retry count is capped?"
+    },
+    "expect": {
+      "answer": [
+        "sherlock"
+      ]
+    }
+  },
+  {
+    "name": "new topic: fix code",
+    "lines": [
+      "[09:10] Leo: Option B it is, then.",
+      "[09:15] Alex: the checkout page crashes when the cart is empty, please fix it"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "the checkout page crashes when the cart is empty, please fix it"
+    },
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "new topic: design options",
+    "lines": [
+      "[09:15] Alex: what are our options for caching the search results, and what do we give up with each?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "what are our options for caching the search results, and what do we give up with each?"
+    },
+    "expect": {
+      "answer": [
+        "leo"
+      ]
+    }
+  },
+  {
+    "name": "new topic: review a branch",
+    "lines": [
+      "[13:40] Alex: please review the PR for fix/invoice-rounding"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "please review the PR for fix/invoice-rounding"
+    },
+    "expect": {
+      "answer": [
+        "sherlock"
+      ]
+    }
+  },
+  {
+    "name": "new topic: reproduce a bug",
+    "lines": [
+      "[13:45] Alex: can you try to reproduce the double charge on checkout? A customer says it happens when they click twice"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "can you try to reproduce the double charge on checkout? A customer says it happens when they click twice"
+    },
+    "expect": {
+      "answer": [
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "new topic: calendar",
+    "lines": [
+      "[08:30] Alex: move my 3pm with Dana to Thursday morning"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "move my 3pm with Dana to Thursday morning"
+    },
+    "expect": {
+      "answer": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "new topic: ClickUp task",
+    "lines": [
+      "[08:35] Alex: make a ClickUp task for the invoice export bug and put it in this sprint"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "make a ClickUp task for the invoice export bug and put it in this sprint"
+    },
+    "expect": {
+      "answer": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "new topic: summary of the day",
+    "lines": [
+      "[17:50] Alex: summarize what happened today across the channels"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "summarize what happened today across the channels"
+    },
+    "expect": {
+      "answer": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "new topic: customer update",
+    "lines": [
+      "[12:00] Alex: write an update for the Acme customers about yesterday's outage"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "write an update for the Acme customers about yesterday's outage"
+    },
+    "expect": {
+      "answer": [
+        "dali"
+      ]
+    }
+  },
+  {
+    "name": "new topic: customer presentation",
+    "lines": [
+      "[12:05] Alex: prepare the slides for the Initech quarterly review with their usage numbers"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "prepare the slides for the Initech quarterly review with their usage numbers"
+    },
+    "expect": {
+      "answer": [
+        "dali"
+      ]
+    }
+  },
+  {
+    "name": "two teammates asked by name",
+    "lines": [
+      "[14:00] Alex: Leo and Sherlock, what do you think of moving the jobs to a queue?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "Leo and Sherlock, what do you think of moving the jobs to a queue?"
+    },
+    "expect": {
+      "answer": [
+        "leo",
+        "sherlock"
+      ]
+    }
+  },
+  {
+    "name": "everyone asked",
+    "lines": [
+      "[09:00] Alex: everyone: status?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "everyone: status?"
+    },
+    "expect": {
+      "answer": [
+        "dali",
+        "leo",
+        "elliot",
+        "sherlock",
+        "murphy",
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "greeting goes to triage",
+    "lines": [
+      "[08:00] Alex: good morning"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "good morning"
+    },
+    "expect": {
+      "answer": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "note to self",
+    "lines": [
+      "[11:11] Alex: note to self: renew the domain next month"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "note to self: renew the domain next month"
+    },
+    "expect": {
+      "answer": []
+    }
+  },
+  {
+    "name": "note to self after a teammate's answer",
+    "lines": [
+      "[11:20] Leo: I'd go with the shared queue.",
+      "[11:25] Alex: reminder to myself: call the bank tomorrow before 10"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "reminder to myself: call the bank tomorrow before 10"
+    },
+    "expect": {
+      "answer": []
+    }
+  },
+  {
+    "name": "thanks to Elliot",
+    "lines": [
+      "[16:20] Elliot: Done, the login form handles an empty email now. Branch fix/login.",
+      "[16:21] Alex: thanks!"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "thanks!"
+    },
+    "expect": {
+      "answer": [],
+      "react": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "perfect, thanks Leo",
+    "lines": [
+      "[10:00] Alex: Leo, which queue should we use?",
+      "[10:02] Leo: The shared one with a tenant key. Simpler to run.",
+      "[10:03] Alex: perfect, thanks Leo"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "perfect, thanks Leo"
+    },
+    "expect": {
+      "answer": [],
+      "react": [
+        "leo"
+      ]
+    }
+  },
+  {
+    "name": "\"got it\" to something finished",
+    "lines": [
+      "[13:00] Murphy: Reproduced the double charge: two clicks within 300 ms. Steps are in the job report. Nothing else needed from you.",
+      "[13:02] Alex: got it"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "got it"
+    },
+    "expect": {
+      "answer": [],
+      "react": [
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "\"no thanks\" to Emily's offer",
+    "lines": [
+      "[09:30] Emily: Dana moved the meeting to Friday. Want me to draft a reply to her?",
+      "[09:31] Alex: no thanks"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "no thanks"
+    },
+    "waitingOn": "emily",
+    "expect": {
+      "answer": [],
+      "react": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "\"not now\" to Leo's suggestion",
+    "lines": [
+      "[15:10] Leo: We could also split the module in two. I can sketch it if you like.",
+      "[15:12] Alex: not now"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "not now"
+    },
+    "waitingOn": "leo",
+    "expect": {
+      "answer": [],
+      "react": [
+        "leo"
+      ]
+    }
+  },
+  {
+    "name": "answer that leaves Elliot nothing to do until later",
+    "lines": [
+      "[17:00] Elliot: Is the PR merged? I'll carry on with the deploy once it is.",
+      "[17:05] Alex: merged, I'll tell you when the pipeline ends"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "merged, I'll tell you when the pipeline ends"
+    },
+    "waitingOn": "elliot",
+    "expect": {
+      "answer": [],
+      "react": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "answer that leaves Murphy nothing to do until later",
+    "lines": [
+      "[12:00] Murphy: Where is the build deployed? I'll test it there.",
+      "[12:03] Alex: it's on debug.doccycle.dev, I'll ping you when it's up"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "it's on debug.doccycle.dev, I'll ping you when it's up"
+    },
+    "waitingOn": "murphy",
+    "expect": {
+      "answer": [],
+      "react": [
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "no reaction: \"no thanks, but\" asks something",
+    "lines": [
+      "[09:30] Emily: Want me to draft a reply to Dana?",
+      "[09:31] Alex: no thanks, but can you add the Friday sync to my calendar?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "no thanks, but can you add the Friday sync to my calendar?"
+    },
+    "waitingOn": "emily",
+    "expect": {
+      "answer": [
+        "emily"
+      ]
+    }
+  },
+  {
+    "name": "no reaction: ok with new work to do now",
+    "lines": [
+      "[16:20] Elliot: Fixed the first bug.",
+      "[16:21] Alex: ok, now fix the second one too, the one in the export"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "ok, now fix the second one too, the one in the export"
+    },
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "no reaction: yes to an offer",
+    "lines": [
+      "[10:00] Leo: Want me to sketch the migration plan?",
+      "[10:01] Alex: yes please"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "yes please"
+    },
+    "waitingOn": "leo",
+    "expect": {
+      "answer": [
+        "leo"
+      ]
+    }
+  },
+  {
+    "name": "no reaction: pushback on what a teammate did",
+    "lines": [
+      "[14:30] Elliot: Done. I renamed the table to orders_v2 and updated the queries.",
+      "[14:31] Alex: that's wrong, why did you rename it? I never asked for that"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "that's wrong, why did you rename it? I never asked for that"
+    },
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "no reaction: thanks plus a question",
+    "lines": [
+      "[16:20] Elliot: Done, fixed the empty-email crash in login.ts.",
+      "[16:21] Alex: thanks, and what about the second file you mentioned earlier?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "thanks, and what about the second file you mentioned earlier?"
+    },
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "addressed by name, needs an answer",
+    "lines": [
+      "[11:40] Alex: Elliot, can you look at the flaky upload test?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "Elliot, can you look at the flaky upload test?"
+    },
+    "addressed": [
+      "elliot"
+    ],
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "addressed by name, thanks only",
+    "lines": [
+      "[16:20] Elliot: Done, branch fix/login is pushed.",
+      "[16:21] Alex: thanks Elliot"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "thanks Elliot"
+    },
+    "addressed": [
+      "elliot"
+    ],
+    "expect": {
+      "answer": [],
+      "react": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "addressed by reply, pushback",
+    "lines": [
+      "[15:04] Sherlock: Finding: upload.ts:40 can dereference null.",
+      "[15:05] Alex (replying to Sherlock's message \"Finding: upload.ts:40 can dereference null.\"): that's wrong, the null check is on line 12"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "that's wrong, the null check is on line 12"
+    },
+    "addressed": [
+      "sherlock"
+    ],
+    "expect": {
+      "answer": [
+        "sherlock"
+      ]
+    }
+  },
+  {
+    "name": "addressed two teammates",
+    "lines": [
+      "[14:10] Alex: @Leo @Murphy how do we test the new queue before it goes live?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "@Leo @Murphy how do we test the new queue before it goes live?"
+    },
+    "addressed": [
+      "leo",
+      "murphy"
+    ],
+    "expect": {
+      "answer": [
+        "leo",
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "teammate message: nothing for anybody",
+    "lines": [
+      "[16:30] Elliot: Done, fix/login is pushed. Sherlock can review it whenever Alex wants."
+    ],
+    "latest": {
+      "author": "elliot",
+      "text": "Done, fix/login is pushed. Sherlock can review it whenever Alex wants."
+    },
+    "expect": {
+      "answer": []
+    }
+  },
+  {
+    "name": "teammate hands off by name without @",
+    "lines": [
+      "[16:30] Elliot: Done, fix/login is pushed.",
+      "[16:31] Elliot: Sherlock, can you review the branch fix/login now?"
+    ],
+    "latest": {
+      "author": "elliot",
+      "text": "Sherlock, can you review the branch fix/login now?"
+    },
+    "expect": {
+      "answer": [
+        "sherlock"
+      ]
+    }
+  },
+  {
+    "name": "teammate asks the user: nobody",
+    "lines": [
+      "[16:30] Elliot: Fixed. Should I also bump the version? Waiting for your OK, Alex. Murphy can retest after that."
+    ],
+    "latest": {
+      "author": "elliot",
+      "text": "Fixed. Should I also bump the version? Waiting for your OK, Alex. Murphy can retest after that."
+    },
+    "expect": {
+      "answer": []
+    }
+  },
+  {
+    "name": "teammate reports what another is waiting for",
+    "lines": [
+      "[12:00] Murphy: Elliot, I'll wait for your fix and then retest the cart.",
+      "[12:40] Elliot: The cart fix is pushed on fix/cart and the tests pass."
+    ],
+    "latest": {
+      "author": "elliot",
+      "text": "The cart fix is pushed on fix/cart and the tests pass."
+    },
+    "expect": {
+      "answer": [
+        "murphy"
+      ]
+    }
+  },
+  {
+    "name": "Slack guest line is context, the answer is for Elliot",
+    "lines": [
+      "[10:00] Elliot: Alex, should I ship the invoice fix today?",
+      "[10:02] Dana (in Slack): yes please, our customer is waiting",
+      "[10:03] Alex: yes"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "yes"
+    },
+    "waitingOn": "elliot",
+    "expect": {
+      "answer": [
+        "elliot"
+      ]
+    }
+  },
+  {
+    "name": "Slack guest line gives the topic for a vague request",
+    "lines": [
+      "[10:00] Dana (in Slack): the invoice export is broken for me, it downloads an empty file",
+      "[10:02] Alex: can someone look into this?"
+    ],
+    "latest": {
+      "author": "user",
+      "text": "can someone look into this?"
+    },
+    "expect": {
+      "answer": [
+        "elliot"
+      ],
+      "answerAnyOf": [
+        [
+          "elliot"
+        ],
+        [
+          "murphy"
+        ]
+      ]
+    }
+  }
+]

@@ -3,10 +3,14 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmS
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setting } from "./env";
+import { isMac, supportDir } from "./platform";
 import teamDefaults from "./team.json" with { type: "file" };
 
-/** True inside the compiled binary, where the sources live in Bun's embedded file system. */
-export const COMPILED = import.meta.dir.startsWith("/$bunfs");
+/**
+ * True inside the compiled binary, where the sources live in Bun's embedded file system: /$bunfs/… on the Mac and
+ * Linux, B:\\~BUN\\… on Windows.
+ */
+export const COMPILED = import.meta.dir.startsWith("/$bunfs") || /^[a-z]:[\\/]~BUN[\\/]/i.test(import.meta.dir);
 
 const readJson = (path: string) => {
   try {
@@ -16,11 +20,10 @@ const readJson = (path: string) => {
   }
 };
 
-const SUPPORT = join(homedir(), "Library/Application Support");
-
 /** Channels, messages, sessions and team.json. The app keeps them in Application Support. */
-export const DATA = setting("DATA") ?? (COMPILED ? join(SUPPORT, "Harmonia") : join(import.meta.dir, "data"));
-if (COMPILED && !setting("DATA")) moveFromTeamChat();
+export const DATA = setting("DATA") ?? (COMPILED ? join(supportDir, "Harmonia") : join(import.meta.dir, "data"));
+// Team Chat was only ever a Mac app.
+if (COMPILED && !setting("DATA") && isMac) moveFromTeamChat();
 mkdirSync(DATA, { recursive: true });
 
 /**
@@ -29,7 +32,7 @@ mkdirSync(DATA, { recursive: true });
  * Claude Code files a session under the folder it ran in, and Mozart runs in the data folder's mozart/.
  */
 function moveFromTeamChat() {
-  const old = join(SUPPORT, "Team Chat");
+  const old = join(supportDir, "Team Chat");
   const hasChannels = (dir: string) => existsSync(join(dir, "channels.json"));
   try {
     if (!existsSync(old) || lstatSync(old).isSymbolicLink() || !hasChannels(old)) return;

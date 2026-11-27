@@ -508,7 +508,7 @@
   // ---------- Replies ----------
   const authorName = (id) => (id === "user" ? S.user : id === "guest" ? "Someone in Slack" : byId(id)?.name || id);
   const snippet = (text) => {
-    const s = plain(text || "").replace(/\s+/g, " ").trim();
+    const s = window.Notifications.plain(text || "").replace(/\s+/g, " ").trim();
     return s.length > 140 ? s.slice(0, 139) + "…" : s;
   };
   function quoteHtml(r) {
@@ -736,7 +736,7 @@
     return [
       !archived && m.author !== "system" && { emojis: QUICK, current: mine && mine.emoji, run: (e) => react(m.id, e) },
       !archived && { label: t ? `Reply to ${t.name}` : "Reply", icon: "↩", run: () => setReply(m) },
-      t && !archived && { label: `Feedback for ${t.name}…`, icon: "✎", run: () => openFeedback(m) },
+      t && !archived && { label: `Feedback for ${t.name}…`, icon: "✎", run: () => window.Feedback.open(m) },
       m.text && { label: "Copy text", icon: "⧉", run: () => copy(m.text, "Text") },
       files.length && { sep: true },
       files.length === 1 && { label: `Open ${files[0].name}`, icon: "↗", run: () => fileAction(ch.id, files[0].id, "open") },
@@ -765,6 +765,8 @@
       { label: "Copy the folder path", icon: "⧉", run: () => copy(c.cwd, "Path") },
     ];
     const st = (id, label) => ({ label, checked: (c.status || "") === id, run: () => setStatus(c, id) });
+    // The mark is on the channel's own choice, or on the machine's default when it has none.
+    const pm = (id, label) => ({ label, checked: (c.permissionMode || S.defaultPermissionMode) === id, run: () => setPermissionMode(c, id) });
     const n = S.unread[c.id] || 0;
     return [
       { label: "Open", icon: "💬", run: () => openChannel(c.id) },
@@ -777,6 +779,11 @@
       st("waiting", "Waiting for response"),
       st("later", "For later"),
       st("", "No status"),
+      { sep: true },
+      { head: "Permissions" },
+      pm("bypass", "Run everything without asking"),
+      pm("acceptEdits", "Edit files freely, ask before commands"),
+      pm("ask", "Ask before edits and commands"),
       { sep: true },
       c.task && { label: `Open ${c.task.id} in Chrome`, icon: "↗", run: () => openTask(c) },
       { label: c.task ? "Change the ClickUp task…" : "Add a ClickUp task…", icon: "🏷", run: () => editTask(c) },
@@ -868,13 +875,13 @@
     const rx = e.target.closest("[data-react]");
     if (rx) return react(rx.dataset.mid, rx.dataset.react);
     const fv = e.target.closest("[data-file-view]");
-    if (fv) return openViewer(fv.dataset.mid, fv.dataset.fileView);
+    if (fv) return window.PictureViewer.open(fv.dataset.mid, fv.dataset.fileView);
     const fo = e.target.closest("[data-file-open]");
     if (fo) return fileAction(S.current, fo.dataset.fileOpen, "open");
     const who = e.target.closest("[data-person]");
     if (who) return openAgent(who.dataset.person);
     const fb = e.target.closest("[data-feedback]");
-    if (fb) return openFeedback((S.msgs[S.current] || []).find((x) => x.id === fb.dataset.feedback));
+    if (fb) return window.Feedback.open((S.msgs[S.current] || []).find((x) => x.id === fb.dataset.feedback));
     const rp = e.target.closest("[data-reply]");
     if (rp) return setReply((S.msgs[S.current] || []).find((x) => x.id === rp.dataset.reply));
     const go = e.target.closest("[data-goto]");
@@ -1147,8 +1154,11 @@
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
-    $("agent-view").hidden = view === "channel" || view === "slack";
+    $("agent-view").hidden = view === "channel" || view === "slack" || view === "usage" || view === "setup";
     $("slack-view").hidden = view !== "slack";
+    $("usage-view").hidden = view !== "usage";
+    $("setup-view").hidden = view !== "setup";
+    $("setup-link").setAttribute("aria-current", view === "setup" ? "page" : "false");
     $("app").classList.remove("nav-open");
     renderSidebar();
     renderSlackStatus();
@@ -1256,6 +1266,16 @@
       toast(err.message);
     }
   }
+  async function setPermissionMode(c, mode) {
+    try {
+      const updated = await api(`/api/channels/${c.id}/permission-mode`, { mode });
+      const i = S.channels.findIndex((x) => x.id === c.id);
+      S.channels[i] = { ...updated, jobs: c.jobs };
+      toast(`#${c.name}: permissions set.`);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
   $("ch-status").addEventListener("click", (e) => currentChannel() && openMenu(channelMenu(currentChannel()), atButton(e.currentTarget), e.currentTarget));
   $("ch-menu").addEventListener("click", (e) => currentChannel() && openMenu(channelMenu(currentChannel()), atButton(e.currentTarget), e.currentTarget));
   $("unarchive-btn").addEventListener("click", () => setStatus(currentChannel(), ""));
@@ -1284,7 +1304,7 @@
   }
   /** You're looking at the open channel again: it's read. The app calls this when it comes to the front. */
   function seen() {
-    if (S.view === "channel" && S.current && S.unread[S.current] && lookingAt(S.current)) {
+    if (S.view === "channel" && S.current && S.unread[S.current] && window.Notifications.lookingAt(S.current)) {
       S.unread[S.current] = 0;
       unreadChanged();
     }
@@ -1328,88 +1348,20 @@
     window.SlackPage.render();
   }
   $("slack-status").addEventListener("click", openSlack);
-
-  // ---------- Plan usage (top of the sidebar) ----------
-  // Same pacing as the usage-limits-band mod (~/.claude/mods/usage-limits-band): the marker is where usage
-  // would be now if it were spread evenly over the window. Fill past it means you're burning faster than time.
-  const WINDOW_MS = { fiveHour: 5 * 3600e3, sevenDay: 7 * 86400e3 };
-  const USAGE_LABEL = { fiveHour: "Session", sevenDay: "Weekly" };
-  const ON_PACE = 5; // within this many points of the marker counts as on pace
-  const TOO_FAST = 15;
-  const MIN_ELAPSED = 3; // the first few minutes of a window say nothing about your rate
-
-  function pace(kind, used, resetsAtMs, at) {
-    const window = WINDOW_MS[kind];
-    const left = resetsAtMs - at;
-    if (!window || !Number.isFinite(left) || left <= 0) return null;
-    const elapsedMs = Math.max(0, Math.min(window, window - left));
-    const elapsed = Math.round((elapsedMs / window) * 1000) / 10;
-    const diff = Math.round((used - elapsed) * 10) / 10;
-    let level = diff > TOO_FAST ? "bad" : diff > ON_PACE ? "warn" : "good";
-    if (used >= 90) level = "bad";
-    else if (used >= 80 && level === "good") level = "warn";
-    const label = elapsed < MIN_ELAPSED ? "just started" : diff < -ON_PACE ? "▼ under pace" : diff <= ON_PACE ? "● on pace" : diff > TOO_FAST ? "▲ too fast" : "▲ a bit fast";
-    let runOutMs = null;
-    if (elapsed >= MIN_ELAPSED && used > 0 && used < 100 && diff > ON_PACE) {
-      const ms = ((100 - used) / used) * elapsedMs;
-      if (ms < left) runOutMs = ms;
-    }
-    return { elapsed, diff, level, label, runOutMs };
+  function openSetup() {
+    showView("setup");
+    window.SetupPage.render();
   }
+  $("setup-link").addEventListener("click", openSetup);
 
-  const span = (ms) => {
-    const minutes = Math.max(1, Math.round(ms / 60000));
-    const d = Math.floor(minutes / 1440), h = Math.floor((minutes % 1440) / 60), m = minutes % 60;
-    return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
-  const untilReset = (resetsAtMs, at) => (resetsAtMs - at <= 0 ? "resetting" : `resets in ${span(resetsAtMs - at)}`);
-
-  function paceTitle(kind, used, p) {
-    const base = `${USAGE_LABEL[kind]}: ${used}% used`;
-    if (!p) return base;
-    const gap = Math.abs(p.diff);
-    const rel = p.diff > 0 ? `${gap} points ahead of` : `${gap} points behind`;
-    const out = p.runOutMs === null ? "" : ` At this rate you run out in ${span(p.runOutMs)}, before the reset.`;
-    return `${base}, ${p.label.replace(/^[▼●▲] /, "")}. The line is where even pacing would be now (${p.elapsed}% of the window gone); you are ${rel} it.${out}`;
+  // The plan-usage meters at the top of the sidebar open the Usage page (usage-page.js).
+  function openUsage() {
+    showView("usage");
+    window.UsagePage.render();
   }
+  $("usage").addEventListener("click", openUsage);
 
-  function usageView(kind, w, at) {
-    if (!w) return null;
-    const used = Math.max(0, Math.min(100, Math.round(w.utilization * 100)));
-    const resetsAtMs = w.resetsAt * 1000;
-    const p = pace(kind, used, resetsAtMs, at);
-    const level = p ? p.level : used >= 90 ? "bad" : used >= 70 ? "warn" : "good";
-    return { kind, used, p, level, title: paceTitle(kind, used, p), reset: untilReset(resetsAtMs, at) };
-  }
-
-  function meter(v) {
-    if (!v) return "";
-    const status = v.p ? `${v.p.label}${v.p.runOutMs !== null ? ` · out in ${span(v.p.runOutMs)}` : ""}` : "";
-    return `<div class="u-row" title="${esc(v.title)}">
-      <div class="u-top"><span class="u-label">${USAGE_LABEL[v.kind]}</span><span class="u-pct u-${v.level}">${v.used}%</span></div>
-      <div class="u-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v.used}" aria-label="${esc(v.title)}">
-        <div class="u-bar"><i class="u-fill-${v.level}" style="width:${v.used}%"></i></div>
-        ${v.p ? `<span class="u-mark" style="left:${Math.max(1, Math.min(99, v.p.elapsed))}%"></span>` : ""}
-      </div>
-      <div class="u-reset">${v.reset}</div>
-      ${status ? `<div class="u-pace u-${v.level}">${esc(status)}</div>` : ""}
-    </div>`;
-  }
-
-  function renderUsage() {
-    const u = S.usage;
-    const at = Date.now();
-    const views = u ? [usageView("fiveHour", u.fiveHour, at), usageView("sevenDay", u.sevenDay, at)].filter(Boolean) : [];
-    $("usage").innerHTML = views.length ? views.map(meter).join("") : `<div class="u-empty">Checking usage…</div>`;
-    // Narrow screens hide the sidebar, so the header carries a short copy.
-    $("usage-mini").innerHTML = views
-      .map((v) => `<span title="${esc(v.title)}">${USAGE_LABEL[v.kind]} <b class="u-${v.level}">${v.used}%</b></span>`)
-      .join("");
-  }
-  function refreshUsage() {
-    api("/api/usage", {}).then((r) => r.usage && ((S.usage = r.usage), renderUsage())).catch(() => {});
-  }
-
+  // ---------- Window title ----------
   function updateTitle() {
     // Muted channels keep their count in the list, but not on the Dock.
     const n = Object.entries(S.unread).reduce((a, [id, k]) => a + (muted.has(id) || !S.channels.some((c) => c.id === id) ? 0 : k), 0);
@@ -1503,7 +1455,7 @@
     input.value = "";
     autosize();
     setReply(null);
-    if (notifyLevel !== "off" && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    window.Notifications.askPermission();
     // Files still uploading go out with the message once they're up.
     if (files.some((a) => a.status === "uploading")) {
       $("send").disabled = true;
@@ -1650,42 +1602,6 @@
     if (canDrop() && e.target.closest?.("#channel-view")) attach(e.dataTransfer.files);
   });
 
-  // ---------- The picture viewer ----------
-  let viewing = null; // { ch, list: the message's pictures, i }
-  function openViewer(mid, fileId) {
-    const m = (S.msgs[S.current] || []).find((x) => x.id === mid);
-    const list = ((m && m.meta && m.meta.files) || []).filter((f) => INLINE_IMAGE.test(f.type));
-    const i = list.findIndex((f) => f.id === fileId);
-    if (i < 0) return;
-    viewing = { ch: S.current, list, i };
-    showViewed();
-    $("viewer").showModal();
-  }
-  function showViewed() {
-    const f = viewing.list[viewing.i];
-    $("viewer-img").src = fileUrl(viewing.ch, f.id);
-    $("viewer-img").alt = f.name;
-    $("viewer-name").textContent = viewing.list.length > 1 ? `${f.name} · ${viewing.i + 1} of ${viewing.list.length}` : f.name;
-    $("viewer").querySelectorAll(".v-nav").forEach((b) => (b.hidden = viewing.list.length < 2));
-  }
-  const stepViewer = (d) => {
-    if (!viewing || viewing.list.length < 2) return;
-    viewing.i = (viewing.i + d + viewing.list.length) % viewing.list.length;
-    showViewed();
-  };
-  $("viewer").addEventListener("click", (e) => {
-    if (e.target === $("viewer") || e.target.classList.contains("v-body")) return $("viewer").close();
-    const b = e.target.closest("[data-viewer]");
-    if (!b || !viewing) return;
-    const act = b.dataset.viewer;
-    if (act === "close") $("viewer").close();
-    else if (act === "prev" || act === "next") stepViewer(act === "next" ? 1 : -1);
-    else fileAction(viewing.ch, viewing.list[viewing.i].id, act);
-  });
-  $("viewer").addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") (e.preventDefault(), stepViewer(e.key === "ArrowRight" ? 1 : -1));
-  });
-
   // ---------- New channel ----------
   $("add-channel").addEventListener("click", () => {
     $("new-channel-form").reset();
@@ -1713,99 +1629,7 @@
     }
   });
 
-  // ---------- Feedback ----------
-  // Feedback on a teammate's message goes to that teammate as a job: it reviews how its rules led to the message
-  // and amends its own instructions (feedback-rules.md). Enter sends, Shift+Enter adds a line.
-  let feedbackOn = null;
-  const fbText = $("feedback-text");
-  const fbGrow = () => {
-    fbText.style.height = "auto";
-    fbText.style.height = Math.min(fbText.scrollHeight + 2, 260) + "px";
-  };
-  function openFeedback(m) {
-    const t = m && byId(m.author);
-    if (!t) return;
-    feedbackOn = m;
-    $("feedback-form").reset();
-    $("feedback-title").textContent = `Feedback for ${t.name}`;
-    $("feedback-quote").innerHTML = quoteHtml({ id: m.id, author: m.author, text: replyTextOf(m) });
-    $("feedback-hint").textContent = `${t.name} reviews the conversation that led here, finds the rule behind it, and updates its own rules to match, keeping them short. Its report comes back in this channel.`;
-    $("feedback-error").textContent = "";
-    $("feedback-dialog").showModal();
-    fbGrow();
-    fbText.focus();
-  }
-  fbText.addEventListener("input", fbGrow);
-  fbText.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      $("feedback-form").requestSubmit($("feedback-send"));
-    }
-  });
-  $("feedback-form").addEventListener("submit", async (e) => {
-    if (e.submitter?.value !== "ok") return;
-    e.preventDefault();
-    const text = fbText.value.trim();
-    if (!text || !feedbackOn) return;
-    $("feedback-send").disabled = true;
-    try {
-      await api(`/api/channels/${S.current}/feedback`, { messageId: feedbackOn.id, text });
-      $("feedback-dialog").close();
-    } catch (err) {
-      $("feedback-error").textContent = err.message;
-    } finally {
-      $("feedback-send").disabled = false;
-    }
-  });
-
   // ---------- Live updates ----------
-  // ---------- Notifications ----------
-  // Everything a teammate says to you (replies, questions, errors, permission cards) and finished jobs, whenever
-  // you're not looking at that channel. Not the 5-minute job status updates. In Harmonia.app these become macOS
-  // notifications (the app sets window.__teamAppActive); in a browser they're web notifications.
-  let notifyLevel = store.get("harmonia:notify") || "all";
-  $("notify-level").value = notifyLevel;
-  $("notify-level").addEventListener("change", (e) => {
-    notifyLevel = e.target.value;
-    store.set("harmonia:notify", notifyLevel);
-    if (notifyLevel !== "off" && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
-  });
-
-  const lookingAt = (channelId) =>
-    !document.hidden && document.hasFocus() && window.__teamAppActive !== false && S.view === "channel" && S.current === channelId;
-  const plain = (text) =>
-    text.replace(/```[\s\S]*?```/g, "[code]").replace(/:?-{3,}:?/g, "").replace(/[*_`>#|]/g, " ").replace(/\s+/g, " ").trim();
-
-  function showNotification(channelId, title, body, urgent) {
-    if (notifyLevel === "off" || !("Notification" in window) || Notification.permission !== "granted") return;
-    const n = new Notification(title, { body: body.length > 180 ? body.slice(0, 179) + "…" : body, data: { channel: channelId, urgent }, tag: `${channelId}:${Date.now()}` });
-    n.onclick = () => (window.focus(), openChannel(channelId), n.close && n.close());
-  }
-
-  function notify(channelId, m) {
-    const t = byId(m.author);
-    if (!t || m.kind === "status" || m.kind === "job" || m.meta?.interim || lookingAt(channelId)) return;
-    const forMe = m.kind === "permission" || m.kind === "tools" || new RegExp(`@${S.user}\\b`, "i").test(m.text);
-    if (notifyLevel === "mentions" && !forMe) return;
-    // A muted channel stays quiet, except when a teammate is stuck waiting for your OK.
-    if (muted.has(channelId) && m.kind !== "permission" && m.kind !== "tools") return;
-    const c = S.channels.find((x) => x.id === channelId);
-    const where = c && !c.dm ? ` · #${c.name}` : "";
-    if (m.kind === "permission") return showNotification(channelId, `${t.avatar} ${t.name} needs your OK${where}`, `wants to use ${m.meta.permission.tool}`, true);
-    if (m.kind === "tools") return showNotification(channelId, `${t.avatar} ${t.name} asks for a tool${where}`, `${m.meta.toolRequest.tools.map((x) => x.name).join(", ")}: ${m.meta.toolRequest.reason}`, true);
-    if (m.kind === "error") return showNotification(channelId, `⚠️ ${t.name} hit an error${where}`, plain(m.text), false);
-    showNotification(channelId, `${t.avatar} ${t.name}${forMe ? " needs you" : ""}${where}`, plain(m.text), forMe);
-  }
-
-  function notifyJob(channelId, before, job) {
-    if (notifyLevel !== "all" || !before || before.status !== "running" || job.status === "running" || lookingAt(channelId)) return;
-    if (muted.has(channelId) && job.status !== "blocked") return;
-    const t = byId(job.agentId);
-    const c = S.channels.find((x) => x.id === channelId);
-    const what = { done: "finished", failed: "failed", stopped: "stopped", blocked: "needs permission" }[job.status] || job.status;
-    showNotification(channelId, `${t ? t.avatar + " " : ""}${job.id} ${what}${c ? ` · ${chLabel(c)}` : ""}`, job.title, job.status === "failed" || job.status === "blocked");
-  }
-
   function setRoster(roster) {
     S.roster = roster;
     S.people = Object.fromEntries(S.roster.map((t) => [t.name.toLowerCase(), { name: t.name, color: t.color }]));
@@ -1826,13 +1650,13 @@
         renderAsks();
       }
       // Unread unless you're looking at it: in another channel, or Harmonia isn't the app in front.
-      if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !lookingAt(e.channelId)) {
+      if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !window.Notifications.lookingAt(e.channelId)) {
         S.unread[e.channelId] = (S.unread[e.channelId] || 0) + 1;
         saveUnread();
         updateTitle();
       }
       renderSidebar();
-      notify(e.channelId, m);
+      window.Notifications.notify(e.channelId, m);
     } else if (e.type === "update") {
       const list = S.msgs[e.channelId] || [];
       const i = list.findIndex((m) => m.id === e.message.id);
@@ -1861,7 +1685,7 @@
       if (ch) {
         ch.jobs = ch.jobs || [];
         const i = ch.jobs.findIndex((j) => j.id === e.job.id);
-        notifyJob(e.channelId, i >= 0 ? ch.jobs[i] : null, e.job);
+        window.Notifications.notifyJob(e.channelId, i >= 0 ? ch.jobs[i] : null, e.job);
         if (i >= 0) ch.jobs[i] = e.job;
         else ch.jobs.push(e.job);
       }
@@ -1878,7 +1702,7 @@
       renderUpdate(e.update);
     } else if (e.type === "usage") {
       S.usage = e.usage;
-      renderUsage();
+      window.PlanUsage.render();
     } else if (e.type === "sessions") {
       S.sessions = e.sessions;
       renderSessions();
@@ -1900,7 +1724,7 @@
     if (!document.hidden && S.current) {
       seen();
       refreshCli();
-      refreshUsage();
+      window.PlanUsage.refresh();
     }
   });
 
@@ -1926,10 +1750,11 @@
     S.sessions = st.sessions;
     window.TEAM_TASK_BASE = st.clickupWorkspace ? `https://app.clickup.com/t/${st.clickupWorkspace}/` : "";
     window.TEAM_TASK_PREFIX = st.clickupTaskPrefix || "";
+    S.defaultPermissionMode = st.defaultPermissionMode;
     $("task-input").placeholder = `${window.TEAM_TASK_PREFIX || "ABC"}-123`;
     S.usage = st.usage || null;
     renderUpdate(st.update);
-    renderUsage();
+    window.PlanUsage.render();
     S.chatModels = st.chatModels;
     S.chatEfforts = st.chatEfforts;
     S.channels = st.channels;
@@ -1949,15 +1774,17 @@
     const live = S.channels.filter((c) => c.status !== "archived");
     await openChannel(S.channels.some((c) => c.id === saved) ? saved : (live[0] || S.channels[0]).id);
     refreshCli();
+    // Something Harmonia needs is missing: open the page that says what.
+    api("/api/setup").then((r) => r.checks.some((c) => !c.ok && !c.info) && openSetup()).catch(() => {});
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, openDm, chLabel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus };
+  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, openDm, chLabel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus, store, muted, fileUrl, INLINE_IMAGE, fileAction, quoteHtml, replyTextOf, chLabel };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);
-  setInterval(() => (S.view === "channel" && renderSessions(), renderUsage()), 60_000); // keep "x min ago" and the pace marker fresh
-  setInterval(() => !document.hidden && refreshUsage(), 5 * 60_000); // your other Claude use moves it too
+  setInterval(() => (S.view === "channel" && renderSessions(), window.PlanUsage.render()), 60_000); // keep "x min ago" and the pace marker fresh
+  setInterval(() => !document.hidden && window.PlanUsage.refresh(), 5 * 60_000); // your other Claude use moves it too
   setInterval(() => {
     const ch = S.view === "channel" && currentChannel();
     if (ch) (ch.jobs || []).filter((j) => j.status === "running").forEach((j) => refreshJobCards(ch.id, j.id));

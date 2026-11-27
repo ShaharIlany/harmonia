@@ -42,6 +42,7 @@
           </select>
         </label>
         <button type="button" id="slack-status" class="bridge-status off" title="Talk to your teammates from Slack"></button>
+        <button type="button" id="setup-link" class="bridge-status off" title="Check that Harmonia has what it needs, and change its settings"><span class="ts-text">Setup check</span></button>
         <div id="update" class="update-status" hidden></div>
         <div id="cli"></div>
       </div>
@@ -104,6 +105,11 @@
 
     <!-- Slack view -->
     <main class="main agent-view" id="slack-view" hidden></main>
+
+    <!-- Usage view -->
+    <main class="main agent-view" id="usage-view" hidden></main>
+    <!-- Setup check and settings -->
+    <main class="main agent-view" id="setup-view" hidden></main>
   </div>
 
   <dialog id="task-dialog">
@@ -171,7 +177,13 @@
 
   <script src="/markdown.js"></script>
   <script src="/app.js"></script>
+  <script src="/plan-usage.js"></script>
+  <script src="/notifications.js"></script>
+  <script src="/picture-viewer.js"></script>
+  <script src="/feedback.js"></script>
   <script src="/agent-page.js"></script>
   <script src="/slack-page.js"></script>
+  <script src="/usage-page.js"></script>
+  <script src="/setup-page.js"></script>
 </body>
 </html>

@@ -7,6 +7,9 @@
 #   Harmonia-arm64.zip (+ .sha256)   the app (stable name: releases/latest/download/… works)
 #   Team-Chat-arm64.zip (+ .sha256)  the same app as "Team Chat.app", for installs from before the rename: their
 #                                    updater looks for that name. Drop it once no Team Chat installs are left.
+#   Harmonia-windows-x64.zip (+ .sha256)  the Windows app (Harmonia.exe window + harmonia-server.exe + build.json) and
+#                                    the starter teammates. Installed apps update from it (updates.ts).
+#   Harmonia-Setup-x64.exe           the Windows installer (winapp/installer.iss)
 name: Release
 
 on:
@@ -63,3 +66,55 @@ jobs:
           gh release create "$GITHUB_REF_NAME" Harmonia-arm64.zip Harmonia-arm64.zip.sha256 \
             Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
             --verify-tag --latest --title "Harmonia $VERSION" --generate-notes
+
+  # The Windows app, built on Windows (the window is C#) and added to the release the Mac job made.
+  windows:
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }} # optional: code-signing certificate (winapp/sign.ps1)
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Build the app
+        shell: pwsh
+        run: |
+          $v = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Tags look like v1.2.3, not $env:GITHUB_REF_NAME" }
+          $env:HARMONIA_VERSION = $v
+          $env:HARMONIA_BRANCH = "main"
+          $env:HARMONIA_REPO = "https://github.com/$env:GITHUB_REPOSITORY.git"
+          ./winapp/build.ps1
+          Get-Content winapp/dist/build.json
+          ./winapp/sign.ps1 winapp/dist/Harmonia.exe winapp/dist/harmonia-server.exe # no-op without the signing secrets
+
+          # The update: the app's files and the starter teammates, in a folder of their own.
+          $z = "build/Harmonia-windows-x64"
+          New-Item -ItemType Directory -Force "$z/starter-agents" | Out-Null
+          Copy-Item winapp/dist/* $z
+          Copy-Item agents/*.md "$z/starter-agents/"
+          Compress-Archive -Path $z -DestinationPath Harmonia-windows-x64.zip
+
+          # The installer.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$v" winapp/installer.iss
+          if ($LASTEXITCODE) { throw "installer failed" }
+          ./winapp/sign.ps1 winapp/out/Harmonia-Setup-x64.exe
+          Copy-Item winapp/out/Harmonia-Setup-x64.exe .
+
+          # "<sha-256>  <name>", what updates.ts reads.
+          foreach ($f in "Harmonia-windows-x64.zip", "Harmonia-Setup-x64.exe") {
+            "$((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())  $f" | Out-File "$f.sha256" -Encoding ascii
+          }
+
+      - name: Add to the release
+        shell: pwsh
+        run: gh release upload "$env:GITHUB_REF_NAME" Harmonia-windows-x64.zip Harmonia-windows-x64.zip.sha256 Harmonia-Setup-x64.exe Harmonia-Setup-x64.exe.sha256 --clobber
