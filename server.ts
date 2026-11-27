@@ -88,6 +88,7 @@ const slack = new SlackBridge({
   feedback: (ch, messageId, text) => team.feedback(ch, messageId, text, { via: "slack" }),
   decideTools: (ch, messageId, decision) => team.decideTools(ch, messageId, decision),
   decide: (ch, messageId, decision) => team.decide(ch, messageId, decision),
+  continueAfterPause: (ch, messageId) => team.continueAfterPause(ch, messageId),
   openSession: (ch, jobId) => openJobSession(ch, jobId),
   channelCreated: (channel) => broadcast({ type: "channel", channel }),
   channelChanged: (channel) => broadcast({ type: "channel", channel }),
@@ -459,7 +460,7 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
       }
 
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|status|task|open-task|open-folder|react|feedback|ask|ask-split)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|continue|status|task|open-task|open-folder|react|feedback|ask|ask-split)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -540,6 +541,10 @@ Bun.serve({
       if (m[2] === "tools" && post) {
         if (!["approved", "denied"].includes(body.decision)) return json({ error: "bad decision" }, 400);
         const err = team.decideTools(ch, String(body.messageId), body.decision);
+        return err ? json({ error: err }, 409) : json({ ok: true });
+      }
+      if (m[2] === "continue" && post) {
+        const err = team.continueAfterPause(ch, String(body.messageId));
         return err ? json({ error: err }, 409) : json({ ok: true });
       }
       if (m[2] === "retry" && post) {

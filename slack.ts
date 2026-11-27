@@ -1131,6 +1131,7 @@ export class SlackBridge {
       }
       let err: string | undefined;
       if (kind === "tools" && (choice === "approved" || choice === "denied")) err = this.deps.decideTools(ch, t.m, choice);
+      else if (kind === "continue") err = this.deps.continueAfterPause(ch, t.m);
       else if (kind === "perm" && (choice === "once" || choice === "always" || choice === "denied")) {
         const m = messages.get(ch.id)?.find((x) => x.id === t.m);
         if (!m?.meta?.permission) err = "That request is gone.";
@@ -1591,7 +1592,7 @@ export class SlackBridge {
       return this.postAs(USER_LOOK, link.conversationId, { markdown: m.text }, { thread: root, ref });
     }
     const thread = this.threadOf(link, ch, m);
-    if (m.author === "system") return this.postAs(undefined, link.conversationId, { markdown: `_${m.text}_` }, { thread, ref });
+    if (m.author === "system") return this.postAs(undefined, link.conversationId, card(m, ch) ?? { markdown: `_${m.text}_` }, { thread, ref });
     const t = teammate(m.author);
     if (!t) return;
     const text = relayText(m, ch);
@@ -1619,7 +1620,8 @@ export class SlackBridge {
   /** A message changed: a teammate's emoji on yours, or a card that's decided now (here or by its buttons). */
   private updated(link: Link, ch: Channel, m: Message) {
     this.reactions(link, m);
-    const decided = m.kind === "tools" ? m.meta?.toolRequest?.status !== "pending" : m.kind === "permission" ? m.meta?.permission?.status !== "pending" : false;
+    const decided =
+      m.kind === "tools" ? m.meta?.toolRequest?.status !== "pending" : m.kind === "permission" ? m.meta?.permission?.status !== "pending" : m.meta?.paused ? m.meta.paused.status !== "pending" : false;
     if (!decided || this.cardsDone.has(m.id)) return;
     this.cardsDone.add(m.id);
     void this.queue(async () => {

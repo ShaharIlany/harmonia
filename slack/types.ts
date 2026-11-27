@@ -114,6 +114,8 @@ export type Deps = {
   decideTools: (ch: Channel, messageId: string, decision: "approved" | "denied") => string | undefined;
   /** Allow once / always / Deny on a permission card. */
   decide: (ch: Channel, messageId: string, decision: "once" | "always" | "denied") => void;
+  /** Continue on a "Paused after 8 turns" message: the teammates it held back carry on. An error to show, if it can't. */
+  continueAfterPause: (ch: Channel, messageId: string) => string | undefined;
   /** View in Claude on a job's start: opens its session in the Claude app. An error to show, if it couldn't. */
   openSession: (ch: Channel, jobId: string) => Promise<string | undefined>;
   /** Tells the page about a channel the bridge created. */

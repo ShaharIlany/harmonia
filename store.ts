@@ -39,6 +39,10 @@ export type Message = {
     routeWhy?: string;
     jobId?: string; // kind "job": the card for that job
     retried?: boolean; // kind "error": Try again was used
+    // author "system": the chat paused after too many handoffs. `agents`: the teammates it held back, which Continue wakes,
+    // each with the message it was woken for (its answer goes in that one's Slack thread). "replied": you wrote first.
+    // `seen`: what it had read in the channel then (-1: nothing); Continue skips it if that has moved. Older pauses kept plain ids.
+    paused?: { agents: ({ id: string; cause?: string; seen?: number } | string)[]; status: "pending" | "continued" | "replied" };
     permission?: {
       agentId: string;
       jobId?: string; // set when a job (not the chat itself) was blocked
