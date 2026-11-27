@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const AGENTS_DIR = join(homedir(), ".claude/agents");
+const AGENTS_DIR = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "agents");
 
 const BUILT_IN = ["Read", "Glob", "Grep", "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Skill", "ToolSearch"];
 

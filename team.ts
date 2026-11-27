@@ -1,18 +1,25 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import chatRulesFile from "./chat-rules.md" with { type: "file" };
-import jobRulesFile from "./job-rules.md" with { type: "file" };
-import feedbackRulesFile from "./feedback-rules.md" with { type: "file" };
-import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { CLICKUP_TASK_PREFIX, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
-import { filesLines, type Attachment } from "./attachments";
-import { languageName, type Voice } from "./voice";
+import { dateText, dayLine, nowText, withDays } from "./dates";
+import { attachmentPath, type Attachment } from "./attachments";
+import { type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide } from "./mozart";
-import { chatToolsFor, quickAnswer, runAgent, type Run, type RunResult } from "./runner";
+import { recordResult } from "./usage";
+import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
+import { sandboxActive } from "./sandbox";
+import { parseTask } from "./tasks";
+import { defaultPermissionMode, permissionModeOf } from "./permission-mode";
+import { RULES, APPROVALS, TEAM_RULES_FILE, chatPrompt, chatTitle, composeBrief, fill, jobPrompt, jobTitle, roster } from "./prompts";
+import { HOLD_ON_AFTER, EMOJI_ONLY, NO_REPLY, bubbles, catchUpLines, clip, keepLanguage, line, placeOf, replyText, reportInChat, shownAs, time } from "./lines";
+import { STATUS_EVERY_MS, etaWarning, readEta } from "./eta";
+import { statusPrompt } from "./status-prompt";
 import {
+  CLAUDE_PERMISSION_MODE,
   addMessage,
   agentSessions,
   channels,
@@ -29,10 +36,6 @@ import {
   type SlackRef,
 } from "./store";
 
-/** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
-const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
-/** How many of a job's earlier status updates its next one is written against. */
-const STATUS_HISTORY = 6;
 /** Agent turns allowed after one user message before the chat pauses (stops ping-pong). */
 const MAX_TURNS_PER_USER_MESSAGE = 8;
 const STUB = !!setting("STUB");
@@ -41,6 +44,11 @@ const STUB = !!setting("STUB");
 // prompt cache) under the folder it started in, so every chat turn runs there, whatever the channel. Jobs run in
 // the channel's folder.
 export { DEFAULT_CWD, TEAM_AGENTS };
+
+// What used to be defined here and is imported from this file elsewhere (server.ts, the tests).
+export { parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
+export { OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, catchUpLines, clipOthers, reportInChat } from "./lines";
+export { etaWarning, readEta } from "./eta";
 
 export type SessionView = AgentSession & {
   agentId: string;
@@ -60,114 +68,8 @@ export type Event =
 
 type Emit = (e: Event) => void;
 
-const RULES = { chat: readFileSync(chatRulesFile, "utf8"), job: readFileSync(jobRulesFile, "utf8"), feedback: readFileSync(feedbackRulesFile, "utf8") };
-/** Fills {{key}} placeholders in one pass, so text put in is never filled again. Unknown keys stay as they are. */
-const fill = (tpl: string, vars: Record<string, string>) => tpl.replace(/\{\{(\w+)\}\}/g, (all, k) => vars[k] ?? all);
-const roster = (agentId: string) => ROSTER.map((r) => `- ${r.name} (@${r.name}): ${r.role}${r.id === agentId ? " (you)" : ""}`).join("\n");
 
-/** The chat session's whole system prompt. Nothing in it is per channel or per turn, so the cached prefix stays put. */
-export function chatPrompt(agentId: string) {
-  const t = teammate(agentId)!;
-  return RULES.chat
-    .replaceAll("{{user}}", USER_NAME)
-    .replaceAll("{{name}}", t.name)
-    .replaceAll("{{role}}", t.role)
-    .replaceAll("{{roster}}", roster(agentId))
-    .replaceAll("{{instructions}}", readAgent(agentId).instructions.trim());
-}
 
-function jobPrompt(ch: Channel, agentId: string) {
-  return RULES.job
-    .replaceAll("{{user}}", USER_NAME)
-    .replaceAll("{{name}}", nameOf(agentId))
-    .replaceAll("{{channel}}", ch.dm ? `a DM with ${USER_NAME}` : `the channel #${ch.name}`)
-    .replaceAll("{{cwd}}", ch.cwd);
-}
-
-/** Where a channel is, as the teammates read it: "#name", or "your DM with <you>". */
-const placeOf = (ch: Channel) => (ch.dm ? `your DM with ${USER_NAME}` : `#${ch.name}`);
-/** The same, as you read it (in the typing bar). */
-const shownAs = (ch: Channel) => (ch.dm ? "your DM" : `#${ch.name}`);
-
-/** How sessions are titled in Claude Code: the tag says which teammate it is. */
-export const chatTitle = (agentId: string) => `[${nameOf(agentId)}] Harmonia chat`;
-export const jobTitle = (ch: Channel, agentId: string, title: string) => `[${nameOf(agentId)}] ${ch.dm ? "DM" : `#${ch.name}`} · ${title}`;
-
-const time = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
-/** What a teammate answers when a turn needs nothing from it (chat-rules.md, "Is it your turn?"). */
-const NO_REPLY = /^`?\(?no reply\)?`?\.?$/i;
-/** A hold-on line ("checking") shows only if the turn is still going this long after it was written. */
-const HOLD_ON_AFTER = 3000;
-
-/** A reply that's only an emoji or three ("👍", "✅🙏"): shown as a reaction, not as a message. */
-const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*\s*){1,3}$/u;
-
-/** A reply split into WhatsApp-style bubbles at lines with only `---` (never inside a code block). */
-export function bubbles(text: string): string[] {
-  const out: string[] = [];
-  let cur: string[] = [];
-  let fence = false;
-  for (const l of text.split("\n")) {
-    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
-    if (!fence && /^\s*---\s*$/.test(l)) {
-      out.push(cur.join("\n"));
-      cur = [];
-      continue;
-    }
-    cur.push(l);
-  }
-  out.push(cur.join("\n"));
-  return out.map((b) => b.trim()).filter(Boolean);
-}
-
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "\n…(cut)" : s);
-
-/**
- * A message as the teammates (and Mozart) read it: "[14:02] Name: text". With `channelId`, each attached file follows
- * on a line of its own with its path, so a teammate can open it; without (Mozart), only the files' names.
- */
-function line(m: Message, channelId?: string): string {
-  if (m.kind === "permission") {
-    const p = m.meta!.permission!;
-    const verdict = { pending: "is waiting on", once: "allowed once", always: "allowed for this channel", denied: "denied" }[p.status];
-    return `[${time(m.ts)}] (event) ${USER_NAME} ${verdict}: ${nameOf(p.agentId)}${p.jobId ? `'s job ${p.jobId}` : ""} wants ${p.rule}`;
-  }
-  if (m.kind === "tools") {
-    const r = m.meta!.toolRequest!;
-    const verdict = { pending: "hasn't decided yet on", approved: "approved", denied: "denied" }[r.status];
-    return `[${time(m.ts)}] (event) ${USER_NAME} ${verdict} ${nameOf(r.agentId)}'s request for ${r.tools.map((t) => t.name).join(", ")}`;
-  }
-  if (m.kind === "job") return `[${time(m.ts)}] (event) ${nameOf(m.author)} ${m.text}`;
-  if (m.author === "system") return `[${time(m.ts)}] (event) ${m.text}`;
-  const files = m.meta?.files?.length ? (channelId ? filesLines(channelId, m.meta.files) : ` (attached: ${m.meta.files.map((f) => f.name).join(", ")})`) : "";
-  const voice = m.meta?.voice ? ` (voice message in ${languageName(m.meta.voice.language)}, transcribed by speech recognition, so a word may be misheard)` : "";
-  if (m.author === "guest") return `[${time(m.ts)}] ${m.meta?.guest?.name ?? "Someone"} (in ${m.meta?.via === "teams" ? "Teams" : "Slack"})${voice}: ${m.text}${files}`;
-  const re = m.meta?.replyTo;
-  // A teammate's emoji on your message (instead of a turn, or as its whole answer): it's been answered.
-  const reacted = m.author === "user" ? (m.meta?.reactions ?? []).filter((x) => teammate(x.by)).map((x) => `${nameOf(x.by)} ${x.emoji}`) : [];
-  const quote = re && m.meta?.feedbackFor ? ` (feedback for ${nameOf(m.meta.feedbackFor)} on its message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : re ? ` (replying to ${re.author === "user" ? "their own" : `${nameOf(re.author)}'s`} message "${re.text.replace(/\s+/g, " ").slice(0, 200)}")` : "";
-  return `[${time(m.ts)}] ${nameOf(m.author)}${quote}${voice}: ${m.text}${files}${reacted.length ? ` (reacted: ${reacted.join(", ")})` : ""}`;
-}
-
-/**
- * A voice message doesn't change the conversation's language: it goes on in the language it started in. The
- * conversation is the thread the voice message replies in (its first message), else the channel. Empty when the voice
- * message starts it, or it started in the same language.
- */
-function keepLanguage(all: Message[], voiced: Message): string {
-  const said = (m: Message) => (m.author === "user" || teammate(m.author)) && (!m.kind || m.kind === "text") && !m.meta?.interim && !!m.text.trim();
-  const root = voiced.meta?.replyTo && all.find((m) => m.id === voiced.meta!.replyTo!.id);
-  const first = root && said(root) ? root : all.find(said);
-  const spoken = voiced.meta!.voice!.language;
-  if (!first || first.id === voiced.id) return "";
-  const lang = (tag: string) => tag.split(/[-_]/)[0].toLowerCase();
-  if (first.meta?.voice) {
-    if (lang(first.meta.voice.language) === lang(spoken)) return "";
-    return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but this conversation started in ${languageName(first.meta.voice.language)}: keep writing in ${languageName(first.meta.voice.language)}.`;
-  }
-  const opening = first.text.replace(/\s+/g, " ").trim().slice(0, 160);
-  return `${USER_NAME}'s voice message was in ${languageName(spoken)}, but keep writing in the language this ${root ? "thread" : "conversation"} started in, the language of its first message: "${opening}".`;
-}
 
 // First start with TeamAgents chat sessions: they're new, so each teammate re-reads each channel's recent messages.
 if (firstChatSessions) {
@@ -177,7 +79,8 @@ if (firstChatSessions) {
 }
 
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
-type ChatTools = { startJob(input: any): string; checkJobs(): string; stopJob(jobId: string): string; requestTool(input: any): string };
+type ChatTools = { startJob(input: any): string; checkJobs(): string; readJob(jobId: string): string; stopJob(jobId: string): string; requestTool(input: any): string };
+
 /** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
 type Busy = { channelId: string; stop: () => void; activity?: string; seen?: number; events: string[]; answers?: string };
 
@@ -364,7 +267,7 @@ export class Team {
         this.emit({ type: "update", channelId: ch.id, message: msg });
       }
       for (const id of d.to) this.wake(ch, id, msg);
-    });
+    }).catch((e) => console.error(`Routing a message in ${ch.id} failed:`, e));
     this.coordinating.set(ch.id, next);
     next.finally(() => this.coordinating.get(ch.id) === next && this.coordinating.delete(ch.id));
   }
@@ -453,11 +356,16 @@ export class Team {
     }
   }
 
+  /** Forget the session and what the teammate has read in every channel (it re-reads them as "new" next time). */
+  private dropSession(agentId: string) {
+    delete agentSessions[agentId];
+    for (const c of channels.values()) delete c.lastSeen[agentId];
+  }
+
   /** Forget the teammate's chat session: its next turn starts a new one and re-reads each channel. Jobs are untouched. */
   resetSession(agentId: string): string | undefined {
     if (this.busy.has(agentId)) return `${nameOf(agentId)} is in the middle of a reply. Try again when it's done.`;
-    delete agentSessions[agentId];
-    for (const c of channels.values()) delete c.lastSeen[agentId];
+    this.dropSession(agentId);
     saveAgentSessions();
     saveChannels();
     this.emitSessions();
@@ -579,7 +487,7 @@ export class Team {
       }
       return;
     }
-    if (!this.start(ch, agentId)) this.next(agentId);
+    if (!this.tryStart(ch, agentId)) this.next(agentId);
   }
 
   /** The next channel waiting for this teammate, if any. */
@@ -587,9 +495,46 @@ export class Team {
     const q = this.queue.get(agentId) ?? [];
     while (q.length && !this.busy.has(agentId)) {
       const ch = channels.get(q.shift()!);
-      if (ch && this.start(ch, agentId)) break;
+      if (ch && this.tryStart(ch, agentId)) break;
     }
     this.emitSessions();
+  }
+
+  /**
+   * `start`, but a throw while setting the turn up (a missing agent file, say) becomes an error card from the teammate
+   * instead of ending the server. What `start` had already changed goes back, so it's as if the turn never began.
+   */
+  private tryStart(ch: Channel, agentId: string): boolean {
+    const key = `${ch.id}:${agentId}`;
+    const before = {
+      left: this.turnsLeft.get(ch.id),
+      hadSeen: agentId in ch.lastSeen,
+      seen: ch.lastSeen[agentId],
+      events: this.events.get(key),
+      cause: this.causes.get(key),
+      session: agentSessions[agentId],
+    };
+    try {
+      return this.start(ch, agentId);
+    } catch (e) {
+      console.error(`Could not start ${agentId}'s turn in ${ch.id}:`, e);
+      if (before.left === undefined) this.turnsLeft.delete(ch.id);
+      else this.turnsLeft.set(ch.id, before.left);
+      if (before.hadSeen) ch.lastSeen[agentId] = before.seen!;
+      else delete ch.lastSeen[agentId];
+      if (before.events) this.events.set(key, before.events);
+      if (before.cause) this.causes.set(key, before.cause);
+      if (before.session) agentSessions[agentId] = before.session;
+      else delete agentSessions[agentId];
+      for (const [token, turn] of this.turns) if (turn.channelId === ch.id && turn.agentId === agentId) this.turns.delete(token);
+      this.busy.delete(agentId);
+      this.setActivity(ch, agentId, null);
+      saveChannels();
+      this.emitSessions();
+      const why = e instanceof Error && (e as NodeJS.ErrnoException).code === "ENOENT" ? `A file it needs is missing: ${(e as NodeJS.ErrnoException).path ?? e.message}` : e instanceof Error ? e.message : String(e);
+      this.post(ch, { author: agentId, kind: "error", text: `Could not start this turn. ${why}` });
+      return false;
+    }
   }
 
   /** One turn of the teammate's chat session for this channel. False when there was nothing to do. */
@@ -622,10 +567,12 @@ export class Team {
 
     const where = `${placeOf(ch)} (folder ${ch.cwd}${ch.task ? `, ClickUp task ${ch.task.id}: ${ch.task.url}` : ""})`;
     const intro = seen === undefined ? `You're new in ${where}. Recent messages there:` : `New in ${where} since you last read it:`;
-    const lines = [...fresh.map((m) => line(m, ch.id)), ...events];
+    // Queued events carry only a time: if the day turned since the last message, they get their own day line.
+    const lastDay = fresh.length ? dateText(fresh[fresh.length - 1].ts) : "";
+    const lines = [...catchUpLines(fresh, ch.id), ...(events.length && lastDay !== dateText(Date.now()) ? [dayLine(Date.now())] : []), ...events];
     const voiced = fresh.findLast((m) => m.author === "user" && m.meta?.voice);
     const language = voiced ? keepLanguage(all, voiced) : "";
-    const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you.`;
+    const prompt = `${intro}\n${lines.join("\n")}\n\n${language ? `${language}\n` : ""}Write your next message in ${placeOf(ch)}, or (no reply) if nothing here is waiting on you. Now: ${nowText(Date.now())}.`;
 
     const had = agentSessions[agentId];
     const resume = !!had;
@@ -651,6 +598,7 @@ export class Team {
     if (STUB && /\bjob\b/i.test(last) && !last.includes("(event)")) tools.startJob({ title: "Stub job", brief: last });
     if (STUB && /\bneed a tool\b/i.test(last) && !last.includes("(event)")) tools.requestTool({ tools: ["clickup_delete_task"], reason: "Stub: to delete the duplicate task." });
 
+    const chatTools = chatToolsFor(readAgent(agentId).tools);
     const run = runAgent({
       agentId,
       cwd: TEAM_AGENTS,
@@ -660,10 +608,14 @@ export class Team {
       title: chatTitle(agentId),
       allowedTools: [],
       systemPrompt: chatPrompt(agentId),
+      // Nothing handles a chat turn's denials (only jobs show Allow / Deny cards), so a blocked tool would just fail. The
+      // chat side has no file-edit tools, and its quick lookups must not stop for cards: it stays on bypass, sandbox or
+      // not, as long as it has its restricted tool list. With every tool (no list) and no sandbox, the channel's mode rules.
+      permissionMode: sandboxActive() || chatTools ? CLAUDE_PERMISSION_MODE.bypass : CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
       chat: {
         model: t.chatModel,
         effort: t.chatEffort,
-        tools: chatToolsFor(readAgent(agentId).tools),
+        tools: chatTools,
         mcpConfig: JSON.stringify({
           mcpServers: {
             team: { command: jobToolsCommand()[0], args: jobToolsCommand().slice(1), env: { HARMONIA_URL: this.serverUrl, HARMONIA_TURN: token } },
@@ -671,7 +623,7 @@ export class Team {
         }),
       },
       onActivity: (s) => {
-        const status = /start_job/.test(s) ? "starting a job" : /check_jobs/.test(s) ? "checking jobs" : /stop_job/.test(s) ? "stopping a job" : /request_tool/.test(s) ? "asking for a tool" : s;
+        const status = /start_job/.test(s) ? "starting a job" : /read_job/.test(s) ? "reading a job" : /check_jobs/.test(s) ? "checking jobs" : /stop_job/.test(s) ? "stopping a job" : /request_tool/.test(s) ? "asking for a tool" : s;
         busy.activity = status;
         this.setActivity(ch, agentId, status);
         this.emitSessions();
@@ -684,7 +636,11 @@ export class Team {
         said = undefined;
         if (holding || !text || NO_REPLY.test(text) || EMOJI_ONLY.test(text)) return;
         holding = setTimeout(() => {
-          if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true, ...(answers && { answers }) } });
+          try {
+            if (!stopped && this.busy.get(agentId) === busy) this.post(ch, { author: agentId, text, meta: { interim: true, ...(answers && { answers }) } });
+          } catch (e) {
+            console.error("Hold-on line failed:", e);
+          }
         }, HOLD_ON_AFTER);
       },
     });
@@ -693,6 +649,7 @@ export class Team {
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: session.sessionId, isError: true, denials: [] }))
       .then((r) => {
+        recordResult("chat", r, { agentId, channelId: ch.id });
         clearTimeout(holding);
         if (this.closing) return; // cut off by an update: the next build gives it the same messages again
         this.turns.delete(token);
@@ -754,10 +711,14 @@ export class Team {
       const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
       const follow = !ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0;
       if (to.length || follow)
-        setTimeout(() => {
-          for (const id of to) this.wake(ch, id, first);
-          if (follow && first) this.coordinate(ch, first);
-        }, after);
+        setTimeout(
+          () =>
+            this.safely(() => {
+              for (const id of to) this.wake(ch, id, first);
+              if (follow && first) this.coordinate(ch, first);
+            }),
+          after,
+        );
     }
     saveChannels();
     this.emit({ type: "channel", channel: ch });
@@ -772,14 +733,23 @@ export class Team {
     const first = this.post(ch, { author: agentId, text: parts[0], meta });
     let at = 0;
     for (const part of parts.slice(1)) {
-      setTimeout(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing"), at + 100);
+      setTimeout(() => this.safely(() => this.busy.has(agentId) || this.setActivity(ch, agentId, "typing")), at + 100);
       at += Math.min(1500, Math.max(600, part.length * 15));
-      setTimeout(() => {
+      setTimeout(() => this.safely(() => {
         if (!this.busy.has(agentId)) this.setActivity(ch, agentId, null);
         this.post(ch, { author: agentId, text: part, ...(meta?.answers && { meta: { answers: meta.answers } }) });
-      }, at);
+      }), at);
     }
     return { first, after: at + 50 };
+  }
+
+  /** Runs a timer's work so a failure in it is logged, not fatal. */
+  private safely(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("Timer callback failed:", e);
+    }
   }
 
   /** A teammate's emoji on a message. One reaction per teammate per message; a new one replaces it. */
@@ -799,9 +769,16 @@ export class Team {
     try {
       if (tool === "start_job") {
         if (typeof input?.title !== "string" || typeof input?.brief !== "string" || !input.brief.trim()) return { text: "start_job needs a title and a brief." };
+        if (typeof input.done_when !== "string" || !input.done_when.trim())
+          return { text: "start_job needs done_when: what finished looks like and how the job can check it. Nothing was started; call it again with done_when." };
+        const ok = Array.isArray(input.approved_actions) ? input.approved_actions : undefined;
+        if (!ok || !ok.length || ok.some((a: unknown) => typeof a !== "string" || !APPROVALS.includes(a)))
+          return { text: `start_job needs approved_actions: a list with some of ${APPROVALS.join(", ")} (what ${USER_NAME} said yes to in this chat), or ["none"]. Nothing was started; call it again with approved_actions.` };
+        if (ok.includes("none") && ok.length > 1) return { text: 'approved_actions has "none" together with other actions. Use ["none"] alone, or list only what was approved. Nothing was started.' };
         return { text: turn.tools.startJob(input) };
       }
       if (tool === "check_jobs") return { text: turn.tools.checkJobs() };
+      if (tool === "read_job") return { text: turn.tools.readJob(String(input?.job_id ?? "")) };
       if (tool === "stop_job") return { text: turn.tools.stopJob(String(input?.job_id ?? "")) };
       if (tool === "request_tool") return { text: turn.tools.requestTool(input) };
       return { error: `Unknown tool ${tool}.` };
@@ -819,6 +796,12 @@ export class Team {
         const list = ch.jobs.filter((j) => j.kind === "job").slice(-15);
         if (!list.length) return "No jobs in this channel yet.";
         return list.map((j) => `${j.id} · ${nameOf(j.agentId)} · ${j.status}${j.activity ? ` (${j.activity})` : ""} · ${j.title}`).join("\n");
+      },
+      readJob: (jobId) => {
+        const j = ch.jobs.find((x) => x.id === jobId.trim() && x.kind === "job");
+        if (!j) return `There's no job ${jobId} in this channel.`;
+        const report = j.report ? clip(j.report, 20000) : j.status === "running" ? "(none yet, it's still running)" : "(none)";
+        return `Job ${j.id} · ${j.title}\nTeammate: ${nameOf(j.agentId)}\nStatus: ${j.status}${j.activity ? ` (${j.activity})` : ""}\n\nBrief:\n${j.brief}\n\nReport:\n${report}`;
       },
       stopJob: (jobId) => this.stopJob(ch, jobId),
       requestTool: (input) => this.requestTool(ch, agentId, input),
@@ -885,10 +868,11 @@ export class Team {
         ? `\nThe job: brief\n<brief>\n${clip(job.brief, 4000)}\n</brief>\nreport\n<report>\n${clip(job.report ?? "(none yet)", 6000)}\n</report>\nIts whole run is Claude Code session ${job.sessionId} (~/.claude/projects/*/${job.sessionId}.jsonl).\n`
         : "",
       messagesFile: join(DATA, "messages", `${ch.id}.json`),
-      history: all.slice(Math.max(0, i - 40), i + 1).map((m) => line(m, ch.id)).join("\n"),
+      history: withDays(all.slice(Math.max(0, i - 40), i + 1), (m) => line(m, ch.id)).join("\n"),
       agentFile: agentFile(agentId),
       memoryDir: memoryDir(agentId),
-      chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId) }),
+      chatRules: fill(RULES.chat, { user: USER_NAME, name: t.name, role: t.role, roster: roster(agentId), teamRules: "" }), // the team rules file is listed apart (teamRulesFile)
+      teamRulesFile: TEAM_RULES_FILE,
       jobRules: jobPrompt(ch, agentId),
     });
     const title = `Feedback: ${text.replace(/\s+/g, " ").slice(0, 60)}`;
@@ -896,7 +880,7 @@ export class Team {
   }
 
   /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; continue_job?: string; feedback?: boolean }, prompt?: string): string {
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; done_when?: string; approved_actions?: string[]; continue_job?: string; feedback?: boolean; size?: string }, prompt?: string): string {
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
@@ -906,19 +890,38 @@ export class Team {
       agentId,
       sessionId: prev?.sessionId ?? crypto.randomUUID(),
       title: input.title.trim().slice(0, 80) || "Job",
-      brief: input.brief.trim(),
+      brief: composeBrief(input),
       status: "running",
       startedAt: Date.now(),
       cost: 0,
       allowed: [...(prev?.allowed ?? [])],
       ...(input.feedback && { feedback: true }),
+      ...((input.size ? input.size === "small" : prev?.size === "small") && { size: "small" as const }),
+      ...(prev?.baseline && { baseline: prev.baseline }),
     };
     ch.jobs.push(job);
     if (ch.jobs.length > 200) ch.jobs.splice(0, ch.jobs.length - 200);
     this.emitJob(ch, job); // before the card, so the page can draw it
     this.post(ch, { author: agentId, kind: "job", text: `started job ${job.id}: ${job.title}`, meta: { jobId: job.id, ...this.answering(ch.id, agentId) } });
-    this.runJob(ch, job, prompt ?? job.brief, !!prev);
+    // A new job also gets the channel's context, built here; a resumed one already has it in its session.
+    this.runJob(ch, job, prompt ?? (prev ? job.brief : `${job.brief}\n\n${this.contextPack(ch, job)}`), !!prev);
     return `Started job ${job.id}. Its report comes back to you here when it finishes.`;
+  }
+
+  /** What a job can't get from the chat: where it is, its ClickUp task, the recent files, and a transcript to read if the brief falls short. */
+  private contextPack(ch: Channel, job: Job): string {
+    const all = messages.get(ch.id) ?? [];
+    const out = [`Context: this job was started from ${placeOf(ch)}.`];
+    if (ch.task) out.push(`ClickUp task: ${ch.task.id} ${ch.task.url}`);
+    const files = all.slice(-30).flatMap((m) => (m.meta?.files ?? []).map((f) => attachmentPath(ch.id, f)));
+    if (files.length) out.push(`Files attached in the channel's recent messages:\n${files.map((f) => `- ${f}`).join("\n")}`);
+    const path = join(DATA, "transcripts", `${ch.id}-${job.id}.txt`);
+    try {
+      mkdirSync(join(DATA, "transcripts"), { recursive: true });
+      writeFileSync(path, all.slice(-100).map((m) => line(m, ch.id)).join("\n") + "\n");
+      out.push(`The channel's last 100 lines are in ${path}; read it only if the brief leaves something unclear.`);
+    } catch {}
+    return out.join("\n");
   }
 
   /** `fresh`: when resuming, what to start over with if the job's session never got saved. */
@@ -936,7 +939,9 @@ export class Team {
       resume,
       title: jobTitle(ch, job.agentId, job.title),
       allowedTools: [...ch.allowedTools, ...job.allowed],
+      permissionMode: CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
       systemPrompt: jobPrompt(ch, job.agentId),
+      ...(job.size === "small" && SMALL_JOB),
       onActivity: (s) => {
         job.activity = s;
         this.emitJob(ch, job);
@@ -957,11 +962,12 @@ export class Team {
     this.jobRuns.set(key, run);
 
     // While it runs, the job reports in every few minutes, under its teammate's name.
-    const ticker = setInterval(() => this.postJobStatus(ch, job), STATUS_EVERY_MS);
+    const ticker = setInterval(() => void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e)), STATUS_EVERY_MS);
 
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
       .then((r) => {
+        recordResult("job", r, { agentId: job.agentId, channelId: ch.id, jobId: job.id, ms: Date.now() - job.startedAt });
         clearInterval(ticker);
         if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
@@ -974,6 +980,7 @@ export class Team {
           return this.runJob(ch, job, fresh, false);
         }
         job.cost += r.cost ?? 0;
+        job.baseline ??= r.firstInput;
         job.activity = undefined;
         job.endedAt = Date.now();
         job.report = r.leftRunning
@@ -994,7 +1001,7 @@ export class Team {
           });
         }
         if (job.status === "done" || job.status === "failed") {
-          this.queueEvent(ch, job.agentId, `Your job ${job.id} "${job.title}" ${job.status === "done" ? "finished" : "failed"}. Its report:\n${clip(r.text, 8000)}`);
+          this.queueEvent(ch, job.agentId, `Your job ${job.id} "${job.title}" ${job.status === "done" ? "finished" : "failed"}. Its report:\n${reportInChat(r.text, job.id)}`);
           this.wake(ch, job.agentId);
         }
       });
@@ -1043,39 +1050,8 @@ export class Team {
         .filter((m) => m.kind === "status" && m.author === job.agentId && m.meta?.jobId === job.id && m.ts >= job.startedAt)
         .map((m) => ({ ts: m.ts, text: m.text.split("\n").slice(1).join("\n").trim(), ...readEta(m.text) }));
       const warning = etaWarning(earlier, job.startedAt, now);
-      const system = [
-        `You write a short status update for ${USER_NAME} about a job that ${t.name} (${t.role}) is running for them.`,
-        `Write as ${t.name}, in the first person, in the language of the brief.`,
-        "2 to 4 short markdown lines, no heading, no preamble, no sign-off.",
-        "The first line starts with the ETA to finish, as `ETA ~N min:` (minutes, even past an hour), then what's happening right now, in plain words (not tool names).",
-        "Estimate it from the brief (what done looks like), the steps done so far and what's left; a wait on a build, a deploy or someone's answer counts.",
-        "Then, if worth saying: what's done so far, and what we're waiting for (a build, a deploy, a test run, a query, someone's answer).",
-        "If the input has a WARNING line, don't give a cheerful new ETA: lead with the warning it gives, then `: <what it's doing or waiting on, and the last real progress, with its time>`.",
-        "After a warning, give a new ETA only if the log shows a concrete reason for the delay and a clear way to finish, written as `ETA ~N min because <reason>:`",
-        "(keep the words `ETA` and `because` as they are, e.g. `ETA ~15 min because the backend restarted, rerunning the specs:`). With no concrete reason, give no new ETA: the warning stays.",
-        "If the job is stuck, failing or retrying the same thing, say so plainly.",
-        "Only state what the log shows. Don't invent results.",
-      ].join("\n");
-      const prompt = [
-        `Job ${job.id}: ${job.title}`,
-        `Now: ${time(now)}. Started ${time(job.startedAt)}, running for ${minutes} min, in ${ch.cwd}.`,
-        "",
-        "Brief:",
-        job.brief.length > 2000 ? job.brief.slice(0, 2000) + "…" : job.brief,
-        "",
-        "Your earlier updates on this job, oldest first:",
-        ...(earlier.length
-          ? earlier.slice(-STATUS_HISTORY).map((u) =>
-              `- ${time(u.ts)} (${Math.round((now - u.ts) / 60_000)} min ago${u.eta === undefined ? "" : `, ETA ~${u.eta} min`}): ${u.text.replace(/\s+/g, " ")}`)
-          : ["(none yet)"]),
-        ...(warning ? ["", `WARNING: ${warning.why} Lead with "${warning.lead}: …".`] : []),
-        "",
-        "Recent steps, oldest first:",
-        ...(this.jobLogs.get(job) ?? ["(nothing yet)"]).slice(-30).map((x) => `- ${x}`),
-        "",
-        `Right now: ${job.activity ?? "thinking"}`,
-      ].join("\n");
-      let summary = await quickAnswer(system, prompt, ch.cwd);
+      const { system, prompt } = statusPrompt({ ch, job, t, now, minutes, earlier, warning, steps: this.jobLogs.get(job) });
+      let summary = await quickAnswer(system, prompt, ch.cwd, { agentId: job.agentId, channelId: ch.id, jobId: job.id });
       if (job.status !== "running") return; // it finished meanwhile; its report says the rest
       if (!summary) {
         // No summary (the call failed): fall back to the job's own latest words and current step.
@@ -1097,60 +1073,6 @@ export class Team {
   findJob(ch: Channel, jobId: string) {
     return ch.jobs.find((j) => j.id === jobId);
   }
-}
-
-/**
- * The ETA a status update gave ("ETA ~15 min", "ETA ~1.5 h"), in minutes, and whether it gave a reason for it
- * ("ETA ~15 min because the build took longer"). Not "Over the ETA by…" nor "the first ETA (20 min)".
- */
-function readEta(text: string): { eta?: number; reason?: boolean } {
-  const m = text.match(/\bETA\s*[:~≈]?\s*~?(\d+(?:\.\d+)?)\s*(h|hr|hours?|m|mins?|minutes?)\b(.*)/i);
-  if (!m) return {};
-  return { eta: Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)), reason: /^\s*[,(–—-]?\s*because\s+\S/i.test(m[3]) };
-}
-
-/** Minutes past an update's ETA at `at`, when that counts as overrun: 10 min, or half the ETA when that's more (ETA 20 → 30). */
-function overrun(u: { ts: number; eta: number }, at: number) {
-  const by = Math.round((at - u.ts) / 60_000 - u.eta);
-  return by >= Math.max(10, u.eta / 2) ? by : undefined;
-}
-
-/**
- * Whether a job's next status update leads with a warning. It's measured against the latest ETA; once that's overrun,
- * a later ETA replaces it only when it gives a reason ("because …"). And past twice the job's first ETA, it warns whatever.
- */
-function etaWarning(updates: { ts: number; eta?: number; reason?: boolean }[], startedAt: number, now: number) {
-  let ref: { ts: number; eta: number } | undefined;
-  for (const u of updates) {
-    if (u.eta === undefined) continue;
-    if (!ref || overrun(ref, u.ts) === undefined || u.reason) ref = { ts: u.ts, eta: u.eta };
-  }
-  const by = ref && overrun(ref, now);
-  if (ref && by !== undefined)
-    return { lead: `Over the ETA by ${by} min, may be stuck`, why: `the ${time(ref.ts)} update gave ETA ~${ref.eta} min; ${Math.round((now - ref.ts) / 60_000)} min have passed, ${by} min over.` };
-  const first = updates.find((u) => u.eta !== undefined)?.eta;
-  const elapsed = Math.round((now - startedAt) / 60_000);
-  if (first && elapsed >= 2 * first)
-    return { lead: `Over 2× the first ETA (${first} min), may be stuck`, why: `the first update gave ETA ~${first} min, and the job has run ${elapsed} min.` };
-  return undefined;
-}
-
-/** What a reply quotes from a message: its text, what the card is, or the files it carries. */
-function replyText(m: Message): string {
-  if (m.kind === "job") return m.text;
-  if (m.kind === "permission") return `asks to use ${m.meta?.permission?.tool}`;
-  if (m.kind === "tools") return `asks for ${m.meta?.toolRequest?.tools.map((t) => t.name).join(", ")}`;
-  return m.text || (m.meta?.files?.length ? `📎 ${m.meta.files.map((f) => f.name).join(", ")}` : "");
-}
-
-/** "ABC-123", "123" (→ ABC-123 when the task prefix is ABC), "1amkz0hxp0q" (an internal id) or a ClickUp task link. */
-export function parseTask(text: string): { id: string; url: string } | undefined {
-  const byCustomId = (id: string) => ({ id, url: `https://app.clickup.com/t/${CLICKUP_WORKSPACE ? CLICKUP_WORKSPACE + "/" : ""}${id}` });
-  const link = text.match(/^https:\/\/app\.clickup\.com\/t\/(?:\d+\/)?([A-Za-z0-9-]+)\/?(?:[?#].*)?$/);
-  if (link) return { id: /^[A-Za-z]+-\d+$/.test(link[1]) ? link[1].toUpperCase() : link[1], url: text };
-  if (/^[A-Za-z]+-\d+$/.test(text)) return byCustomId(text.toUpperCase());
-  if (/^\d+$/.test(text) && CLICKUP_TASK_PREFIX) return byCustomId(`${CLICKUP_TASK_PREFIX}-${text}`);
-  if (/^[a-z0-9]{7,12}$/.test(text)) return { id: text, url: `https://app.clickup.com/t/${text}` };
 }
 
 export const allChannels = () => [...channels.values()].sort((a, b) => a.createdAt - b.createdAt);
