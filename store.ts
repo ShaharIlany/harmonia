@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from "node:path";
 import { DATA } from "./paths";
 import type { Attachment } from "./attachments";
+import type { AskQuestion } from "./ask-split";
 
 export type Message = {
   id: string;
@@ -20,8 +21,9 @@ export type Message = {
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
     // A teammate's message that @mentions you: it waits on you while open (the "Waiting on you" panel). Closed by
-    // your reply or reaction, your plain answer to the teammate that asked last, or Done in the panel.
-    ask?: { open: boolean; closedAt?: number };
+    // your reply or reaction, your plain answer to the teammate that asked last, or Done in the panel. questions: the
+    // separate questions Mozart found in it (ask-split.ts), once asked; [] when it asks one thing.
+    ask?: { open: boolean; closedAt?: number; questions?: AskQuestion[] };
     toolRequest?: {
       agentId: string;
       tools: { name: string; grants: string[] }[]; // grants: the names that go in the agent's allowlist

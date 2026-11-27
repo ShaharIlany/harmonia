@@ -2,6 +2,7 @@
 // folders before these modules load.
 import { describe, expect, test } from "bun:test";
 import { fallback, parseDecision } from "../mozart";
+import { markedPick, mightAskSeveral, parseSplit } from "../ask-split";
 import { addressedAtStart, handoffs, mentions } from "../roster";
 import { bubbles, etaWarning, parseTask, readEta } from "../team";
 import { resolveTools, suggestTools } from "../tool-catalog";
@@ -35,6 +36,68 @@ describe("parseDecision", () => {
   });
   test("clips a long reason", () => {
     expect(parseDecision(`{"answer": [], "why": "${"x".repeat(200)}"}`)!.why.length).toBeLessThanOrEqual(81);
+  });
+});
+
+describe("parseSplit", () => {
+  test("reads the questions, keeps an empty pick, drops repeats and a second answer next to a pick", () => {
+    const raw = `Here: [{"question":"CSS or React?","recommended":"CSS","alternative":"React","other":"Both"},
+      {"question":"Graphite or grey?","recommended":"","alternative":"Graphite","other":"graphite"}]`;
+    expect(parseSplit(raw)).toEqual([
+      { question: "CSS or React?", recommended: "CSS", alternative: "React" },
+      { question: "Graphite or grey?", recommended: "", alternative: "Graphite" },
+    ]);
+  });
+  test("one question is no split; nonsense is undefined", () => {
+    expect(parseSplit(`[{"question":"Push it?","recommended":"","alternative":"Yes"}]`)).toEqual([]);
+    expect(parseSplit("no idea")).toBeUndefined();
+    expect(parseSplit(`[{"recommended":"x"},{"question":"y"}]`)).toBeUndefined();
+  });
+  test("more than 8 questions is no split", () => {
+    const nine = JSON.stringify(Array.from({ length: 9 }, (_, i) => ({ question: `Q${i}?`, recommended: "", alternative: "Yes" })));
+    expect(parseSplit(nine)).toEqual([]);
+  });
+  test("a pick the teammate didn't mark becomes a plain answer", () => {
+    const leo = "@Shahar four calls:\n1. CSS restyle (my pick) or the full React/shadcn rewrite?\n2. Graphite like the mockup, or a quieter grey?";
+    const raw = `[{"question":"CSS or React?","recommended":"CSS restyle","alternative":"Full React/shadcn rewrite"},
+      {"question":"Graphite or grey?","recommended":"Quieter grey","alternative":"Graphite like the mockup"}]`;
+    expect(parseSplit(raw, leo)).toEqual([
+      { question: "CSS or React?", recommended: "CSS restyle", alternative: "Full React/shadcn rewrite" },
+      { question: "Graphite or grey?", recommended: "", alternative: "Quieter grey", other: "Graphite like the mockup" },
+    ]);
+  });
+  test("markedPick: the pick's words near a pick mark, in the message or the lines before", () => {
+    expect(markedPick("Neutral grey", "[23:30] Leo: My pick is shadcn's neutral grey look.\n@Shahar which one?")).toBe(true);
+    expect(markedPick("Option B", "I'd go with option B, it's simpler.")).toBe(true);
+    expect(markedPick("Option B", "Option A or option B? Up to you.")).toBe(false);
+    expect(markedPick("", "my pick")).toBe(false);
+    expect(markedPick("Full React/shadcn rewrite", "1. CSS restyle (my pick) or the full React/shadcn rewrite?")).toBe(false);
+  });
+  test.each([
+    ["Option A", "My pick is option B, a simpler path"],
+    ["B", "I'd pick A, but B is fine too"],
+    ["No", "My pick is to wait, no rush"],
+    ["Apple setup", "Should we follow the recommended Apple setup or our own?"],
+  ])("markedPick refuses %p in %p", (answer, source) => {
+    expect(markedPick(answer, source)).toBe(false);
+  });
+  test.each([
+    ["Apple setup", "Should we follow the Apple setup (recommended) or our own?"],
+    ["Apple setup", "1. Setup?\nRecommended: Apple setup\n2. Other?"],
+    ["A", "A (recommended) or B?"],
+    ["Option A", "My pick is option A, a simpler path"],
+    ["CSS", "1. CSS (recommended) or React?"],
+    ["Option B", "I'd recommend option B, it's simpler."],
+    ["A", "My pick: A. B is faster though."],
+    ["כן", "ההמלצה שלי: כן"],
+    ["עיצוב חדש", "ההמלצה שלי היא העיצוב החדש"],
+    ["עיצוב חדש", "אני הולכת על העיצוב החדש"],
+  ])("markedPick counts %p in %p", (answer, source) => {
+    expect(markedPick(answer, source)).toBe(true);
+  });
+  test("only a message with two question marks is worth a call", () => {
+    expect(mightAskSeveral("Push it?")).toBe(false);
+    expect(mightAskSeveral("1. A or B?\n2. C or D?")).toBe(true);
   });
 });
 

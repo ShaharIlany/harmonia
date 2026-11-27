@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CLICKUP_TASK_PREFIX, DATA, DEFAULT_CWD, TEAM_AGENTS, jobToolsCommand } from "./paths";
+import { CLICKUP_TASK_PREFIX, DATA, DEFAULT_CWD, MOZART_DIR, TEAM_AGENTS, jobToolsCommand } from "./paths";
 import { setting } from "./env";
 import { dateText, dayLine, nowText, withDays } from "./dates";
 import { attachmentPath, type Attachment } from "./attachments";
@@ -9,6 +9,7 @@ import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
 import { decide } from "./mozart";
+import { mightAskSeveral, parseSplit, splitPrompt, splitSystem, type AskQuestion } from "./ask-split";
 import { recordResult } from "./usage";
 import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
@@ -140,6 +141,7 @@ export class Team {
   private jobRuns = new Map<string, Run>(); // `${channelId}:${jobId}`
   private stopping = new Set<string>();
   private causes = new Map<string, string>(); // `${channelId}:${agentId}` → the message that woke it, for answers.
+  private splitting = new Set<string>(); // asks Mozart is splitting, or failed to split since the app started
   private closing = false; // an update is restarting the app: runs that end now leave no trace, and nobody is woken
 
   constructor(
@@ -192,10 +194,36 @@ export class Team {
     const msg = messages.get(ch.id)?.find((m) => m.id === messageId);
     if (!msg?.meta?.ask) return false;
     if (msg.meta.ask.open === open) return true;
-    msg.meta.ask = open ? { open } : { open, closedAt: Date.now() };
+    const { questions } = msg.meta.ask;
+    msg.meta.ask = open ? { open, questions } : { open, closedAt: Date.now(), questions };
     saveMessages(ch.id);
     this.emit({ type: "update", channelId: ch.id, message: msg });
     return true;
+  }
+
+  /**
+   * Has Mozart split an open ask into its questions, once (the panel asks for it when it shows the message). The result
+   * is kept on the message; a failed call is tried again only after a restart, and the panel shows the single card.
+   */
+  async splitAsk(ch: Channel, messageId: string) {
+    const all = messages.get(ch.id) ?? [];
+    const i = all.findIndex((m) => m.id === messageId);
+    const msg = all[i];
+    const ask = msg?.meta?.ask;
+    if (!ask?.open || ask.questions || this.splitting.has(messageId)) return;
+    this.splitting.add(messageId);
+    let questions: AskQuestion[] | undefined = [];
+    if (mightAskSeveral(msg.text) && !setting("STUB")) {
+      const before = all.slice(Math.max(0, i - 8), i).filter((m) => m.kind !== "status" && !m.meta?.interim).map((m) => line(m, ch.id));
+      const answer = await quickAnswer(splitSystem(), splitPrompt(before, msg.text), MOZART_DIR, { agentId: "mozart", channelId: ch.id }, "mozart");
+      questions = parseSplit(answer, [...before, msg.text].join("\n"));
+      if (!questions) return; // stays in `splitting`: no retry until a restart
+    }
+    this.splitting.delete(messageId);
+    if (!msg.meta?.ask) return;
+    msg.meta.ask.questions = questions;
+    saveMessages(ch.id);
+    this.emit({ type: "update", channelId: ch.id, message: msg });
   }
 
   /** Your plain answer (no reply picked) went to the teammate that asked last: its latest open question is answered. */

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
-import { recordResult, type RunRecord } from "./usage";
+import { recordResult, type RunKind, type RunRecord } from "./usage";
 import { stopProcessTree } from "./platform";
 
 // Stopping a run and what it started is platform work, so it lives in platform.ts.
@@ -117,8 +117,8 @@ function resultUsage(ev: any, who: Pick<RunRecord, "agentId" | "channelId" | "jo
   return [{ cost: ev.total_cost_usd, inputTotal, cacheRead: u.cache_read_input_tokens ?? 0 }, { ...who, ms: ev.duration_ms }];
 }
 
-/** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
-export async function quickAnswer(system: string, prompt: string, cwd: string, who: Pick<RunRecord, "agentId" | "channelId" | "jobId"> = {}): Promise<string> {
+/** A one-shot Haiku answer with no tools and no saved session (status summaries, splitting an ask). Empty on failure. */
+export async function quickAnswer(system: string, prompt: string, cwd: string, who: Pick<RunRecord, "agentId" | "channelId" | "jobId"> = {}, kind: RunKind = "status"): Promise<string> {
   if (setting("STUB")) return "(stub) ETA ~5 min: I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
@@ -133,7 +133,7 @@ export async function quickAnswer(system: string, prompt: string, cwd: string, w
     try {
       const ev = JSON.parse(l);
       if (ev.type === "rate_limit_event") readUsage(ev.rate_limit_info);
-      if (ev.type === "result") recordResult("status", ...resultUsage(ev, who));
+      if (ev.type === "result") recordResult(kind, ...resultUsage(ev, who));
       if (ev.type === "result" && !ev.is_error) result = String(ev.result ?? "").trim();
     } catch {}
   }
