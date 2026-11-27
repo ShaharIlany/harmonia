@@ -1,6 +1,7 @@
 {
   "name": "harmonia",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "start": "bun server.ts",
     "test": "bun test",
