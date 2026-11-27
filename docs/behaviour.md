@@ -26,6 +26,13 @@ Every teammate has two kinds of Claude Code session:
   keeps that when continued. Each job also records `baseline`: the input tokens
   of its first API call, i.e. what it carries before it has done anything.
 
+**Waiting on you.** The button next to Sessions lists what the open channel needs
+from you: teammates' messages that @mention you, and the permission and tool cards
+you haven't decided. Answer from the list (it goes out as a reply, so it reaches
+that teammate), decide the card, or press Done. Replying or reacting in the chat
+or in Slack clears a message too, as does a plain answer to the teammate that
+asked last. Recently cleared ones can be reopened.
+
 **Prompt caching.** All chat turns run in one folder. The chat system prompt
 holds nothing per channel or per turn, and each turn only appends the channel's
 new lines, so the cached prefix stays put. Runs set

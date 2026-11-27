@@ -19,6 +19,9 @@ export type Message = {
     voice?: { language: string }; // a voice note from Slack: its text is what was said, in this language (voice.ts)
     interim?: boolean; // a teammate's "checking…" line before it used a tool; no notification
     reactions?: { by: string; emoji: string }[]; // a teammate's emoji-only reply lands here, on the message it answered
+    // A teammate's message that @mentions you: it waits on you while open (the "Waiting on you" panel). Closed by
+    // your reply or reaction, your plain answer to the teammate that asked last, or Done in the panel.
+    ask?: { open: boolean; closedAt?: number };
     toolRequest?: {
       agentId: string;
       tools: { name: string; grants: string[] }[]; // grants: the names that go in the agent's allowlist

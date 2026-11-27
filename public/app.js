@@ -304,6 +304,32 @@
   // ---------- Messages ----------
   const AUTH_ERROR = /authenticat|oauth|not logged in|log ?in|sign ?in|401/i;
 
+  /** A permission or tool-request card, with its buttons while it waits on you. */
+  function cardHtml(m, name) {
+    if (m.kind === "permission") {
+      const p = m.meta.permission;
+      const decided = { once: "✅ Allowed once", always: `✅ Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "🚫 Denied" }[p.status];
+      return `<div class="perm">
+        <div class="perm-title">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} wants to use ${esc(p.tool)}</div>
+        <code>${esc(p.summary)}</code>
+        ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
+          <button class="btn primary" data-perm="once" data-mid="${m.id}">Allow once</button>
+          <button class="btn" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${currentChannel().dm ? "DM" : "channel"}">Always in this ${currentChannel().dm ? "DM" : "channel"}</button>
+          <button class="btn" data-perm="denied" data-mid="${m.id}">Deny</button></div>`}
+      </div>`;
+    }
+    const r = m.meta.toolRequest;
+    const decided = { approved: `✅ Approved: ${esc(name)} has ${r.tools.length > 1 ? "them" : "it"} from now on`, denied: "🚫 Denied" }[r.status];
+    return `<div class="perm">
+      <div class="perm-title">${esc(name)} asks for ${r.tools.length > 1 ? "new tools" : "a new tool"}</div>
+      <div class="chips">${r.tools.map((x) => `<span class="chip">${esc(x.name)}</span>`).join("")}</div>
+      <div class="perm-reason" dir="${textDir(r.reason)}">${esc(r.reason)}</div>
+      ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
+        <button class="btn primary" data-tools="approved" data-mid="${m.id}" title="Adds ${r.tools.length > 1 ? "them" : "it"} to ${esc(name)}'s tools, in the chat and in jobs">Approve</button>
+        <button class="btn" data-tools="denied" data-mid="${m.id}">Deny</button></div>`}
+    </div>`;
+  }
+
   function msgHtml(m, prev) {
     if (m.author === "system") return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}</span></div>`;
     const t = byId(m.author);
@@ -319,28 +345,8 @@
     let body;
     if (m.kind === "job") {
       body = jobCard(channelOf(m), m.meta.jobId);
-    } else if (m.kind === "permission") {
-      const p = m.meta.permission;
-      const decided = { once: "✅ Allowed once", always: `✅ Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "🚫 Denied" }[p.status];
-      body = `<div class="perm">
-        <div class="perm-title">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} wants to use ${esc(p.tool)}</div>
-        <code>${esc(p.summary)}</code>
-        ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
-          <button class="btn primary" data-perm="once" data-mid="${m.id}">Allow once</button>
-          <button class="btn" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${currentChannel().dm ? "DM" : "channel"}">Always in this ${currentChannel().dm ? "DM" : "channel"}</button>
-          <button class="btn" data-perm="denied" data-mid="${m.id}">Deny</button></div>`}
-      </div>`;
-    } else if (m.kind === "tools") {
-      const r = m.meta.toolRequest;
-      const decided = { approved: `✅ Approved: ${esc(name)} has ${r.tools.length > 1 ? "them" : "it"} from now on`, denied: "🚫 Denied" }[r.status];
-      body = `<div class="perm">
-        <div class="perm-title">${esc(name)} asks for ${r.tools.length > 1 ? "new tools" : "a new tool"}</div>
-        <div class="chips">${r.tools.map((x) => `<span class="chip">${esc(x.name)}</span>`).join("")}</div>
-        <div class="perm-reason" dir="${textDir(r.reason)}">${esc(r.reason)}</div>
-        ${decided ? `<div class="perm-status">${decided}</div>` : `<div class="perm-btns">
-          <button class="btn primary" data-tools="approved" data-mid="${m.id}" title="Adds ${r.tools.length > 1 ? "them" : "it"} to ${esc(name)}'s tools, in the chat and in jobs">Approve</button>
-          <button class="btn" data-tools="denied" data-mid="${m.id}">Deny</button></div>`}
-      </div>`;
+    } else if (m.kind === "permission" || m.kind === "tools") {
+      body = cardHtml(m, name);
     } else {
       body = `<div class="text" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
       if (m.kind === "status") body = `<div class="text status-update" dir="${textDir(m.text)}">${window.renderMarkdown(m.text, { people: S.people })}</div>`;
@@ -840,6 +846,20 @@
     openMenu(found[0], atButton(document.activeElement), document.activeElement);
   });
 
+  /** A button on a permission or tool-request card. True when the click was one. */
+  function cardClick(e) {
+    const b = e.target.closest("[data-perm], [data-tools]");
+    if (!b) return false;
+    const buttons = b.parentElement.querySelectorAll("button");
+    buttons.forEach((x) => (x.disabled = true));
+    const { mid, perm, tools } = b.dataset;
+    api(`/api/channels/${S.current}/${perm ? "permission" : "tools"}`, { messageId: mid, decision: perm || tools }).catch((err) => {
+      buttons.forEach((x) => (x.disabled = false));
+      toast(err.message);
+    });
+    return true;
+  }
+
   $("messages").addEventListener("click", async (e) => {
     const more = e.target.closest("[data-msg-menu]");
     if (more) {
@@ -866,23 +886,12 @@
     if (rp) return setReply((S.msgs[S.current] || []).find((x) => x.id === rp.dataset.reply));
     const go = e.target.closest("[data-goto]");
     if (go) return gotoMessage(go.dataset.goto);
-    const tb = e.target.closest("[data-tools]");
-    if (tb) {
-      tb.parentElement.querySelectorAll("button").forEach((x) => (x.disabled = true));
-      return api(`/api/channels/${S.current}/tools`, { messageId: tb.dataset.mid, decision: tb.dataset.tools }).catch((err) => {
-        tb.parentElement.querySelectorAll("button").forEach((x) => (x.disabled = false));
-        toast(err.message);
-      });
-    }
     const r = e.target.closest("[data-retry]");
     if (r) {
       r.disabled = true;
       return api(`/api/channels/${S.current}/retry`, { messageId: r.dataset.retry }).catch((err) => toast(err.message));
     }
-    const b = e.target.closest("[data-perm]");
-    if (!b) return;
-    b.parentElement.querySelectorAll("button").forEach((x) => (x.disabled = true));
-    await api(`/api/channels/${S.current}/permission`, { messageId: b.dataset.mid, decision: b.dataset.perm }).catch((err) => toast(err.message));
+    cardClick(e);
   });
 
   // ---------- Typing bar ----------
@@ -1001,7 +1010,143 @@
     $("toggle-sessions").setAttribute("aria-pressed", String(open));
     if (remember) store.set("harmonia:sessions", open ? "1" : "0");
   }
-  $("toggle-sessions").addEventListener("click", () => setSessionsOpen($("app").classList.contains("sessions-closed")));
+  $("toggle-sessions").addEventListener("click", () => {
+    // From the "Waiting on you" panel, Sessions switches to the sessions panel.
+    if (!$("asks").hidden) return setAsksOpen(false), setSessionsOpen(true);
+    setSessionsOpen($("app").classList.contains("sessions-closed"));
+  });
+
+  // ---------- Waiting on you ----------
+  // What this channel needs from you, in one list: teammates' messages that @mention you and are still open (meta.ask),
+  // and permission and tool cards you haven't decided. It takes the sessions panel's place while it's open.
+  const askDrafts = {}; // message id → the answer you're typing
+  let asksDrawn = ""; // what the panel shows, so it's only redrawn when that changes
+  const isCard = (m) => m.kind === "permission" || m.kind === "tools";
+  const isWaiting = (m) =>
+    !!(m.meta && (m.meta.ask?.open || m.meta.permission?.status === "pending" || m.meta.toolRequest?.status === "pending"));
+
+  /** The bubbles the same reply sent just before this one: often what the question is about. */
+  function leadUp(list, i) {
+    const out = [];
+    for (let j = i - 1; j >= 0; j--) {
+      const m = list[j];
+      if (m.author !== list[i].author || (m.kind || "text") !== "text" || m.meta?.interim || list[j + 1].ts - m.ts > 5000) break;
+      out.unshift(m);
+    }
+    return out;
+  }
+  const mdHtml = (text) => `<div class="text" dir="${textDir(text)}">${window.renderMarkdown(text, { people: S.people })}</div>`;
+
+  function askItem(m, list, i, archived) {
+    const t = byId(m.author);
+    const name = t ? t.name : m.author;
+    const before = isCard(m) ? [] : leadUp(list, i);
+    const when = new Date(m.ts).toDateString() === new Date().toDateString() ? fmtTime(m.ts) : `${listTime(m.ts)} ${fmtTime(m.ts)}`;
+    const reply = archived ? "" : `<textarea class="ask-input" data-draft="${m.id}" rows="1" dir="auto" placeholder="Reply to ${esc(name)}…" aria-label="Reply to ${esc(name)}">${esc(askDrafts[m.id] || "")}</textarea>`;
+    return `<li class="ask" style="--c:${t ? t.color : "#888"}">
+      <div class="ask-head"><span class="s-av">${t ? t.avatar : "🤖"}</span><b>${esc(name)}</b><span class="ask-time">${esc(when)}</span>
+        <button class="ask-link" data-ask-show="${m.id}" title="Show it in the chat">Show in chat</button></div>
+      ${before.length ? `<details class="ask-before" data-key="b${m.id}"><summary>What came before it</summary>${before.map((x) => mdHtml(x.text)).join("")}</details>` : ""}
+      ${isCard(m) ? cardHtml(m, name) : `${mdHtml(m.text)}
+      ${reply}
+      <div class="ask-btns"><button class="btn" data-ask-done="${m.id}" title="Take it off the list without answering">Done</button>${archived ? "" : `<button class="btn primary" data-ask-send="${m.id}">Send</button>`}</div>`}
+    </li>`;
+  }
+
+  const growDraft = (el) => {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight + 2, 200) + "px";
+  };
+
+  function renderAsks() {
+    const ch = currentChannel();
+    const list = S.msgs[S.current];
+    if (!ch || !list) return;
+    const waiting = list.filter(isWaiting);
+    $("asks-count").textContent = waiting.length || "";
+    const panel = $("asks");
+    if (panel.hidden) return;
+    const cleared = list
+      .filter((m) => m.meta?.ask && !m.meta.ask.open && m.meta.ask.closedAt)
+      .sort((a, b) => b.meta.ask.closedAt - a.meta.ask.closedAt)
+      .slice(0, 10);
+    const archived = ch.status === "archived";
+    const key = JSON.stringify([ch.id, ch.name, archived, waiting.map((m) => m.id), cleared.map((m) => m.id), S.roster.map((t) => [t.name, t.avatar, t.color])]);
+    if (key === asksDrawn) return;
+    asksDrawn = key;
+    // A new question mustn't take the cursor out of the answer you're typing, or close what you've opened.
+    const active = document.activeElement;
+    const typing = active?.dataset?.draft && { id: active.dataset.draft, from: active.selectionStart, to: active.selectionEnd };
+    const opened = new Set([...panel.querySelectorAll("details[open]")].map((d) => d.dataset.key));
+    panel.innerHTML = `<div class="s-head"><b>Waiting on you</b><span>${esc(ch.dm ? `the DM with ${chLabel(ch)}` : `#${ch.name}`)}</span><button class="ask-x" data-ask-close aria-label="Close" title="Close">×</button></div>
+      ${waiting.length ? `<ul>${waiting.map((m) => askItem(m, list, list.indexOf(m), archived)).join("")}</ul>` : `<p class="s-empty">Nothing is waiting on you here.</p>`}
+      ${cleared.length ? `<details class="ask-cleared" data-key="cleared"><summary>Recently cleared</summary><ul>${cleared.map((m) => `<li><button class="ask-link grow" data-ask-show="${m.id}" title="Show it in the chat"><b>${esc(authorName(m.author))}</b> ${esc(snippet(m.text))}</button><button class="ask-link" data-ask-reopen="${m.id}">Reopen</button></li>`).join("")}</ul></details>` : ""}
+      <p class="s-hint">Messages that @mention you, and requests for your OK. Replying or reacting to one clears it.</p>`;
+    panel.querySelectorAll("details").forEach((d) => (d.open = opened.has(d.dataset.key)));
+    panel.querySelectorAll(".ask-input").forEach(growDraft);
+    clampLong(panel);
+    const back = typing && panel.querySelector(`[data-draft="${typing.id}"]`);
+    if (back) {
+      back.focus();
+      back.setSelectionRange(typing.from, typing.to);
+    }
+  }
+
+  function setAsksOpen(open, remember = true) {
+    $("asks").hidden = !open;
+    $("app").classList.toggle("asks-open", open);
+    $("toggle-asks").setAttribute("aria-pressed", String(open));
+    $("toggle-sessions").setAttribute("aria-pressed", String(!open && !$("app").classList.contains("sessions-closed")));
+    if (remember) store.set("harmonia:asks", open ? "1" : "0");
+    asksDrawn = "";
+    renderAsks();
+  }
+  $("toggle-asks").addEventListener("click", () => setAsksOpen($("asks").hidden));
+
+  async function sendAnswer(id) {
+    const chId = S.current;
+    const field = $("asks").querySelector(`[data-draft="${id}"]`);
+    const btn = $("asks").querySelector(`[data-ask-send="${id}"]`);
+    const text = (askDrafts[id] || "").trim();
+    if (!text) return field?.focus();
+    if (btn?.disabled) return;
+    if (btn) btn.disabled = true;
+    try {
+      await api(`/api/channels/${chId}/messages`, { text, replyTo: id });
+      delete askDrafts[id];
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      toast(err.message);
+    }
+  }
+  $("asks").addEventListener("input", (e) => {
+    const id = e.target.dataset.draft;
+    if (!id) return;
+    askDrafts[id] = e.target.value;
+    growDraft(e.target);
+  });
+  $("asks").addEventListener("keydown", (e) => {
+    const id = e.target.dataset.draft;
+    if (id && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendAnswer(id);
+    }
+  });
+  $("asks").addEventListener("click", (e) => {
+    if (cardClick(e)) return;
+    const b = e.target.closest("button");
+    if (!b) return;
+    const d = b.dataset;
+    if (d.askClose !== undefined) return setAsksOpen(false);
+    if (d.askSend) return sendAnswer(d.askSend);
+    if (d.askShow) {
+      // On a narrow screen the panel lies over the chat.
+      if (matchMedia("(max-width: 1100px)").matches) setAsksOpen(false);
+      return gotoMessage(d.askShow);
+    }
+    const id = d.askDone || d.askReopen;
+    if (id) api(`/api/channels/${S.current}/ask`, { messageId: id, open: !!d.askReopen }).catch((err) => toast(err.message));
+  });
 
   // ---------- Views ----------
   const currentChannel = () => S.channels.find((c) => c.id === S.current);
@@ -1037,6 +1182,7 @@
     renderMessages();
     renderTyping();
     renderSessions();
+    renderAsks();
     updateTitle();
     autosize();
     $("input").focus();
@@ -1114,7 +1260,7 @@
       const i = S.channels.findIndex((x) => x.id === c.id);
       S.channels[i] = { ...updated, jobs: c.jobs };
       renderSidebar();
-      if (c.id === S.current) (renderStatus(), renderMessages());
+      if (c.id === S.current) (renderStatus(), renderMessages(), renderAsks());
       toast(status ? `#${c.name}: ${statusLabel(status)}.` : `#${c.name} has no status now.`);
     } catch (err) {
       toast(err.message);
@@ -1501,6 +1647,7 @@
       if (here) {
         appendMessage(m);
         renderSessions();
+        renderAsks();
       }
       // Unread unless you're looking at it: in another channel, or Harmonia isn't the app in front.
       if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !window.Notifications.lookingAt(e.channelId)) {
@@ -1518,6 +1665,7 @@
       if (e.channelId === S.current) {
         const old = document.querySelector(`.msg[data-id="${e.message.id}"]`);
         if (old) old.outerHTML = msgHtml(e.message, list[i - 1]);
+        renderAsks();
       }
     } else if (e.type === "activity") {
       const a = (S.activity[e.channelId] ||= {});
@@ -1531,7 +1679,7 @@
       if (i >= 0) S.channels[i] = e.channel;
       else S.channels.push(e.channel);
       renderSidebar();
-      if (e.channel.id === S.current) (renderStatus(), renderTask(), renderTicks());
+      if (e.channel.id === S.current) (renderStatus(), renderTask(), renderTicks(), renderAsks());
     } else if (e.type === "job") {
       const ch = S.channels.find((c) => c.id === e.channelId);
       if (ch) {
@@ -1567,6 +1715,7 @@
         renderMessages();
         renderTyping();
         renderSessions();
+        renderAsks();
       }
     }
   }
@@ -1620,6 +1769,7 @@
     // Your last choice wins; with none, open it when there's room for it beside the chat.
     const saved_ = store.get("harmonia:sessions");
     setSessionsOpen(saved_ ? saved_ === "1" : innerWidth > 1100, false);
+    setAsksOpen(store.get("harmonia:asks") === "1", false);
     const saved = store.get("harmonia:channel");
     const live = S.channels.filter((c) => c.status !== "archived");
     await openChannel(S.channels.some((c) => c.id === saved) ? saved : (live[0] || S.channels[0]).id);

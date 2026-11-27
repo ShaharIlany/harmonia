@@ -62,6 +62,9 @@
           <div class="ch-folder" id="ch-folder"></div>
         </div>
         <div class="usage-mini" id="usage-mini"></div>
+        <button class="hdr-btn" id="toggle-asks" aria-pressed="false" title="Everything in this channel that's waiting on you">
+          <span aria-hidden="true">☑</span> <span class="hdr-label">Waiting on you</span> <span class="hdr-count asks-count" id="asks-count"></span>
+        </button>
         <button class="hdr-btn" id="toggle-sessions" aria-pressed="true" title="Show or hide the teammates' sessions">
           <span aria-hidden="true">▤</span> <span class="hdr-label">Sessions</span> <span class="hdr-count" id="sessions-count"></span>
         </button>
@@ -93,6 +96,7 @@
           </form>
         </div>
         <aside class="sessions" id="sessions" aria-label="The teammates' sessions"></aside>
+        <aside class="asks" id="asks" aria-label="Waiting on you" hidden></aside>
       </div>
     </main>
 
