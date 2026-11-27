@@ -1019,7 +1019,8 @@
   // ---------- Waiting on you ----------
   // What this channel needs from you, in one list: teammates' messages that @mention you and are still open (meta.ask),
   // and permission and tool cards you haven't decided. It takes the sessions panel's place while it's open.
-  const askDrafts = {}; // message id → the answer you're typing
+  const askDrafts = {}; // message id (or "id:n" for its nth question) → the answer you're typing
+  const askSplitAsked = new Set(); // asks this window asked Mozart to split (ask-split.ts)
   let asksDrawn = ""; // what the panel shows, so it's only redrawn when that changes
   const isCard = (m) => m.kind === "permission" || m.kind === "tools";
   const isWaiting = (m) =>
@@ -1037,18 +1038,57 @@
   }
   const mdHtml = (text) => `<div class="text" dir="${textDir(text)}">${window.renderMarkdown(text, { people: S.people })}</div>`;
 
+  // A message that asks several things: each question with the teammate's pick, the other answers and a box. A click
+  // puts that answer in the question's box; Send sends the boxes as one "1. … 2. …" reply.
+  function askQuestions(m, name, archived) {
+    return m.meta.ask.questions
+      .map((q, n) => {
+        const key = `${m.id}:${n}`;
+        const opt = (v, rec) =>
+          v ? `<button class="btn ask-opt${(askDrafts[key] || "").trim() === v ? " on" : ""}" data-ask-pick="${key}" data-v="${esc(v)}"${rec ? ` title="${esc(name)}'s pick"` : ""}>${esc(v)}${rec ? `<span class="ask-rec">recommended</span>` : ""}</button>` : "";
+        const opts = archived ? "" : opt(q.recommended, true) + opt(q.alternative, false) + opt(q.other, false);
+        return `<div class="ask-q">
+          <div class="ask-q-text" dir="${textDir(q.question)}"><b>${n + 1}.</b> ${esc(q.question)}</div>
+          ${opts ? `<div class="ask-opts">${opts}</div>` : ""}
+          ${archived ? "" : `<textarea class="ask-input" data-draft="${key}" rows="1" dir="auto" placeholder="Or write your answer…" aria-label="Answer ${n + 1}">${esc(askDrafts[key] || "")}</textarea>`}
+        </div>`;
+      })
+      .join("");
+  }
+  // A split that arrives while you're typing in the single card (or it has your draft) waits until you leave it empty.
+  const holdsSingle = (m) => !!(askDrafts[m.id] || "").trim() || document.activeElement?.dataset?.draft === m.id;
+  const splitOf = (m) => (m.meta?.ask?.questions?.length && !holdsSingle(m) ? m.meta.ask.questions : null);
+  /** A question cut to its first words, for the reply: "CSS restyle or the full…?". No @, so quoting it wakes nobody. */
+  const shortQuestion = (q) => {
+    const plain = q.replace(/@(?=[\p{L}\d_])/gu, "").replace(/[?？؟]\s*$/, "").trim();
+    const bare = plain.replace(/\s*\([^)]*\)/g, "").trim();
+    const t = bare.length >= 8 ? bare : plain; // "(a) or (b)": keep the brackets
+    const cut = t.length > 48 ? t.slice(0, 48).replace(/\s+\S*$/, "").replace(/[\s,;:]+$/, "") + "…" : t;
+    return `${cut}?`;
+  };
+  /** The reply Send posts: your typed answer, or for a split message "1. question? → answer" per answered question. */
+  const answerText = (m) =>
+    splitOf(m)
+      ? splitOf(m)
+          .map((q, n) => [q, (askDrafts[`${m.id}:${n}`] || "").trim(), n])
+          .filter(([, a]) => a)
+          .map(([q, a, n]) => `${n + 1}. ${shortQuestion(q.question)} → ${a}`)
+          .join("\n")
+      : (askDrafts[m.id] || "").trim();
+
   function askItem(m, list, i, archived) {
     const t = byId(m.author);
     const name = t ? t.name : m.author;
     const before = isCard(m) ? [] : leadUp(list, i);
+    const split = !isCard(m) && splitOf(m);
     const when = new Date(m.ts).toDateString() === new Date().toDateString() ? fmtTime(m.ts) : `${listTime(m.ts)} ${fmtTime(m.ts)}`;
     const reply = archived ? "" : `<textarea class="ask-input" data-draft="${m.id}" rows="1" dir="auto" placeholder="Reply to ${esc(name)}…" aria-label="Reply to ${esc(name)}">${esc(askDrafts[m.id] || "")}</textarea>`;
     return `<li class="ask" style="--c:${t ? t.color : "#888"}">
       <div class="ask-head"><span class="s-av">${t ? t.avatar : "🤖"}</span><b>${esc(name)}</b><span class="ask-time">${esc(when)}</span>
         <button class="ask-link" data-ask-show="${m.id}" title="Show it in the chat">Show in chat</button></div>
       ${before.length ? `<details class="ask-before" data-key="b${m.id}"><summary>What came before it</summary>${before.map((x) => mdHtml(x.text)).join("")}</details>` : ""}
-      ${isCard(m) ? cardHtml(m, name) : `${mdHtml(m.text)}
-      ${reply}
+      ${isCard(m) ? cardHtml(m, name) : `${split ? `<details class="ask-before" data-key="m${m.id}"><summary>The whole message</summary>${mdHtml(m.text)}</details>${askQuestions(m, name, archived)}` : `${mdHtml(m.text)}
+      ${reply}`}
       <div class="ask-btns"><button class="btn" data-ask-done="${m.id}" title="Take it off the list without answering">Done</button>${archived ? "" : `<button class="btn primary" data-ask-send="${m.id}">Send</button>`}</div>`}
     </li>`;
   }
@@ -1071,7 +1111,13 @@
       .sort((a, b) => b.meta.ask.closedAt - a.meta.ask.closedAt)
       .slice(0, 10);
     const archived = ch.status === "archived";
-    const key = JSON.stringify([ch.id, ch.name, archived, waiting.map((m) => m.id), cleared.map((m) => m.id), S.roster.map((t) => [t.name, t.avatar, t.color])]);
+    // An open ask that may hold several questions: Mozart splits it once, and an "update" brings them.
+    for (const m of waiting)
+      if (!archived && m.meta?.ask && !m.meta.ask.questions && (m.text.match(/[?？؟]/g) || []).length >= 2 && !askSplitAsked.has(m.id)) {
+        askSplitAsked.add(m.id);
+        api(`/api/channels/${ch.id}/ask-split`, { messageId: m.id }).catch(() => {});
+      }
+    const key = JSON.stringify([ch.id, ch.name, archived, waiting.map((m) => [m.id, splitOf(m)?.length || 0]), cleared.map((m) => m.id), S.roster.map((t) => [t.name, t.avatar, t.color])]);
     if (key === asksDrawn) return;
     asksDrawn = key;
     // A new question mustn't take the cursor out of the answer you're typing, or close what you've opened.
@@ -1105,15 +1151,16 @@
 
   async function sendAnswer(id) {
     const chId = S.current;
-    const field = $("asks").querySelector(`[data-draft="${id}"]`);
+    const m = (S.msgs[chId] || []).find((x) => x.id === id);
+    const field = $("asks").querySelector(`[data-draft^="${id}"]`);
     const btn = $("asks").querySelector(`[data-ask-send="${id}"]`);
-    const text = (askDrafts[id] || "").trim();
+    const text = m ? answerText(m) : "";
     if (!text) return field?.focus();
     if (btn?.disabled) return;
     if (btn) btn.disabled = true;
     try {
       await api(`/api/channels/${chId}/messages`, { text, replyTo: id });
-      delete askDrafts[id];
+      for (const k of Object.keys(askDrafts)) if (k === id || k.startsWith(`${id}:`)) delete askDrafts[k];
     } catch (err) {
       if (btn) btn.disabled = false;
       toast(err.message);
@@ -1124,13 +1171,30 @@
     if (!id) return;
     askDrafts[id] = e.target.value;
     growDraft(e.target);
+    e.target.closest(".ask-q")?.querySelectorAll(".ask-opt").forEach((b) => b.classList.toggle("on", b.dataset.v === e.target.value.trim()));
   });
   $("asks").addEventListener("keydown", (e) => {
     const id = e.target.dataset.draft;
     if (id && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      sendAnswer(id);
+      // In a split message Enter goes to the next question's box; the last box, or Cmd/Ctrl+Enter, sends.
+      const [mid, n] = id.split(":");
+      const next = n !== undefined && !e.metaKey && !e.ctrlKey && $("asks").querySelector(`[data-draft="${mid}:${+n + 1}"]`);
+      if (next) return next.focus();
+      sendAnswer(mid);
     }
+  });
+  // Leaving an empty single card lets a split that came meanwhile show, but not mid-click in the panel: a redraw between
+  // mousedown and mouseup loses the click (Done, Show in chat). Focus moving within the panel waits for the next redraw;
+  // a press that doesn't focus (WebKit buttons) redraws once it's let go.
+  let asksPressed = false;
+  $("asks").addEventListener("pointerdown", () => (asksPressed = true));
+  addEventListener("pointerup", () => {
+    if (asksPressed) setTimeout(() => ((asksPressed = false), renderAsks()));
+  });
+  $("asks").addEventListener("focusout", (e) => {
+    const id = e.target.dataset?.draft;
+    if (id && !id.includes(":") && !$("asks").contains(e.relatedTarget) && !asksPressed) setTimeout(renderAsks);
   });
   $("asks").addEventListener("click", (e) => {
     if (cardClick(e)) return;
@@ -1139,6 +1203,12 @@
     const d = b.dataset;
     if (d.askClose !== undefined) return setAsksOpen(false);
     if (d.askSend) return sendAnswer(d.askSend);
+    if (d.askPick) {
+      // The same answer again takes it out of the box.
+      askDrafts[d.askPick] = (askDrafts[d.askPick] || "").trim() === d.v ? "" : d.v;
+      asksDrawn = "";
+      return renderAsks();
+    }
     if (d.askShow) {
       // On a narrow screen the panel lies over the chat.
       if (matchMedia("(max-width: 1100px)").matches) setAsksOpen(false);

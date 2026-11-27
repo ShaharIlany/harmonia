@@ -501,6 +501,11 @@ button.avatar:hover { filter: brightness(1.08); }
 .ask-before summary, .ask-cleared summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .ask-before .text { margin-top: 6px; color: var(--muted); }
 .ask-input { font: inherit; font-size: 14px; line-height: 1.4; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--text); resize: none; width: 100%; }
+.ask-q { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 14px; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-opt { padding: 3px 10px; font-size: 13px; font-weight: 500; text-align: start; }
+.ask-opt.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); }
+.ask-rec { margin-inline-start: 6px; font-size: 11px; color: var(--muted); }
 .ask-btns { display: flex; justify-content: flex-end; gap: 8px; }
 .ask-btns .btn { padding: 4px 12px; font-size: 13px; }
 .ask-link { border: 0; background: none; padding: 0; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); flex: none; }

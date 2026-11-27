@@ -451,7 +451,7 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
       }
 
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|status|task|open-task|open-folder|react|feedback|ask)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|status|task|open-task|open-folder|react|feedback|ask|ask-split)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -487,6 +487,11 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the folder." }, 500);
       }
       // Done (or Reopen) in the "Waiting on you" panel. An archived channel's list can still be cleared.
+      // The panel shows an open ask: Mozart splits it into its questions once (an "update" brings them).
+      if (m[2] === "ask-split" && post) {
+        team.splitAsk(ch, String(body.messageId)).catch(() => {});
+        return json({ ok: true });
+      }
       if (m[2] === "ask" && post) return team.setAsk(ch, String(body.messageId), body.open === true) ? json({ ok: true }) : json({ error: "That message asks nothing." }, 404);
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);
       if (m[2] === "messages" && post) {
