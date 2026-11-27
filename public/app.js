@@ -812,7 +812,9 @@
 
   function mentionInComposer(t) {
     const v = input.value;
-    if (!new RegExp(`@${t.name}\\b`, "i").test(v)) input.value = `@${t.name} ${v.replace(/^\s+/, "")}`;
+    // A message that starts with a list keeps its first bullet: the mention goes on a line of its own.
+    if (!new RegExp(`@${t.name}\\b`, "i").test(v))
+      input.value = composerLists.startsWithItem(v) ? `@${t.name}\n${v.replace(/^(?:[ \t\u2007]*\n)+/, "")}` : `@${t.name} ${v.replace(/^\s+/, "")}`;
     input.focus();
     input.selectionStart = input.selectionEnd = input.value.length;
     autosize();
@@ -1070,11 +1072,11 @@
   const answerText = (m) =>
     splitOf(m)
       ? splitOf(m)
-          .map((q, n) => [q, (askDrafts[`${m.id}:${n}`] || "").trim(), n])
+          .map((q, n) => [q, composerLists.plainLists(askDrafts[`${m.id}:${n}`] || "").trim(), n])
           .filter(([, a]) => a)
           .map(([q, a, n]) => `${n + 1}. ${shortQuestion(q.question)} → ${a}`)
           .join("\n")
-      : (askDrafts[m.id] || "").trim();
+      : composerLists.plainLists(askDrafts[m.id] || "").trim();
 
   function askItem(m, list, i, archived) {
     const t = byId(m.author);
@@ -1169,13 +1171,15 @@
   $("asks").addEventListener("input", (e) => {
     const id = e.target.dataset.draft;
     if (!id) return;
+    composerLists.onInput(e, e.target);
     askDrafts[id] = e.target.value;
     growDraft(e.target);
     e.target.closest(".ask-q")?.querySelectorAll(".ask-opt").forEach((b) => b.classList.toggle("on", b.dataset.v === e.target.value.trim()));
   });
   $("asks").addEventListener("keydown", (e) => {
     const id = e.target.dataset.draft;
-    if (id && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (id && composerLists.onKey(e, e.target)) return;
+    if (id && e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       // In a split message Enter goes to the next question's box; the last box, or Cmd/Ctrl+Enter, sends.
       const [mid, n] = id.split(":");
@@ -1484,7 +1488,8 @@
     }
   });
 
-  input.addEventListener("input", () => {
+  input.addEventListener("input", (e) => {
+    composerLists.onInput(e, input);
     autosize();
     popSel = 0;
     updatePop();
@@ -1503,7 +1508,8 @@
       if (e.key === "Escape") return (pop.hidden = true);
     }
     if (e.key === "Escape" && replyTo) return setReply(null);
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (composerLists.onKey(e, input)) return;
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       $("composer").requestSubmit();
     }
@@ -1517,7 +1523,7 @@
   $("composer").addEventListener("submit", async (e) => {
     e.preventDefault();
     const chId = S.current;
-    const text = input.value.trim();
+    const text = composerLists.plainLists(input.value).trim();
     const files = pendingOf(chId);
     if (!text && !files.length) return;
     if (files.some((a) => a.status === "failed")) return toast("A file didn't upload. Click it to try again, or take it off.");
