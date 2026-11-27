@@ -60,7 +60,8 @@ function optionText(p: Project): string {
 /**
  * A teammate's tool request (a connector it lacks) or permission card, as a Slack message: Approve / Deny (or Allow
  * once / always / Deny) buttons while it's pending, what was decided once it isn't. A job's start, with a View in
- * Claude button that opens its session in the Claude app on this Mac. Undefined for anything else.
+ * Claude button that opens its session in the Claude app on this Mac. A pause after too many handoffs, with Continue.
+ * Undefined for anything else.
  */
 export function card(m: Message, ch: Channel): { text: string; blocks: unknown[] } | undefined {
   const name = escapeSlack(nameOf(m.author));
@@ -82,6 +83,8 @@ export function card(m: Message, ch: Channel): { text: string; blocks: unknown[]
       button("Deny", "harmonia:perm:denied", value),
     ]);
   }
+  const paused = m.author === "system" ? m.meta?.paused : undefined;
+  if (paused) return decided(`_${escapeSlack(m.text)}_`, { pending: undefined, continued: ":arrow_forward: Continued", replied: ":leftwards_arrow_with_hook: You replied" }[paused.status], [button("Continue", "harmonia:continue:go", value, "primary")]);
   const job = m.kind === "job" ? ch.jobs.find((j) => j.id === m.meta?.jobId) : undefined;
   if (job) {
     const text = mrkdwn(relayText(m, ch) ?? m.text);

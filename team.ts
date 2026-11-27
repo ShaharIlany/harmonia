@@ -300,6 +300,7 @@ export class Team {
     ch.waitingOn = undefined;
     saveChannels();
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
+    this.closePauses(ch);
     if (ch.dm) {
       if (!target && waitingOn === ch.dm) this.closeLatestAsk(ch, ch.dm, msg);
       if (ch.status !== "archived" && teammate(ch.dm)) this.wake(ch, ch.dm, msg);
@@ -614,13 +615,73 @@ export class Team {
     }
   }
 
+  /**
+   * The chat is out of turns: the teammate waits for you. One pause message per stop, with every teammate it held back,
+   * so its Continue button wakes them all. A stop is the time since your last message.
+   */
+  private hold(ch: Channel, agentId: string) {
+    const all = messages.get(ch.id) ?? [];
+    const since = all.slice(all.findLastIndex((m) => m.author === "user") + 1);
+    const p = since.findLast((m) => m.meta?.paused?.status === "pending");
+    // Kept on the message, not only in `causes`: a restart in between still puts its answer in the right thread.
+    const held = { id: agentId, ...(this.causes.has(`${ch.id}:${agentId}`) && { cause: this.causes.get(`${ch.id}:${agentId}`) }), seen: ch.lastSeen[agentId] ?? -1 };
+    if (!p) {
+      this.post(ch, { author: "system", text: `Paused after ${MAX_TURNS_PER_USER_MESSAGE} turns. Reply to keep the team going.`, meta: { paused: { agents: [held], status: "pending" } } });
+      return;
+    }
+    const agents = p.meta!.paused!.agents;
+    const i = agents.findIndex((a) => (typeof a === "string" ? a : a.id) === agentId);
+    if (i >= 0) agents[i] = held;
+    else agents.push(held);
+    saveMessages(ch.id);
+  }
+
+  /** Your message closes the pauses in the channel: it's what wakes the team now, and an old Continue would uncap it. */
+  private closePauses(ch: Channel) {
+    let closed = false;
+    for (const m of messages.get(ch.id) ?? []) {
+      if (m.meta?.paused?.status !== "pending") continue;
+      m.meta.paused.status = "replied";
+      closed = true;
+      this.emit({ type: "update", channelId: ch.id, message: m });
+    }
+    if (closed) saveMessages(ch.id);
+  }
+
+  /** Continue on a pause message: as if you replied, without a message. The teammates it held back carry on. */
+  continueAfterPause(ch: Channel, messageId: string): string | undefined {
+    const all = messages.get(ch.id) ?? [];
+    const at = all.findIndex((m) => m.id === messageId);
+    const msg = all[at];
+    const p = msg?.meta?.paused;
+    if (!msg || !p) return "That pause is gone.";
+    // A pause your message closed (or one from before a message of yours, should one have slipped by) stays closed.
+    if (p.status === "replied" || all.slice(at + 1).some((m) => m.author === "user")) {
+      if (p.status === "pending") this.closePauses(ch);
+      return "You already replied.";
+    }
+    if (p.status !== "pending") return "Already continued.";
+    if (ch.status === "archived") return "This channel is archived.";
+    p.status = "continued";
+    saveMessages(ch.id);
+    this.emit({ type: "update", channelId: ch.id, message: msg });
+    this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
+    for (const held of p.agents) {
+      const a = typeof held === "string" ? { id: held } : held;
+      // Only one still held: it has read nothing more since the pause (a turn here since, after a tool approval say,
+      // already caught up). A reset session or a failed turn puts lastSeen back, which still needs the wake. One at work in another channel is woken anyway: `wake` queues it there.
+      if (!teammate(a.id) || (a.seen !== undefined && (ch.lastSeen[a.id] ?? -1) > a.seen)) continue;
+      this.wake(ch, a.id, a.cause ? all.find((m) => m.id === a.cause) : undefined);
+    }
+  }
+
   /** One turn of the teammate's chat session for this channel. False when there was nothing to do. */
   private start(ch: Channel, agentId: string): boolean {
     const key = `${ch.id}:${agentId}`;
     const left = this.turnsLeft.get(ch.id) ?? 0;
     if (left <= 0) {
       this.setActivity(ch, agentId, null);
-      this.post(ch, { author: "system", text: `Paused after ${MAX_TURNS_PER_USER_MESSAGE} turns. Reply to keep the team going.` });
+      this.hold(ch, agentId);
       return false;
     }
     const all = messages.get(ch.id) ?? [];

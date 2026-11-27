@@ -334,7 +334,12 @@
   }
 
   function msgHtml(m, prev) {
-    if (m.author === "system") return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}</span></div>`;
+    if (m.author === "system") {
+      // A pause after too many handoffs: Continue wakes the teammates it held back, like a reply would.
+      const p = m.meta && m.meta.paused;
+      const go = p ? (p.status === "pending" ? ` <button class="btn default sm" data-continue="${m.id}">Continue</button>` : ` <button class="btn" disabled>${p.status === "replied" ? "You replied" : "Continued"}</button>`) : "";
+      return `<div class="msg sys" data-id="${m.id}"><span>${esc(m.text)}${go}</span></div>`;
+    }
     const t = byId(m.author);
     const isUser = m.author === "user";
     // Someone else in a linked Slack conversation (or, before it, a Teams chat): shown, read by the teammates, but never wakes them.
@@ -926,6 +931,11 @@
     if (rp) return setReply((S.msgs[S.current] || []).find((x) => x.id === rp.dataset.reply));
     const go = e.target.closest("[data-goto]");
     if (go) return gotoMessage(go.dataset.goto);
+    const goOn = e.target.closest("[data-continue]");
+    if (goOn) {
+      goOn.disabled = true;
+      return api(`/api/channels/${S.current}/continue`, { messageId: goOn.dataset.continue }).catch((err) => ((goOn.disabled = false), toast(err.message)));
+    }
     const r = e.target.closest("[data-retry]");
     if (r) {
       r.disabled = true;
