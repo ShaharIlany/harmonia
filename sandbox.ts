@@ -21,7 +21,7 @@ const PROTECTED = [
   "Library/Mobile Documents", // iCloud Drive
   "Library/CloudStorage", // Dropbox, OneDrive, Google Drive
   "Library/Mail", "Library/Messages", "Library/Safari", "Library/Calendars", "Library/Application Support/AddressBook",
-  "Library/Group Containers/group.com.apple.notes", "Library/Group Containers/group.com.apple.reminders",
+  "Library/Group Containers", // apps' shared data (Notes, Reminders, Office, Slack, WhatsApp…)
   "Library/Containers", // other apps' data
   "Library/Photos", // the Photos library of what's shared with you (Messages)
   "Library/Application Support/com.apple.TCC",
