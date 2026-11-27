@@ -325,6 +325,11 @@ function checkRelease(): Promise<void> {
         return set({ state: "idle", latest: rel.tag_name, latestVersion: v, commits: [], checkedAt: Date.now(), detail: undefined });
       }
       if ((before === "ready" || before === "waiting") && status.latestVersion === v) return set({ checkedAt: Date.now() });
+      // A release without this platform's app (one still uploading, or made before Windows builds) isn't a failure.
+      if (!rel.assets.some((a) => a.name === APP_ASSET)) {
+        if (before === "ready" || before === "waiting") return set({ state: before, checkedAt: Date.now() });
+        return set({ state: "idle", latest: undefined, latestVersion: undefined, commits: [], checkedAt: Date.now(), detail: `${rel.tag_name} has no ${APP_ASSET}.` });
+      }
       // What's new: the release notes' bullet lines ("* Teammates text like people by @x in #12").
       const commits = (rel.body ?? "").split("\n").filter((l) => /^\s*[*-] /.test(l)).map((l) => l.replace(/^\s*[*-] /, "").replace(/ by @\S+ in \S+$/, "")).slice(0, 15);
       set({ state: "available", latest: rel.tag_name, latestVersion: v, commits: commits.length ? commits : [`${rel.tag_name}`], checkedAt: Date.now(), detail: undefined });
