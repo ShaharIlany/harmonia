@@ -590,4 +590,4 @@ app icon, colours and usage rules are in [docs/brand](docs/brand/guidelines.md).
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/), see [LICENSE](LICENSE). Free for noncommercial use; commercial use needs a separate license.

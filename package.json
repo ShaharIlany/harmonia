@@ -1,6 +1,7 @@
 {
   "name": "harmonia",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "start": "bun server.ts",
     "stub": "HARMONIA_STUB=1 PORT=4748 HARMONIA_DATA=./data-stub bun server.ts"
