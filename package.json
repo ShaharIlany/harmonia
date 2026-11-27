@@ -4,7 +4,8 @@
   "scripts": {
     "start": "bun server.ts",
     "candidate": "bun candidate.ts",
-    "stub": "HARMONIA_STUB=1 PORT=4748 HARMONIA_DATA=./data-stub bun server.ts"
+    "stub": "HARMONIA_STUB=1 PORT=4748 HARMONIA_DATA=./data-stub bun server.ts",
+    "build:windows": "bun build --compile --target=bun-windows-x64 main.ts --outfile build/windows/harmonia-server.exe"
   },
   "type": "module"
 }

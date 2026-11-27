@@ -86,23 +86,6 @@ The release builds the app with `build.sh` and publishes `Harmonia-arm64.zip`
 (about 20 MB) with its `.sha256`, and the same app as `Team-Chat-arm64.zip`:
 installs from before the rename look for that name.
 
-## Trying a change before it's merged
-
-In Claude Code, in a checkout, ask: **"let me try PR 12"** (or a branch, or
-"what I have here"). [CLAUDE.md](CLAUDE.md) tells it what to do. By hand:
-
-```bash
-bun candidate.ts pr 12
-```
-
-That runs the change as a second Harmonia, on its own port (4749 and up), from
-its own git worktree, with a copy of your data and without Slack or updates.
-Your installed app and your checkout stay as they are. The teammates are real,
-and share their agent files, memories and channel folders with your app.
-`bun candidate.ts stop pr 12` stops it, `changes` and `restore` show and undo
-what happened to the agent files and memories, and `clean` deletes it. The
-other options are at the top of [candidate.ts](candidate.ts).
-
 ## Harmonia.app
 
 From a checkout:
@@ -167,6 +150,65 @@ To run from source instead: `HARMONIA_DATA="$HOME/Library/Application Support/Ha
 or `bun run stub` to try the UI.
 
 No dependencies, no API key: everything runs on the `claude` CLI sign-in.
+
+## Windows
+
+The server also builds for Windows (x64), without the Mac app shell: run
+`harmonia-server.exe` and open http://localhost:4747 in your browser. Each
+release has it as `Harmonia-windows-x64.zip`, with the starter teammates (copy
+them to `%USERPROFILE%\.claude\agents`). To build it yourself, from any OS:
+
+```bash
+bun run build:windows   # build/windows/harmonia-server.exe
+```
+
+### The Windows app
+
+`Harmonia-Setup-x64.exe` (also on each release) installs Harmonia with its own
+window (Edge WebView2) into `%LOCALAPPDATA%\Programs\Harmonia`. Like the Mac
+app it updates itself: every 30 minutes it looks for a newer release, downloads
+`Harmonia-windows-x64.zip` in the background, checks its SHA-256, and swaps the
+files in at a quiet moment (or right away with "Restart to update"); the window
+reopens on the new build. The settings are the Mac's (`autoUpdate`,
+`updateRepo` in `settings.json`); `updateFrom: "source"` is Mac-only. To build
+the app and installer yourself: `winappuild.ps1`, then
+`ISCC winapp\installer.iss`.
+
+It needs the `claude` CLI on your PATH, signed in. Data lives in
+`%APPDATA%\Harmonia` (`HARMONIA_DATA` overrides it). What's Mac-only stays
+off: the sandbox around protected folders (`sandbox-exec`), voice-message
+transcription, the Keychain (Slack tokens go to a private file instead, as on
+Linux). The bare server doesn't update itself; the installed app (below) does. Opening files,
+folders, links and the Claude app goes through Explorer and the default
+handlers; the sign-in opens a console window on `claude auth login`.
+
+## Trying a change before it's merged
+
+In Claude Code, in a checkout, ask: **"let me try PR 12"** (or a branch, or
+"what I have here"). [CLAUDE.md](CLAUDE.md) tells it what to do.
+
+If you use Harmonia and work on it, keep the installed app as it is and run the
+change as a **candidate**: a second Harmonia with its own port, its own copy of
+your data and its own git worktree.
+
+```
+bun candidate.ts pr 12              # that pull request, at the first free port from 4749
+bun candidate.ts my-branch          # that branch
+bun candidate.ts                    # this checkout as it is now, uncommitted changes too
+bun candidate.ts pr 12 --stub       # canned teammates, no Claude runs
+bun candidate.ts pr 12 --refresh    # copy your data again first
+bun candidate.ts stop pr 12         # also: list, changes, restore, clean
+```
+
+The candidate copies your data folder once (`~/.harmonia-candidates/<name>/`,
+`HARMONIA_CANDIDATES` moves it), with updates off, and without Slack's settings
+and tokens, so it can't take your Slack messages. It doesn't rerun your jobs or
+write into your teammates' chat sessions. Your teammates' agent files and
+memories live in `~/.claude` and can't be moved: they're copied aside before
+each run, `changes` compares them, and `restore` puts them back. A channel's
+working folder is still your real folder, and a job that continues an old one
+resumes its real session, so try changes in a new channel pointed at a scratch
+folder.
 
 ## Chat sessions and jobs
 
@@ -567,6 +609,7 @@ Jobs and memories stay.
 | `candidate.ts` | Runs a pull request or branch as a second Harmonia, to try it before it's merged |
 | `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
 | `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
+| `.github/workflows/windows.yml` | Builds the Windows server and checks that it starts, for every PR and push to main |
 | `.github/workflows/tag.yml` | Tags every push to `main` as the next patch version, and starts its release |
 | `install.sh` | Installs the latest release (or builds from source) |
 | `roster.ts` | Loads and validates `team.json`, @mention parsing |

@@ -1,0 +1,2 @@
+# The starter teammates are copied as they are by the Windows installer, and the server reads them as LF.
+agents/*.md text eol=lf
