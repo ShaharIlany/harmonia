@@ -575,8 +575,11 @@
     const run = j.status === "running";
     const took = j.endedAt ? dur(j.endedAt - j.startedAt) : dur(Date.now() - j.startedAt);
     const when = run ? `Started ${fmtTime(j.startedAt)}` : j.endedAt ? `Finished ${fmtTime(j.endedAt)}` : "";
+    // The model it runs on: the teammate's pick or its default ("small" jobs from before the pick ran on Sonnet).
+    const model = j.size === "small" ? "sonnet" : j.model;
     return `<div class="card job job-${cls}" data-job="${j.id}" style="--c:${t ? t.color : "var(--muted-foreground)"}">
       <div class="job-h"><span class="badge mono">${esc(j.id)}</span><span class="t">${esc(j.title)}</span>
+        ${model ? `<span class="badge" title="The model this job runs on">${esc(model[0].toUpperCase() + model.slice(1))}</span>` : ""}
         <span class="badge tone tone-${cls}">${run ? `<span class="dot pulse"></span>` : ""}${label}</span></div>
       ${run ? `<div class="indet"></div>` : ""}
       <div class="job-b">${run

@@ -92,3 +92,20 @@ test("fixLedger turns old lines' running totals into each run's own cost, once",
   fixLedger(sessionOf);
   expect(costs().total.cost).toBeCloseTo(s.total.cost);
 });
+
+test("usageSummary groups runs by the model that answered", () => {
+  const ts = Date.now();
+  writeFileSync(
+    join(dir, "usage.jsonl"),
+    [
+      JSON.stringify({ ts, kind: "job", cost: 2, model: "claude-opus-5-5" }),
+      JSON.stringify({ ts, kind: "job", cost: 1, model: "claude-sonnet-5-5" }),
+      JSON.stringify({ ts, kind: "job", cost: 0.5 }), // from before the model was kept
+    ].join("\n") + "\n",
+  );
+  recordResult("chat", { cost: 0.03, model: "claude-sonnet-5-5" }, { agentId: "elliot" });
+  const s = usageSummary(0);
+  expect(s.byModel["claude-opus-5-5"].cost).toBeCloseTo(2);
+  expect(s.byModel["claude-sonnet-5-5"].runs).toBe(2);
+  expect(s.byModel["-"].cost).toBeCloseTo(0.5);
+});

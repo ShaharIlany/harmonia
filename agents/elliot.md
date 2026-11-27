@@ -4,7 +4,7 @@ description: >-
   Elliot, the team's code writer (Elliot Alderson, Mr. Robot). Implements features
   and fixes from a plan or a clear request, and fixes what Sherlock or Murphy find.
   Use when the user addresses Elliot, or when code needs writing or changing.
-model: opus
+model: sonnet
 effort: high
 color: green
 memory: user

@@ -13,6 +13,7 @@ export type RunRecord = {
   cost?: number; // what this run cost
   sessionId?: string;
   sessionCost?: number; // what its Claude session had cost by the end of it (see runCost)
+  model?: string; // the model that answered, like claude-sonnet-5-5
   inputTotal?: number; // input tokens: fresh + cache write + cache read
   cacheRead?: number; // the part of inputTotal served from the prompt cache
   output?: number;
@@ -113,9 +114,10 @@ const add = (t: Totals, r: any) => {
   t.cacheRead += Number(r.cacheRead) || 0;
 };
 
-/** Totals for runs since sinceMs, grouped by day (local date), kind, teammate and channel. Bad lines are skipped. */
+/** Totals for runs since sinceMs, grouped by day (local date), kind, teammate, channel and model. Bad lines are skipped. */
 export function usageSummary(sinceMs: number) {
-  const out = { total: empty(), byDay: {} as Record<string, Totals>, byKind: {} as Record<string, Totals>, byAgent: {} as Record<string, Totals>, byChannel: {} as Record<string, Totals> };
+  const group = () => ({}) as Record<string, Totals>;
+  const out = { total: empty(), byDay: group(), byKind: group(), byAgent: group(), byChannel: group(), byModel: group() };
   const day = (ts: number) => {
     const d = new Date(ts);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -123,8 +125,8 @@ export function usageSummary(sinceMs: number) {
   for (const r of readLines()) {
     if (r.ts < sinceMs) continue;
     add(out.total, r);
-    for (const [group, key] of [[out.byDay, day(r.ts)], [out.byKind, r.kind ?? "?"], [out.byAgent, r.agentId ?? "-"], [out.byChannel, r.channelId ?? "-"]] as const)
-      add((group[key] ??= empty()), r);
+    const keys = [[out.byDay, day(r.ts)], [out.byKind, r.kind ?? "?"], [out.byAgent, r.agentId ?? "-"], [out.byChannel, r.channelId ?? "-"], [out.byModel, r.model ?? "-"]] as const;
+    for (const [g, key] of keys) add((g[key] ??= empty()), r);
   }
   return out;
 }
@@ -132,7 +134,7 @@ export function usageSummary(sinceMs: number) {
 /** Records a finished run from its RunResult (the fields are the same), plus where it ran. */
 export const recordResult = (
   kind: RunKind,
-  r: { cost?: number; sessionId?: string; sessionCost?: number; inputTotal?: number; cacheRead?: number; context?: number; firstInput?: number },
+  r: { cost?: number; sessionId?: string; sessionCost?: number; model?: string; inputTotal?: number; cacheRead?: number; context?: number; firstInput?: number },
   who: Pick<RunRecord, "agentId" | "channelId" | "jobId" | "ms">,
 ) =>
   recordRun({
@@ -140,6 +142,7 @@ export const recordResult = (
     ...who,
     cost: r.cost ?? 0,
     ...(r.sessionCost !== undefined && { sessionId: r.sessionId, sessionCost: r.sessionCost }),
+    ...(r.model && { model: r.model }),
     inputTotal: r.inputTotal ?? 0,
     cacheRead: r.cacheRead ?? 0,
     context: r.context,

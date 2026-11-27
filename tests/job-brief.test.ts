@@ -49,3 +49,28 @@ test("calls from inside the server need no new fields, and read_job returns the 
   expect(text).toContain("Done when: bun test passes");
   expect(call("read_job", { job_id: "j99" })).toContain("no job j99");
 });
+
+test("a job runs on the teammate's default model unless it picks one, and a continued job keeps its model", () => {
+  const start = (input: any) => {
+    const text = call("start_job", { ...full, approved_actions: ["none"], ...input });
+    const id = text.match(/Started job (j\d+)/)?.[1];
+    if (!id) throw new Error(text);
+    const job = ch.jobs.find((j: any) => j.id === id);
+    job.status = "done"; // as if it had finished, so it can be continued
+    return job;
+  };
+  expect(start({}).model).toBe("sonnet"); // the starter agents/elliot.md
+  const deep = start({ model: "opus" });
+  expect(deep.model).toBe("opus");
+  expect(start({ continue_job: deep.id }).model).toBe("opus");
+  expect(start({ continue_job: deep.id, model: "sonnet" }).model).toBe("sonnet");
+  const before = ch.jobs.length;
+  expect(call("start_job", { ...full, approved_actions: ["none"], model: "haiku" })).toContain('no model "haiku"');
+  expect(ch.jobs.length).toBe(before);
+  // A "small" job from before the model pick keeps running at Sonnet and medium effort, unless a model is picked.
+  ch.jobs.push({ ...deep, id: "j90", model: undefined, size: "small", sessionId: crypto.randomUUID() });
+  const small = start({ continue_job: "j90" });
+  expect([small.size, small.model]).toEqual(["small", undefined]);
+  const picked = start({ continue_job: "j90", model: "opus" });
+  expect([picked.size, picked.model]).toEqual([undefined, "opus"]);
+});

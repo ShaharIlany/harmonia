@@ -18,6 +18,7 @@ export type RunResult = {
   isError: boolean;
   cost?: number; // what this run cost
   sessionCost?: number; // what the session has cost so far, this run included (Claude Code's total_cost_usd)
+  model?: string; // the model that answered (its subagents may use others)
   tokens?: number;
   inputTotal?: number; // input tokens across the turn's API calls: fresh + cache write + cache read
   cacheRead?: number; // the part of inputTotal served from the prompt cache
@@ -58,6 +59,8 @@ export type RunOptions = {
 
 /** A small job (a lookup, a summary, a mechanical change) doesn't need the agent file's Opus at high effort. */
 export const SMALL_JOB = { model: "sonnet", effort: "medium" };
+/** The models a teammate can pick for one job (start_job's `model`). Opus costs about twice as much as Sonnet. */
+export const JOB_MODELS = ["sonnet", "opus"];
 
 /**
  * `--model` / `--effort` for a job. They sit next to `--agent` and are meant to override the agent file's own
@@ -111,18 +114,20 @@ const childEnv = () => {
   return env;
 };
 
-/** A CLI `result` event's cost and token counts, as the arguments recordResult takes after the kind. */
+const HAIKU = "claude-haiku-5-5"; // the one-shot runs below
+
+/** A one-shot Haiku run's `result` event: its cost and token counts, as the arguments recordResult takes after the kind. */
 function resultUsage(ev: any, who: Pick<RunRecord, "agentId" | "channelId" | "jobId">): [Parameters<typeof recordResult>[1], Parameters<typeof recordResult>[2]] {
   const u = ev.usage ?? {};
   const inputTotal = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
-  return [{ cost: ev.total_cost_usd, inputTotal, cacheRead: u.cache_read_input_tokens ?? 0 }, { ...who, ms: ev.duration_ms }];
+  return [{ cost: ev.total_cost_usd, inputTotal, cacheRead: u.cache_read_input_tokens ?? 0, model: HAIKU }, { ...who, ms: ev.duration_ms }];
 }
 
 /** A one-shot Haiku answer with no tools and no saved session (status summaries, splitting an ask). Empty on failure. */
 export async function quickAnswer(system: string, prompt: string, cwd: string, who: Pick<RunRecord, "agentId" | "channelId" | "jobId"> = {}, kind: RunKind = "status"): Promise<string> {
   if (setting("STUB")) return "(stub) ETA ~5 min: I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
-    [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
+    [CLAUDE, "-p", "--model", HAIKU, "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
       "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),
     { cwd, env: childEnv(), stdin: new TextEncoder().encode(prompt), stdout: "pipe", stderr: "ignore" },
   );
@@ -148,7 +153,7 @@ export async function probeUsage(cwd: string) {
     return readUsage({ unifiedWindows: { five_hour: { utilization: 0.12, resetsAt: now + 3 * 3600, status: "allowed" }, seven_day: { utilization: 0.31, resetsAt: now + 4 * 86400, status: "allowed" } } });
   }
   const proc = Bun.spawn(guarded(
-    [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--tools", "", "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
+    [CLAUDE, "-p", "--model", HAIKU, "--tools", "", "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
       "--system-prompt", "Reply with OK.", "--no-session-persistence", "--output-format", "stream-json", "--verbose", "ok"], cwd),
     { cwd, env: childEnv(), stdout: "pipe", stderr: "ignore" },
   );
@@ -273,6 +278,7 @@ export function runAgent(o: RunOptions): Run {
     let lastText = "";
     let context: number | undefined;
     let firstInput: number | undefined;
+    let model: string | undefined;
     let buf = "";
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
@@ -301,6 +307,7 @@ export function runAgent(o: RunOptions): Run {
         }
         if (ev.type === "assistant") {
           const u = ev.message?.usage;
+          if (!ev.parent_tool_use_id && ev.message?.model && ev.message.model !== "<synthetic>") model ??= ev.message.model;
           if (u && !ev.parent_tool_use_id) {
             const input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
             firstInput ??= input;
@@ -360,6 +367,7 @@ export function runAgent(o: RunOptions): Run {
       isError: !answers.length && !!final.is_error,
       cost: runCost(final.session_id ?? sessionId, final.total_cost_usd, o.resume),
       sessionCost: final.total_cost_usd,
+      model,
       tokens: inputTotal + (u.output_tokens ?? 0),
       inputTotal,
       cacheRead: u.cache_read_input_tokens ?? 0,

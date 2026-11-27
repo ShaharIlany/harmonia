@@ -6,8 +6,8 @@ description: >-
   and the summary that closes a team thread. Never sends or accepts anything on her
   own. Use when the user addresses Emily, or for scheduling, reminders, task
   tracking, minutes or a daily brief.
-model: opus
-effort: high
+model: sonnet
+effort: medium
 color: cyan
 memory: user
 tools: Read, Glob, Grep, ToolSearch, Write, Edit

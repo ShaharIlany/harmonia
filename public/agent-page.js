@@ -91,6 +91,7 @@
           <div class="field">
             <span class="label">Model</span>
             <div class="choices">${S.models.map((m) => choice("model", m, a.model, MODEL_INFO[m])).join("")}</div>
+            <span class="hint">${esc(a.name)}'s default. Starting a job, ${esc(a.name)} can pick Opus or Sonnet for that one job (Opus costs about twice as much); a continued job keeps its model.</span>
           </div>
           <div class="field">
             <span class="label">Effort</span>

@@ -11,7 +11,7 @@ import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf
 import { decide } from "./mozart";
 import { mightAskSeveral, parseSplit, splitPrompt, splitSystem, type AskQuestion } from "./ask-split";
 import { recordResult } from "./usage";
-import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
+import { chatToolsFor, JOB_MODELS, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
 import { parseTask } from "./tasks";
 import { defaultPermissionMode, permissionModeOf } from "./permission-mode";
@@ -78,6 +78,12 @@ if (firstChatSessions) {
   saveAgentSessions();
   saveChannels();
 }
+
+/** What a teammate's jobs run on when it picks no model: its agent file's ("inherit" leaves it to Claude Code). */
+const jobModelOf = (agentId: string) => {
+  const m = readAgent(agentId).model;
+  return m && m !== "inherit" ? m : undefined;
+};
 
 /** A teammate saying something to you by name: it waits on you (meta.ask). Not its "checking…" lines or cards. */
 const asksYou = (m: Omit<Message, "id" | "ts">) =>
@@ -756,7 +762,7 @@ export class Team {
         tools: chatTools,
         mcpConfig: JSON.stringify({
           mcpServers: {
-            team: { command: jobToolsCommand()[0], args: jobToolsCommand().slice(1), env: { HARMONIA_URL: this.serverUrl, HARMONIA_TURN: token } },
+            team: { command: jobToolsCommand()[0], args: jobToolsCommand().slice(1), env: { HARMONIA_URL: this.serverUrl, HARMONIA_TURN: token, HARMONIA_JOB_MODEL: jobModelOf(agentId) ?? "" } },
           },
         }),
       },
@@ -1018,10 +1024,14 @@ export class Team {
   }
 
   /** `prompt` is what the job is told when it differs from the brief shown on its card (feedback jobs). */
-  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; done_when?: string; approved_actions?: string[]; continue_job?: string; feedback?: boolean; size?: string }, prompt?: string): string {
+  private startJob(ch: Channel, agentId: string, input: { title: string; brief: string; done_when?: string; approved_actions?: string[]; continue_job?: string; feedback?: boolean; model?: string }, prompt?: string): string {
+    if (input.model && !JOB_MODELS.includes(input.model)) return `There's no model "${input.model}" for a job: use ${JOB_MODELS.map((m) => `"${m}"`).join(" or ")}.`;
     const prev = input.continue_job ? ch.jobs.find((j) => j.id === input.continue_job && j.agentId === agentId && j.kind === "job") : undefined;
     if (input.continue_job && !prev) return `There's no job ${input.continue_job} of yours to continue.`;
     if (prev?.status === "running") return `Job ${prev.id} is still running.`;
+    // The teammate's pick; else a continued job's own (switching makes it re-read its whole session); else the agent file's.
+    const legacySmall = !input.model && prev?.size === "small";
+    const model = input.model ?? prev?.model ?? (legacySmall ? undefined : jobModelOf(agentId));
     const job: Job = {
       id: `j${ch.nextJob++}`,
       kind: "job",
@@ -1034,7 +1044,8 @@ export class Team {
       cost: 0,
       allowed: [...(prev?.allowed ?? [])],
       ...(input.feedback && { feedback: true }),
-      ...((input.size ? input.size === "small" : prev?.size === "small") && { size: "small" as const }),
+      ...(legacySmall && { size: "small" as const }),
+      ...(model && { model }),
       ...(prev?.baseline && { baseline: prev.baseline }),
     };
     ch.jobs.push(job);
@@ -1079,7 +1090,7 @@ export class Team {
       allowedTools: [...ch.allowedTools, ...job.allowed],
       permissionMode: CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
       systemPrompt: jobPrompt(ch, job.agentId),
-      ...(job.size === "small" && SMALL_JOB),
+      ...(job.size === "small" ? SMALL_JOB : job.model ? { model: job.model } : {}),
       onActivity: (s) => {
         job.activity = s;
         this.emitJob(ch, job);

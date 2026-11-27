@@ -21,9 +21,12 @@ Every teammate has two kinds of Claude Code session:
   memory, model and effort from `~/.claude/agents/<id>.md` and `job-rules.md`
   appended. Each appears as a card in the chat and in the sessions panel. When
   it finishes, its report goes back to the teammate's chat session as an event.
-  A job started with `size: "small"` (lookups, summaries, mechanical changes)
-  runs with `--model sonnet --effort medium` instead of the agent file's, and
-  keeps that when continued. Each job also records `baseline`: the input tokens
+  The agent file's model is the default: starting a job, the teammate can pick
+  `model: "opus"` or `"sonnet"` for that one job (Opus costs about twice as
+  much), shown on the job card. A continued job keeps its model, since changing
+  it makes the job re-read its whole session. (Jobs from before this that were
+  started as `size: "small"` keep running at Sonnet and medium effort.) Each
+  job also records `baseline`: the input tokens
   of its first API call, i.e. what it carries before it has done anything.
 
 **Waiting on you.** The button next to Sessions lists what the open channel needs
@@ -64,8 +67,8 @@ you're running hot, when you'd run out before the reset.
 
 **Usage page.** Click the meters to see what the runs cost: every chat turn, job,
 Mozart decision, job status update and usage probe adds a line to `usage.jsonl`
-in the data folder, and the page adds them up by kind, teammate, channel and day
-(Claude Code's own cost estimates). A resumed session reports what the whole
+in the data folder, and the page adds them up by kind, teammate, model, channel
+and day (Claude Code's own cost estimates). A resumed session reports what the whole
 session has cost so far, so a run's cost is the step from that session's
 previous total. Lines from older builds, which held the running total, are
 fixed once when the app starts.

@@ -13,6 +13,9 @@
   const cached = (t) => (t.input ? `${Math.round((100 * t.cacheRead) / t.input)}%` : "–");
 
   const agentName = (id) => (id === "-" ? "(none)" : byId(id)?.name || id);
+  // claude-sonnet-5-5 → Sonnet 5.5. Runs from before the ledger kept the model have none.
+  const modelName = (id) =>
+    id === "-" ? "(not recorded)" : id.replace(/^claude-/, "").replace(/^([a-z]+)-(\d+)-(\d+).*$/, (_, n, a, b) => `${n[0].toUpperCase()}${n.slice(1)} ${a}.${b}`);
   const channelName = (id) => {
     const c = S.channels.find((x) => x.id === id);
     return id === "-" ? "(none)" : c ? chLabel(c) : "(deleted channel)";
@@ -42,6 +45,7 @@
       </section>
       ${table("By kind of run", data.byKind, (k) => KINDS[k] || k)}
       ${table("By teammate", data.byAgent, agentName)}
+      ${table("By model", data.byModel, modelName)}
       ${table("By channel", data.byChannel, channelName)}
       ${table("By day", data.byDay, (k) => k, true)}`;
   }

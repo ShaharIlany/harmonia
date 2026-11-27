@@ -74,7 +74,8 @@ export type Job = {
   report?: string;
   allowed: string[]; // permission rules granted to this job
   feedback?: boolean; // a feedback job: the teammate amending its own rules (its title quotes the feedback)
-  size?: "small"; // runs at a smaller model and effort; kept when the job is resumed or continued
+  size?: "small"; // older jobs: ran at Sonnet and medium effort (SMALL_JOB); kept when continued
+  model?: string; // the model the job runs on ("sonnet", "opus"): the teammate's pick, else its agent file's; kept when continued
   baseline?: number; // input tokens of its first API call: what a job carries before it has done anything
 };
 

@@ -4,6 +4,9 @@
 export {};
 const URL_ = process.env.HARMONIA_URL!;
 const TURN = process.env.HARMONIA_TURN!;
+// What this teammate's jobs run on when it picks no model (its agent file's), named in start_job's description.
+const MODEL_NAMES: Record<string, string> = { sonnet: "Sonnet", opus: "Opus", haiku: "Haiku", fable: "Fable" };
+const DEFAULT_MODEL = MODEL_NAMES[process.env.HARMONIA_JOB_MODEL ?? ""] ?? "Claude Code's default model";
 
 const TOOLS = [
   {
@@ -27,10 +30,13 @@ const TOOLS = [
           description: "What the user has said yes to in this chat. Use [\"none\"] when they haven't approved anything beyond the work itself.",
         },
         continue_job: { type: "string", description: "Optional id of an earlier job of yours (like j3) whose session this job should continue." },
-        size: {
+        model: {
           type: "string",
-          enum: ["small", "normal"],
-          description: "Optional, default normal. \"small\" runs the job on a smaller, cheaper model: use it when the job only reads, searches, summarises or makes a mechanical change. Design, debugging, multi-file changes and reviews are normal. When unsure, normal.",
+          enum: ["sonnet", "opus"],
+          description:
+            `Optional. Without it the job runs on your default, ${DEFAULT_MODEL}, and a continued job on its own model. ` +
+            "Opus costs about twice as much as Sonnet: pick \"opus\" when the job needs deep reasoning (designing something, a bug that resists the obvious fixes, reviewing a risky change), \"sonnet\" for the rest: features, fixes, tests, lookups, summaries. " +
+            "Changing a continued job's model makes it re-read its whole session, so keep it unless the job needs the other one.",
         },
       },
       required: ["title", "brief", "done_when", "approved_actions"],
