@@ -10,8 +10,7 @@ const TOOLS = [
     name: "start_job",
     description:
       "Start a job: a Claude Code session that runs as you, with your instructions, tools and memory, in this channel's folder. " +
-      "Use it for real work: changing files or code, running tests, builds or deploys, using the browser, a long investigation, or anything with many steps or that could take more than a couple of minutes. " +
-      "Don't use it for quick things you can do yourself right now, like reading a file, a short read-only command, or an email, calendar or ClickUp lookup. " +
+      "Use it for any real work: reading or editing files, running commands or tests, browsing, or email/calendar/ClickUp lookups. " +
       "The job can't see the chat, so the brief must stand on its own. Returns right away; the job's report comes back later as an event.",
     inputSchema: {
       type: "object",

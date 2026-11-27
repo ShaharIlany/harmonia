@@ -42,8 +42,7 @@ tools (`harmonia-server --job-tools`).
   between all of these, only @mentions of you, or off (saved per browser). In
   a browser they're web notifications.
 - **Updates over the air:** every 30 minutes the app asks GitHub for the
-  repo's latest full release, or on the beta channel the newest one including
-  betas (`updates.ts`; the repo is in `build.json`, written by
+  repo's latest release (`updates.ts`; the repo is in `build.json`, written by
   `build.sh`). When it's newer than the running version, the app downloads the
   zip in the background, checks its SHA-256, unpacks it and signs it ad hoc. It swaps the new build in when no
   teammate or job is working and you haven't sent anything for 10 minutes: the
@@ -54,7 +53,7 @@ tools (`harmonia-server --job-tools`).
   pending, with **Restart to update** to install it as soon as nobody's
   working. Harmonia → Check for Updates… checks now. A build without a
   version (made from source) counts as older than any release.
-  `settings.json`: `updateRepo` (`owner/name`), `"updateChannel": "beta"`,
+  `settings.json`: `updateRepo` (`owner/name`),
   `autoUpdate: false` to only
   show updates, and `"updateFrom": "source"` to follow a branch's commits
   instead (`updateBranch`): the app then fetches them into its own clone

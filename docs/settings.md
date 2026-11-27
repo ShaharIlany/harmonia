@@ -26,10 +26,9 @@ The data folder is `~/Library/Application Support/Harmonia` on a Mac,
 | `updateFrom` | `release` | `source` follows a branch's commits instead of releases. |
 | `updateBranch` | the branch the app was built from (`main`) | With `"updateFrom": "source"`, the branch to follow. |
 | `updateRepo` | the repo the app was built from | The GitHub repo to update from, as `owner/name`. |
-| `updateChannel` | `stable` | `beta` also takes betas (prereleases). |
 | `voiceLanguages` | the Mac's preferred languages | The languages voice messages are heard in, like `["he-IL", "en-US"]`. |
 
-`permissionMode` and `updateChannel` are not on the settings page: edit `settings.json` for them.
+`permissionMode` is not on the settings page: edit `settings.json` for it.
 
 ## Environment variables
 
@@ -48,7 +47,7 @@ work.
 | `PORT` | `4747` | The server's port. |
 | `HARMONIA_CWD` | your home folder | The default working folder for new channels. |
 | `HARMONIA_USER` | your login name | The name the teammates call you. |
-| `HARMONIA_STATUS_MINUTES` | `5` | Scales the interval of job status updates. |
+| `HARMONIA_STATUS_MINUTES` | `5` | Minutes between job status updates. |
 | `HARMONIA_CHAT_COMPACT_WINDOW` | `100k` | The size at which Claude Code compacts a chat session (`150k`, `300000`); `off` leaves the model's own window. |
 | `HARMONIA_JOB_COMPACT_WINDOW` | `200k` | The same for jobs. |
 | `HARMONIA_LINGER_MINUTES` | `10` | How long a job stays open after its answer for background commands without a `timeout` of their own. |

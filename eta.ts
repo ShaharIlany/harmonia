@@ -1,25 +1,9 @@
-// The timing of a job's status updates: how long to wait for the next one, when to skip it, and the ETA a job gave
-// and whether it has overrun. Kept apart from team.ts so the rules can be tested on plain numbers.
+// The timing of a job's status updates: how often they come, and the ETA a job gave and whether it has overrun. Kept apart from team.ts so the rules can be tested on plain numbers.
 import { setting } from "./env";
 import { time } from "./lines";
 
 /** How often a running job posts a status update in its channel (minutes; HARMONIA_STATUS_MINUTES). */
-const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
-
-/** Wait before status update number `updatesSoFar + 1`: 1×, 2×, then 4× the base (5, 15, 35 min, then every 20). */
-export function nextStatusDelay(updatesSoFar: number, base = STATUS_EVERY_MS) {
-  return base * Math.min(2 ** updatesSoFar, 4);
-}
-
-/** What a status update is written from, cheaply: how many steps are logged, the last one, and what it's doing now. */
-export function statusFingerprint(log: string[], activity?: string) {
-  return `${log.length}\n${log[log.length - 1] ?? ""}\n${activity ?? ""}`;
-}
-
-/** Skip an update when it'd be written from the same steps as the last one, unless it has a warning the last one lacked. */
-export function skipStatus(last: { fingerprint: string; warned: boolean } | undefined, fingerprint: string, warns: boolean) {
-  return !!last && last.fingerprint === fingerprint && !(warns && !last.warned);
-}
+export const STATUS_EVERY_MS = Number(setting("STATUS_MINUTES") ?? 5) * 60_000;
 
 /**
  * The ETA a status update gave ("ETA ~15 min", "ETA ~1.5 h"), in minutes, and whether it gave a reason for it

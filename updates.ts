@@ -11,9 +11,7 @@
 //                        and built there with the same build.sh. Needs git, bun and Xcode's command line tools.
 //
 // settings.json: "updateRepo" (default: the repo the app was built from), "updateBranch" (source only),
-// "autoUpdate" (default true: get and install on their own; false: only show that an update is there),
-// "updateChannel" ("stable", the default: full releases only; "beta": also the prereleases every push to main
-// makes before someone promotes it, see .github/workflows/promote.yml). Release updates only.
+// "autoUpdate" (default true: get and install on their own; false: only show that an update is there).
 //
 // Windows (the app installed by winapp/installer.iss: Harmonia.exe, the window, next to harmonia-server.exe) updates
 // from releases only: it downloads Harmonia-windows-x64.zip, checks it, and swaps its files in place. A running .exe
@@ -62,7 +60,6 @@ const auto: boolean = SETTINGS.autoUpdate ?? true;
 const from: "release" | "source" = SETTINGS.updateFrom === "source" && !WIN ? "source" : "release";
 /** "owner/name" from a GitHub URL or the setting itself. */
 const slug = repo.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1] ?? (/^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : "");
-const channel: "stable" | "beta" = SETTINGS.updateChannel === "beta" ? "beta" : "stable";
 const API = setting("RELEASES_API") ?? "https://api.github.com";
 const APP_ASSET = WIN ? "Harmonia-windows-x64.zip" : "Harmonia-arm64.zip";
 const DOWNLOAD = join(DATA, "download");
@@ -299,7 +296,7 @@ const LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks
 // ---------- Releases ----------
 
 type Asset = { name: string; browser_download_url: string; size: number };
-type Release = { tag_name: string; name?: string; body?: string; html_url?: string; assets: Asset[]; draft?: boolean; prerelease?: boolean };
+type Release = { tag_name: string; name?: string; body?: string; html_url?: string; assets: Asset[] };
 
 /** 1.10.0 > 1.9.2. A build without a version (made from source) is older than any release. */
 const newer = (a: string, b?: string) => {
@@ -307,20 +304,6 @@ const newer = (a: string, b?: string) => {
   for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
   return false;
 };
-
-/**
- * The release to update to, from GitHub's list of releases (in any order). Drafts never count, and neither do tags
- * that aren't a version. Stable skips prereleases; beta takes them too. The newest is by version, not by date: a
- * promoted old build or a rebuilt tag must not look newer than it is.
- */
-export function pickRelease(list: Release[], channel: "stable" | "beta"): Release | undefined {
-  let best: Release | undefined;
-  for (const r of Array.isArray(list) ? list : []) {
-    if (!r || r.draft || (r.prerelease && channel !== "beta") || !/^v?\d+\.\d+\.\d+$/.test(r.tag_name ?? "")) continue;
-    if (!best || newer(r.tag_name.replace(/^v/, ""), best.tag_name.replace(/^v/, ""))) best = r;
-  }
-  return best;
-}
 
 async function github(path: string): Promise<any> {
   const r = await fetch(`${API}/repos/${slug}${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "harmonia-updater" } });
@@ -334,8 +317,7 @@ function checkRelease(): Promise<void> {
     const before = status.state;
     if (before !== "ready" && before !== "waiting") set({ state: "checking", detail: undefined });
     try {
-      // Stable: GitHub's own "latest", which is never a prerelease or a draft. Beta: the list, and we pick.
-      const rel: Release | undefined = channel === "beta" ? pickRelease(await github("/releases?per_page=30"), channel) : await github("/releases/latest");
+      const rel: Release | undefined = await github("/releases/latest");
       if (!rel) return set({ state: "idle", checkedAt: Date.now(), detail: "No releases yet." });
       const v = rel.tag_name.replace(/^v/, "");
       if (!newer(v, build!.version)) {

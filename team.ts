@@ -8,7 +8,7 @@ import { type Voice } from "./voice";
 import { addTools, agentFile, memoryDir, readAgent } from "./agents";
 import { resolveTools, suggestTools } from "./tool-catalog";
 import { ROSTER, TRIAGE, USER_NAME, addressedAtStart, handoffs, mentions, nameOf, teammate } from "./roster";
-import { decide, mayBeAcknowledgment, mayNeedFollowUp } from "./mozart";
+import { decide } from "./mozart";
 import { recordResult } from "./usage";
 import { chatToolsFor, quickAnswer, runAgent, SMALL_JOB, type Run, type RunResult } from "./runner";
 import { sandboxActive } from "./sandbox";
@@ -16,7 +16,7 @@ import { parseTask } from "./tasks";
 import { defaultPermissionMode, permissionModeOf } from "./permission-mode";
 import { RULES, APPROVALS, TEAM_RULES_FILE, chatPrompt, chatTitle, composeBrief, fill, jobPrompt, jobTitle, roster } from "./prompts";
 import { HOLD_ON_AFTER, EMOJI_ONLY, NO_REPLY, bubbles, catchUpLines, clip, keepLanguage, line, placeOf, replyText, reportInChat, shownAs, time } from "./lines";
-import { etaWarning, nextStatusDelay, readEta, skipStatus, statusFingerprint } from "./eta";
+import { STATUS_EVERY_MS, etaWarning, readEta } from "./eta";
 import { statusPrompt } from "./status-prompt";
 import {
   CLAUDE_PERMISSION_MODE,
@@ -48,7 +48,7 @@ export { DEFAULT_CWD, TEAM_AGENTS };
 // What used to be defined here and is imported from this file elsewhere (server.ts, the tests).
 export { parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
 export { CATCH_UP_LINES, OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, capCatchUp, catchUpLines, clipOthers, reportInChat } from "./lines";
-export { etaWarning, nextStatusDelay, readEta, skipStatus, statusFingerprint } from "./eta";
+export { etaWarning, readEta } from "./eta";
 
 export type SessionView = AgentSession & {
   agentId: string;
@@ -230,11 +230,7 @@ export class Team {
       if (ch.status !== "archived" && teammate(ch.dm)) this.wake(ch, ch.dm, msg);
       return msg;
     }
-    const addressed = named.length ? named : atStart ? [atStart] : undefined;
-    // Only a short acknowledgment can be a reaction, so a message that names its teammate and is more than that goes
-    // straight to it, without waiting for Mozart.
-    if (addressed && !mayBeAcknowledgment(msg)) for (const id of addressed) this.wake(ch, id, msg);
-    else this.coordinate(ch, msg, waitingOn, addressed);
+    this.coordinate(ch, msg, waitingOn, named.length ? named : atStart ? [atStart] : undefined);
     return msg;
   }
 
@@ -713,8 +709,7 @@ export class Team {
       // start reads the whole reply. A question to the user waits for the user. In a DM there's nobody else to wake,
       // and nobody for Mozart to pick.
       const to = ch.dm ? [] : handoffs(r.text).filter((id) => id !== agentId);
-      // Mozart is only asked when the reply could concern someone else: it names a teammate, or one is busy or waited on.
-      const follow = !ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0 && mayNeedFollowUp(r.text, agentId, ch);
+      const follow = !ch.dm && first && !to.length && !asksUser && (this.turnsLeft.get(ch.id) ?? 0) > 0;
       if (to.length || follow)
         setTimeout(
           () =>
@@ -967,13 +962,13 @@ export class Team {
     this.jobRuns.set(key, run);
 
     // While it runs, the job reports in every few minutes, under its teammate's name.
-    const stopStatus = this.scheduleStatus(ch, job);
+    const ticker = setInterval(() => void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e)), STATUS_EVERY_MS);
 
     run.done
       .catch((e): RunResult => ({ text: String(e), sessionId: job.sessionId, isError: true, denials: [] }))
       .then((r) => {
         recordResult("job", r, { agentId: job.agentId, channelId: ch.id, jobId: job.id, ms: Date.now() - job.startedAt });
-        stopStatus();
+        clearInterval(ticker);
         if (this.closing) return; // cut off by an update: the next build resumes it
         this.jobLogs.delete(job);
         this.jobRuns.delete(key);
@@ -1018,29 +1013,6 @@ export class Team {
   /** Running jobs that have answered and stay open only for background tasks they left running. */
   private answered = new Map<Job, { at: number; closesAt: number; leftRunning: string[]; noted?: boolean }>();
 
-  /** What each job's last posted update was written from, and whether it led with an ETA warning. */
-  private lastStatus = new WeakMap<Job, { fingerprint: string; warned: boolean }>();
-
-  /** Chains the job's status updates on a widening schedule. Returns the function that stops them. */
-  private scheduleStatus(ch: Channel, job: Job) {
-    let ticks = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let stopped = false;
-    const next = () => {
-      timer = setTimeout(() => {
-        if (stopped) return;
-        ticks++;
-        void this.postJobStatus(ch, job).catch((e) => console.error("Job status update failed:", e));
-        next();
-      }, nextStatusDelay(ticks));
-    };
-    next();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }
-
   private logStep(job: Job, step: string) {
     const log = this.jobLogs.get(job) ?? [];
     const flat = step.replace(/\s+/g, " ").trim();
@@ -1078,15 +1050,8 @@ export class Team {
         .filter((m) => m.kind === "status" && m.author === job.agentId && m.meta?.jobId === job.id && m.ts >= job.startedAt)
         .map((m) => ({ ts: m.ts, text: m.text.split("\n").slice(1).join("\n").trim(), ...readEta(m.text) }));
       const warning = etaWarning(earlier, job.startedAt, now);
-      const log = this.jobLogs.get(job) ?? [];
-      const fingerprint = statusFingerprint(log, job.activity);
-      const last = this.lastStatus.get(job);
-      // Nothing new since the last update, and no new warning to give: stay quiet (no Haiku call either).
-      if (skipStatus(last, fingerprint, !!warning)) return;
-      const unchanged = last?.fingerprint === fingerprint;
       const { system, prompt } = statusPrompt({ ch, job, t, now, minutes, earlier, warning, steps: this.jobLogs.get(job) });
-      // With the log unchanged, only the warning is new: the fallback text below says it, no Haiku call.
-      let summary = unchanged ? "" : await quickAnswer(system, prompt, ch.cwd, { agentId: job.agentId, channelId: ch.id, jobId: job.id });
+      let summary = await quickAnswer(system, prompt, ch.cwd, { agentId: job.agentId, channelId: ch.id, jobId: job.id });
       if (job.status !== "running") return; // it finished meanwhile; its report says the rest
       if (!summary) {
         // No summary (the call failed): fall back to the job's own latest words and current step.
@@ -1099,7 +1064,6 @@ export class Team {
           .filter(Boolean)
           .join("\n");
       }
-      this.lastStatus.set(job, { fingerprint, warned: !!warning });
       this.post(ch, { author: job.agentId, kind: "status", text: `⏳ **${job.id}** · ${job.title} · ${minutes} min\n${summary}`, meta: { jobId: job.id } });
     } finally {
       this.summarizing.delete(job);

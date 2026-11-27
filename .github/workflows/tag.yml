@@ -1,14 +1,12 @@
 # Tags every push to main as the next patch version (v2.1.1 -> v2.1.2) and starts a release build for it.
 #
 # A tag pushed with the workflow's own token doesn't start other workflows, so this starts release.yml itself
-# (workflow_dispatch on the new tag), as a prerelease: only apps on the beta channel get it until the Promote
-# workflow (promote.yml) makes it the latest release. Tags you push by hand still release on their own, in full.
+# (workflow_dispatch on the new tag). Tags you push by hand still release on their own, as before.
 #
 # For a minor or major version, tag the commit yourself and push both at once:
 #   git tag v2.2.0 && git push --atomic origin main v2.2.0
 # A commit that already has a version tag is left alone, and the next patch counts up from the newest tag.
 # A push whose commit message has [skip ci] in it gets no tag and no release.
-# The tests run first (test.yml); a push that fails them gets no tag and no release.
 name: Tag
 
 on:
@@ -24,11 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yml
-
   tag:
-    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -67,4 +61,4 @@ jobs:
         if: steps.next.outputs.tag
         env:
           TAG: ${{ steps.next.outputs.tag }}
-        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f prerelease=true
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

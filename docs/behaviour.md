@@ -96,16 +96,13 @@ Jobs and memories stay.
   its emoji (🙏, 👍, 🎉…) goes on your message, here and in Slack, and the line
   under it says "🎼 Mozart: Elliot reacted instead · thanks Elliot". Anything
   that also asks something, gives work, says yes to an offer or pushes back
-  gets an answer. Only a short message (about 12 words, no question, file,
-  voice note, code or link) is even asked about: anything longer that names
-  its teammate goes straight to them. For the short ones the decision waits at
+  gets an answer. For a message that names its teammate, the decision waits at
   most 15 s; then the teammate answers as usual. The teammates read your
   message later with "(reacted: Elliot 🙏)", so they don't answer it again.
 - **After a teammate's message, too.** A teammate's `@Name` wakes that
   teammate (a handoff), unless it's in the same sentence as a question to you,
-  and a question to you waits for you. Otherwise, if the reply names another
-  teammate (or one has a job running, or is waiting on you), Mozart reads it and
-  decides whether anyone follows up; a reply that doesn't skips Mozart: usually nobody, but "Murphy, can you try
+  and a question to you waits for you. Otherwise Mozart reads the reply and
+  decides whether anyone follows up: usually nobody, but "Murphy, can you try
   to break it?" without the `@` wakes Murphy. A note shows only when it wakes
   someone.
 - **Protected folders:** every `claude` the app starts runs in a macOS
@@ -140,9 +137,8 @@ Jobs and memories stay.
   needed now). A woken teammate first checks it's really
   its turn; if not, it answers `(no reply)` and nothing is posted (chat-rules.md,
   "Is it your turn?"). After 8 agent turns without you, the chat pauses.
-- **Job status updates:** at 5, 15 and 35 minutes into a job, then every 20
-  (`HARMONIA_STATUS_MINUTES` scales it), and only when something changed since
-  the last one (or an ETA warning is new), its teammate posts what's happening, what's
+- **Job status updates:** every 5 minutes while a job runs
+  (`HARMONIA_STATUS_MINUTES`), its teammate posts what's happening, what's
   done and what the job is waiting for. A one-shot Haiku call (`quickAnswer`
   in `runner.ts`, no tools, no saved session) writes it from the job's last 30
   steps: its narration, tool calls and results. The chat session isn't

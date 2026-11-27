@@ -22,7 +22,7 @@
     "claude-haiku-5-5": "Fastest and cheapest; light judgment",
     "claude-fable-5-2": "Most capable, priciest",
   };
-  const AVATARS = ["🧙🏻‍♂️", "👨🏻‍🎨", "👨🏻‍💻", "🕵🏻‍♂️", "👨🏻‍🔬", "👩🏻‍💼", "👨🏻‍🚀", "👩🏻‍🏫", "🦉", "🦊", "🐙", "🤖", "🧠", "🛠️", "🧪", "📣"];
+  const AVATARS = ["🧙🏻‍♂️", "👨🏻‍🎨", "🧑🏻‍💻", "🕵🏻‍♂️", "👨🏻‍🔬", "👩🏻‍💼", "🧑🏻‍🚀", "👩🏻‍🏫", "🦉", "🦊", "🐙", "🤖", "🧠", "🛠️", "🧪", "📣"];
 
   let agent = null; // last loaded details
   let mem = null; // { name, content, isNew }

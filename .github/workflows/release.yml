@@ -3,14 +3,6 @@
 # Every push to main gets the next patch tag from tag.yml, which starts this with workflow_dispatch on that tag
 # (a tag pushed by a workflow doesn't trigger the tag push below).
 #
-# Beta or everyone: a build from a push to main is published as a PRERELEASE. Nobody gets it unless their
-# settings.json says "updateChannel": "beta"; promote.yml makes it a full release (and the latest) later.
-# A tag you push by hand (a minor or major version) is a full release at once, as before.
-# Which is which is decided by how this run started, not by the tag's name: a push of a tag is always full; a
-# workflow_dispatch is a prerelease unless its `prerelease` input says false (tag.yml also passes it explicitly).
-# The event is the safer signal (a patch tag may be hand-made, and nothing tells a bot's tag from yours), and the
-# default errs on the quiet side: a rebuild started by hand from the Actions page can't reach everyone by accident.
-#
 # Assets:
 #   Harmonia-arm64.zip (+ .sha256)   the app (stable name: releases/latest/download/… works)
 #   Team-Chat-arm64.zip (+ .sha256)  the same app as "Team Chat.app", for installs from before the rename: their
@@ -24,11 +16,6 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch: # run on a tag (Use workflow from: v1.2.3); tag.yml does this for its tags
-    inputs:
-      prerelease:
-        description: Publish as a prerelease (beta channel). Promote it later with the Promote workflow.
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -75,14 +62,10 @@ jobs:
           [ -x build/Harmonia.app/Contents/Resources/harmonia-transcribe ] || echo "::warning::No transcriber in this build: voice messages from Slack stay audio files. $(cat build/transcribe.log 2>/dev/null | grep -m1 error)"
 
       - name: Publish the release
-        env:
-          # A push of a tag is a full release. A dispatch is a prerelease unless the input says otherwise.
-          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
         run: |
-          if [ "$PRERELEASE" = "true" ]; then CHANNEL="--prerelease"; else CHANNEL="--latest"; fi
           gh release create "$GITHUB_REF_NAME" Harmonia-arm64.zip Harmonia-arm64.zip.sha256 \
             Team-Chat-arm64.zip Team-Chat-arm64.zip.sha256 \
-            --verify-tag $CHANNEL --title "Harmonia $VERSION" --generate-notes
+            --verify-tag --latest --title "Harmonia $VERSION" --generate-notes
 
   # The Windows app, built on Windows (the window is C#) and added to the release the Mac job made.
   windows:

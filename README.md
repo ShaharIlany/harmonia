@@ -80,7 +80,7 @@ Real teammates need the `claude` CLI signed in. More in [Development](docs/devel
 - [Slack](docs/slack.md): the Slack bridge, step by step.
 - [The Mac app](docs/mac-app.md): `Harmonia.app`, updates over the air, notifications, coming from Team Chat or the Teams bridge.
 - [Windows](docs/windows.md): the Windows server.
-- [Releases](docs/releases.md): versions, the beta channel and promoting a build.
+- [Releases](docs/releases.md): versions and how a push to `main` becomes a release.
 - [Settings](docs/settings.md): every `settings.json` key and environment variable.
 - [Development](docs/development.md): the files, tests, the type check, stub mode and the Mozart eval.
 

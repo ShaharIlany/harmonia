@@ -12,7 +12,7 @@ or `bun run stub` to try the UI.
 ## Tests
 
 `bun test` runs the unit tests and one end-to-end run of the server with stub teammates (no `claude` runs,
-nothing outside a temp folder is touched). Releases wait for them: `tag.yml` only tags a push to `main` once they pass.
+nothing outside a temp folder is touched). CI runs them on pull requests; the release path does not wait for them.
 
 ## Type check
 
@@ -101,8 +101,7 @@ under Mozart in [How it behaves](behaviour.md). It starts real `claude` runs, on
 | `tests/`, `runner.test.ts`, `bunfig.toml` | The tests `bun test` runs (`tests/setup.ts` points them at a temp folder first) |
 | `winapp/` | The Windows app shell: window, tray and installer, around `harmonia-server.exe` |
 | `agents/` | The six starter teammates (see [agents/README.md](../agents/README.md)) |
-| `.github/workflows/test.yml` | Runs the tests; `tag.yml` calls it, so a push to `main` is only tagged and released when they pass |
-| `.github/workflows/promote.yml` | Gives a beta build to everyone: marks a release as the latest one |
+| `.github/workflows/test.yml` | Runs the tests and the type check on pull requests and branches |
 | `CLAUDE.md` | The map of the code and the conventions, for working on Harmonia |
 | `docs/brand/` | The logo, app icon, colours and usage rules (`make-brand.py` writes them) |
 | `docs/screenshots/` | The README screenshots, their demo data and the script that takes them |
