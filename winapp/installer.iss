@@ -40,6 +40,8 @@ Source: "dist\Microsoft.Web.WebView2.Core.dll"; DestDir: "{app}"; Flags: ignorev
 Source: "dist\Microsoft.Web.WebView2.WinForms.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\build.json"; DestDir: "{app}"; Flags: ignoreversion
+; The starter teammates (as install.sh adds them on a Mac): never over a file that's there, and kept on uninstall.
+Source: "..\agents\*.md"; Excludes: "README.md"; DestDir: "{%USERPROFILE}\.claude\agents"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{autoprograms}\Harmonia"; Filename: "{app}\Harmonia.exe"

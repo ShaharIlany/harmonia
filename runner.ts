@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
@@ -54,7 +55,17 @@ export const chatToolsFor = (allowlist: string[]) =>
   allowlist.length ? [...allowlist.filter((t) => !NO_CHAT_TOOLS.includes(t)), ...JOB_TOOLS] : undefined;
 export type Run = { done: Promise<RunResult>; stop: () => void };
 
-export const CLAUDE = Bun.which("claude") ?? join(homedir(), ".local/bin/claude");
+/**
+ * The Claude Code program. npm on Windows puts a claude.cmd shim on the PATH, and Bun won't pass a .cmd the characters
+ * a system prompt holds, so this is the claude.exe the shim starts.
+ */
+function findClaude() {
+  const found = Bun.which("claude") ?? join(homedir(), ".local/bin/claude");
+  if (!/\.(cmd|bat)$/i.test(found)) return found;
+  const exe = join(dirname(found), "node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+  return existsSync(exe) ? exe : found;
+}
+export const CLAUDE = findClaude();
 
 /** The Claude plan's usage windows, as every CLI run reports them. Utilization is 0–1; resetsAt is epoch seconds. */
 export type Usage = {
