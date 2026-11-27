@@ -23,8 +23,12 @@ const PROTECTED = [
   "Library/Mail", "Library/Messages", "Library/Safari", "Library/Calendars", "Library/Application Support/AddressBook",
   "Library/Group Containers/group.com.apple.notes", "Library/Group Containers/group.com.apple.reminders",
   "Library/Containers", // other apps' data
+  "Library/Photos", // the Photos library of what's shared with you (Messages)
   "Library/Application Support/com.apple.TCC",
-].map((p) => join(HOME, p)).concat("/Volumes"); // removable and network drives
+].map((p) => join(HOME, p)).concat(
+  "/Volumes", // removable and network drives
+  "/System/Volumes/Data/home", "/Network", // network folders macOS mounts on demand (/home, autofs)
+);
 
 /** Teammates may move things into the Trash, but not look inside it. */
 const NO_LOOKING = [join(HOME, ".Trash")];
@@ -79,6 +83,6 @@ export function guarded(cmd: string[], cwd: string): string[] {
 /** Told to every teammate, so a blocked folder isn't a mystery. */
 export const PROTECTED_NOTE =
   "Folders macOS protects (Desktop, Documents, Downloads, Music, Pictures, Movies, iCloud Drive, cloud drives, Mail, " +
-  "Messages, other apps' data, /Volumes) are blocked for you and answer \"Operation not permitted\". Don't search them " +
-  "or your home folder as a whole. If a task needs one, say which folder and ask the user to add it to " +
+  "Messages, other apps' data, /Volumes) are blocked for you and answer \"Operation not permitted\". Don't search them, " +
+  "your home folder or / as a whole. If a task needs one, say which folder and ask the user to add it to " +
   "\"protectedAllow\" in Harmonia's settings.json. Chrome needs --no-sandbox here (Playwright does it by default).";
