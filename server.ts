@@ -12,6 +12,7 @@ import pictureViewerJs from "./public/picture-viewer.js" with { type: "file" };
 import feedbackJs from "./public/feedback.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
+import rubikTtf from "./public/fonts/Rubik.ttf" with { type: "file" };
 import type { ServerWebSocket } from "bun";
 import { openFolder, openInChrome, openPath, openUrl, revealPath, run, runInTerminal } from "./platform";
 import { EFFORTS, MODELS, deleteMemory, installStarterAgents, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
@@ -44,6 +45,7 @@ const PUBLIC: Record<string, string> = {
   "feedback.js": feedbackJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
+  "fonts/Rubik.ttf": rubikTtf,
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -556,6 +558,7 @@ Bun.serve({
 
     const file = PUBLIC[p === "/" ? "index.html" : p.slice(1)];
     if (!file) return new Response("not found", { status: 404 });
+    if (file.endsWith(".ttf")) return new Response(Bun.file(file), { headers: { "content-type": "font/ttf", "cache-control": "max-age=86400" } });
     const type = file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : "text/javascript";
     return new Response(Bun.file(file), { headers: { "content-type": `${type}; charset=utf-8`, "cache-control": "no-cache" } });
   },
