@@ -50,6 +50,7 @@ function setReaction(ch: Channel, msg: Message, emoji: string | undefined) {
   msg.meta.reactions = [...(msg.meta.reactions ?? []).filter((x) => x.by !== "user"), ...(emoji ? [{ by: "user", emoji }] : [])];
   saveMessages(ch.id);
   broadcast({ type: "update", channelId: ch.id, message: msg });
+  if (emoji) team.setAsk(ch, msg.id, false);
 }
 
 // Slack (slack.ts): one Slack app the teammates talk through, your DM with it, and linked channels and group DMs.
@@ -430,7 +431,7 @@ Bun.serve({
         return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
       }
 
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback|ask)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -457,6 +458,8 @@ Bun.serve({
         const r = await run(["open", ch.cwd]);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the folder." }, 500);
       }
+      // Done (or Reopen) in the "Waiting on you" panel. An archived channel's list can still be cleared.
+      if (m[2] === "ask" && post) return team.setAsk(ch, String(body.messageId), body.open === true) ? json({ ok: true }) : json({ error: "That message asks nothing." }, 404);
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);
       if (m[2] === "messages" && post) {
         const text = String(body.text ?? "").trim();

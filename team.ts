@@ -176,6 +176,32 @@ if (firstChatSessions) {
   saveChannels();
 }
 
+/** A teammate saying something to you by name: it waits on you (meta.ask). Not its "checking…" lines or cards. */
+const asksYou = (m: Omit<Message, "id" | "ts">) =>
+  !!teammate(m.author) && (m.kind ?? "text") === "text" && !m.meta?.interim && mentions(m.text).includes("user");
+
+// Messages from before asks were tracked: still open unless you've replied or reacted to it, or written something that
+// went to its teammate since.
+for (const c of channels.values()) {
+  const all = messages.get(c.id) ?? [];
+  let changed = false;
+  all.forEach((m, i) => {
+    if (m.meta?.ask || !asksYou(m)) return;
+    const later = all.slice(i + 1);
+    const handled =
+      m.meta?.reactions?.some((r) => r.by === "user") ||
+      later.some(
+        (u) =>
+          u.author === "user" &&
+          !u.meta?.feedbackFor &&
+          (!!c.dm || u.meta?.replyTo?.id === m.id || u.meta?.routedTo?.includes(m.author) || later.some((a) => a.author === m.author && a.meta?.answers === u.id)),
+      );
+    m.meta = { ...m.meta, ask: { open: !handled } };
+    changed = true;
+  });
+  if (changed) saveMessages(c.id);
+}
+
 type Turn = { channelId: string; agentId: string; tools: ChatTools };
 type ChatTools = { startJob(input: any): string; checkJobs(): string; stopJob(jobId: string): string; requestTool(input: any): string };
 /** A teammate's chat turn while it runs. `seen` and `events`: what it was given to read, to give again if it's cut off. */
@@ -241,6 +267,7 @@ export class Team {
   }
 
   post(ch: Channel, m: Omit<Message, "id" | "ts">) {
+    if (asksYou(m)) m = { ...m, meta: { ...m.meta, ask: { open: true } } };
     const msg = addMessage(ch.id, m);
     this.emit({ type: "message", channelId: ch.id, message: msg });
     return msg;
@@ -255,6 +282,24 @@ export class Team {
     if (status) this.activity.set(key, status);
     else if (!this.activity.delete(key)) return;
     this.emit({ type: "activity", channelId: ch.id, agentId, status });
+  }
+
+  /** Opens or closes what a teammate's message asks of you. False when the message asks nothing. */
+  setAsk(ch: Channel, messageId: string, open: boolean): boolean {
+    const msg = messages.get(ch.id)?.find((m) => m.id === messageId);
+    if (!msg?.meta?.ask) return false;
+    if (msg.meta.ask.open === open) return true;
+    msg.meta.ask = open ? { open } : { open, closedAt: Date.now() };
+    saveMessages(ch.id);
+    this.emit({ type: "update", channelId: ch.id, message: msg });
+    return true;
+  }
+
+  /** Your plain answer (no reply picked) went to the teammate that asked last: its latest open question is answered. */
+  private closeLatestAsk(ch: Channel, agentId: string, answer: Message) {
+    const all = messages.get(ch.id) ?? [];
+    const asked = all.slice(0, all.indexOf(answer)).findLast((m) => m.author === agentId && m.meta?.ask?.open);
+    if (asked) this.setAsk(ch, asked.id, false);
   }
 
   /** Tags a channel (or clears its tag). Archiving is refused while a teammate or job is still working there. */
@@ -316,6 +361,7 @@ export class Team {
       ...(from.slack && { slack: from.slack }),
     };
     const msg = this.post(ch, { author: "user", text, ...(Object.keys(meta).length && { meta }) });
+    if (target) this.setAsk(ch, target.id, false);
     const named = mentions(text).filter((id) => id !== "user");
     // A reply to a teammate's message goes to that teammate (no Mozart), unless the reply names someone.
     const atStart = addressedAtStart(text) ?? (target && teammate(target.author) ? target.author : undefined);
@@ -324,6 +370,7 @@ export class Team {
     saveChannels();
     this.turnsLeft.set(ch.id, MAX_TURNS_PER_USER_MESSAGE);
     if (ch.dm) {
+      if (!target && waitingOn === ch.dm) this.closeLatestAsk(ch, ch.dm, msg);
       if (ch.status !== "archived" && teammate(ch.dm)) this.wake(ch, ch.dm, msg);
       return msg;
     }
@@ -355,6 +402,8 @@ export class Team {
         by: "rule" as const,
       }));
       for (const r of d.react) this.react(ch, msg.id, r.by, r.emoji);
+      const heard = new Set([...d.to, ...d.react.map((r) => r.by)]);
+      if (msg.author === "user" && !msg.meta?.replyTo && waitingOn && heard.size === 1 && heard.has(waitingOn)) this.closeLatestAsk(ch, waitingOn, msg);
       // A message for a teammate by name that it answers, and a teammate's message nobody needs to answer, keep no note:
       // that's the usual case.
       if (d.react.length || (!addressed && (msg.author === "user" || d.to.length))) {
