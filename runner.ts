@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
-import { recordResult, type RunKind, type RunRecord } from "./usage";
+import { recordResult, runCost, type RunKind, type RunRecord } from "./usage";
 import { stopProcessTree } from "./platform";
 
 // Stopping a run and what it started is platform work, so it lives in platform.ts.
@@ -16,7 +16,8 @@ export type RunResult = {
   text: string;
   sessionId: string;
   isError: boolean;
-  cost?: number;
+  cost?: number; // what this run cost
+  sessionCost?: number; // what the session has cost so far, this run included (Claude Code's total_cost_usd)
   tokens?: number;
   inputTotal?: number; // input tokens across the turn's API calls: fresh + cache write + cache read
   cacheRead?: number; // the part of inputTotal served from the prompt cache
@@ -357,7 +358,8 @@ export function runAgent(o: RunOptions): Run {
       text: answers.length ? answers.join("\n\n") : String(final.result ?? lastText ?? "").trim(),
       sessionId: final.session_id ?? sessionId,
       isError: !answers.length && !!final.is_error,
-      cost: final.total_cost_usd,
+      cost: runCost(final.session_id ?? sessionId, final.total_cost_usd, o.resume),
+      sessionCost: final.total_cost_usd,
       tokens: inputTotal + (u.output_tokens ?? 0),
       inputTotal,
       cacheRead: u.cache_read_input_tokens ?? 0,

@@ -17,14 +17,14 @@ import { openFolder, openInChrome, openPath, openUrl, revealPath, run, runInTerm
 import { EFFORTS, MODELS, deleteMemory, installStarterAgents, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, PERMISSION_MODES, channels, createChannel, dmOf, messages, saveChannels, saveMessages,type Channel, type ChannelStatus, type Message } from "./store";
+import { CHANNEL_STATUSES, PERMISSION_MODES, agentSessions, channels, createChannel, dmOf, messages, saveChannels, saveMessages,type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, defaultPermissionMode, jobTitle,type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
-import { usageSummary } from "./usage";
+import { fixLedger, usageSummary } from "./usage";
 import { readSettings, saveSettings, setupChecks } from "./setup";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
@@ -60,6 +60,14 @@ const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROST
 mkdirSync(TEAM_AGENTS, { recursive: true });
 installStarterAgents(ROSTER.map((t) => t.id)); // before anything can wake a teammate
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
+// Before any run: older ledger lines counted each session's running total as the run's cost (usage.ts, fixLedger).
+fixLedger((r) =>
+  r.kind === "job"
+    ? channels.get(r.channelId ?? "")?.jobs.find((j) => j.id === r.jobId)?.sessionId
+    : r.kind === "chat"
+      ? agentSessions[r.agentId ?? ""]?.sessionId
+      : channels.get(r.channelId ?? "")?.mozart?.sessionId,
+);
 
 /** Your reaction on a message (one at a time, like a teammate's), or none. From the page, or from Slack. */
 function setReaction(ch: Channel, msg: Message, emoji: string | undefined) {

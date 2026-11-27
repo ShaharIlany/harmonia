@@ -65,7 +65,10 @@ you're running hot, when you'd run out before the reset.
 **Usage page.** Click the meters to see what the runs cost: every chat turn, job,
 Mozart decision, job status update and usage probe adds a line to `usage.jsonl`
 in the data folder, and the page adds them up by kind, teammate, channel and day
-(Claude Code's own cost estimates).
+(Claude Code's own cost estimates). A resumed session reports what the whole
+session has cost so far, so a run's cost is the step from that session's
+previous total. Lines from older builds, which held the running total, are
+fixed once when the app starts.
 
 **One reply at a time.** A teammate's chat session answers one channel at a
 time. Other channels that need it wait in a queue (the typing bar says "busy in
