@@ -32,6 +32,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { supportDir } from "./platform";
 
 const HERE = import.meta.dir;
 const ROOT = process.env.HARMONIA_CANDIDATES ?? join(homedir(), ".harmonia-candidates");
@@ -41,12 +42,7 @@ const SKIP_DATA = ["slack.json", "slack-secrets.json", "resume.json", "chat-sess
 const FIRST_PORT = 4749;
 
 /** The installed app's data folder, as paths.ts finds it. */
-const stableData = () =>
-  process.platform === "win32"
-    ? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Harmonia")
-    : process.platform === "darwin"
-      ? join(homedir(), "Library/Application Support/Harmonia")
-      : join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "harmonia");
+const stableData = () => join(supportDir, "Harmonia");
 
 const fail = (msg: string): never => {
   console.error(`candidate: ${msg}`);

@@ -5,6 +5,11 @@ import { dirname, join } from "node:path";
 import { USER_NAME } from "./roster";
 import { setting } from "./env";
 import { guarded, PROTECTED_NOTE } from "./sandbox";
+import { recordResult, type RunRecord } from "./usage";
+import { stopProcessTree } from "./platform";
+
+// Stopping a run and what it started is platform work, so it lives in platform.ts.
+export const stopTree = stopProcessTree;
 
 export type Denial = { tool: string; rule: string; summary: string };
 export type RunResult = {
@@ -16,6 +21,7 @@ export type RunResult = {
   inputTotal?: number; // input tokens across the turn's API calls: fresh + cache write + cache read
   cacheRead?: number; // the part of inputTotal served from the prompt cache
   context?: number; // conversation size at the turn's last API call
+  firstInput?: number; // input size of the run's first API call: what it carries before it has done anything
   denials: Denial[];
   answered?: boolean; // it gave its answer, even if it was stopped or closed after that
   leftRunning?: string[]; // closed after its answer because of these background tasks, still running
@@ -43,12 +49,24 @@ export type RunOptions = {
   /** A chat turn: no agent file and no built-in tools, only the MCP servers in mcpConfig. */
   chat?: { model: string; effort: string; mcpConfig: string; tools?: string[] };
   ephemeral?: boolean; // don't save the session (dry runs)
+  permissionMode?: string; // Claude Code's --permission-mode: bypassPermissions (default here), acceptEdits or default
   mode?: string[]; // replaces the agent/chat arguments (the router's own flags)
+  model?: string; // jobs: run at this model instead of the agent file's
+  effort?: string; // jobs: and at this effort
 };
+
+/** A small job (a lookup, a summary, a mechanical change) doesn't need the agent file's Opus at high effort. */
+export const SMALL_JOB = { model: "sonnet", effort: "medium" };
+
+/**
+ * `--model` / `--effort` for a job. They sit next to `--agent` and are meant to override the agent file's own
+ * model and effort (the chat turns already pass them the same way); nothing is added when there is no override.
+ */
+export const overrideArgs = (model?: string, effort?: string) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])];
 
 /** File edits always go through a job, so every change has a card and its own session. */
 export const NO_CHAT_TOOLS = ["Edit", "Write", "NotebookEdit"];
-export const JOB_TOOLS = ["mcp__team__start_job", "mcp__team__check_jobs", "mcp__team__stop_job", "mcp__team__request_tool"];
+export const JOB_TOOLS = ["mcp__team__start_job", "mcp__team__check_jobs", "mcp__team__read_job", "mcp__team__stop_job", "mcp__team__request_tool"];
 
 /** The chat side's tools: the agent's allowlist without file edits, plus the job tools. Undefined = every tool. */
 export const chatToolsFor = (allowlist: string[]) =>
@@ -92,15 +110,22 @@ const childEnv = () => {
   return env;
 };
 
+/** A CLI `result` event's cost and token counts, as the arguments recordResult takes after the kind. */
+function resultUsage(ev: any, who: Pick<RunRecord, "agentId" | "channelId" | "jobId">): [Parameters<typeof recordResult>[1], Parameters<typeof recordResult>[2]] {
+  const u = ev.usage ?? {};
+  const inputTotal = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+  return [{ cost: ev.total_cost_usd, inputTotal, cacheRead: u.cache_read_input_tokens ?? 0 }, { ...who, ms: ev.duration_ms }];
+}
+
 /** A one-shot Haiku answer with no tools and no saved session (status summaries). Empty on failure. */
-export async function quickAnswer(system: string, prompt: string, cwd: string): Promise<string> {
+export async function quickAnswer(system: string, prompt: string, cwd: string, who: Pick<RunRecord, "agentId" | "channelId" | "jobId"> = {}): Promise<string> {
   if (setting("STUB")) return "(stub) ETA ~5 min: I'm checking the saved column order. Waiting for the dev env to finish building, about 2 more minutes.";
   const proc = Bun.spawn(guarded(
     [CLAUDE, "-p", "--model", "claude-haiku-5-5", "--effort", "low", "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
       "--disable-slash-commands", "--system-prompt", system, "--no-session-persistence", "--output-format", "stream-json", "--verbose"], cwd),
     { cwd, env: childEnv(), stdin: new TextEncoder().encode(prompt), stdout: "pipe", stderr: "ignore" },
   );
-  const timer = setTimeout(() => proc.kill(), 90_000);
+  const timer = setTimeout(() => stopTree(proc), 90_000);
   const out = await new Response(proc.stdout).text();
   clearTimeout(timer);
   let result = "";
@@ -108,6 +133,7 @@ export async function quickAnswer(system: string, prompt: string, cwd: string): 
     try {
       const ev = JSON.parse(l);
       if (ev.type === "rate_limit_event") readUsage(ev.rate_limit_info);
+      if (ev.type === "result") recordResult("status", ...resultUsage(ev, who));
       if (ev.type === "result" && !ev.is_error) result = String(ev.result ?? "").trim();
     } catch {}
   }
@@ -127,15 +153,14 @@ export async function probeUsage(cwd: string) {
   );
   const out = await new Response(proc.stdout).text();
   for (const l of out.split("\n")) {
-    if (!l.includes("rate_limit_event")) continue;
+    if (!l.includes("rate_limit_event") && !l.includes('"type":"result"')) continue;
     try {
-      readUsage(JSON.parse(l).rate_limit_info);
+      const ev = JSON.parse(l);
+      if (ev.type === "result") recordResult("probe", ...resultUsage(ev, {}));
+      else readUsage(ev.rate_limit_info);
     } catch {}
   }
 }
-
-/** Every teammate run skips permission prompts (the user's choice, 2026-11-16). */
-const PERMISSION_MODE = "bypassPermissions";
 
 const short = (s: string, n = 80) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
@@ -184,33 +209,6 @@ function compactWindow(kind: keyof typeof COMPACT_WINDOW): string | undefined {
   return v.toLowerCase() === "off" ? undefined : v;
 }
 
-/** Every process under pid: its children, theirs, and so on. */
-function descendants(pid: number): number[] {
-  const kids = new Map<number, number[]>();
-  for (const line of Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString().trim().split("\n")) {
-    const [p, parent] = line.trim().split(/\s+/).map(Number);
-    if (!kids.has(parent)) kids.set(parent, []);
-    kids.get(parent)!.push(p);
-  }
-  const all: number[] = [];
-  const walk = (p: number) => kids.get(p)?.forEach((k) => (all.push(k), walk(k)));
-  walk(pid);
-  return all;
-}
-
-/** Stops a run and what it started. Claude Code ends its own shells; anything still up after that is stopped too. */
-function stopTree(proc: Subprocess) {
-  const started = descendants(proc.pid);
-  proc.kill();
-  setTimeout(() => {
-    for (const p of started) {
-      try {
-        process.kill(p);
-      } catch {} // already gone
-    }
-  }, 3000);
-}
-
 export function runAgent(o: RunOptions): Run {
   if (setting("STUB")) return stubRun(o);
 
@@ -234,13 +232,13 @@ export function runAgent(o: RunOptions): Run {
         "--mcp-config", o.chat.mcpConfig,
         "--disable-slash-commands",
       ]
-    : ["--agent", o.agentId, "--append-system-prompt", systemPrompt]);
+    : ["--agent", o.agentId, ...overrideArgs(o.model, o.effort), "--append-system-prompt", systemPrompt]);
   const args = [
     "-p",
     ...mode,
     "--output-format", "stream-json",
     "--verbose",
-    "--permission-mode", PERMISSION_MODE,
+    "--permission-mode", o.permissionMode ?? "bypassPermissions",
     "--name", o.title,
     ...(o.ephemeral ? ["--no-session-persistence"] : []),
     ...(o.resume ? ["--resume", sessionId] : ["--session-id", sessionId]),
@@ -273,6 +271,7 @@ export function runAgent(o: RunOptions): Run {
     let closedAfter = 0;
     let lastText = "";
     let context: number | undefined;
+    let firstInput: number | undefined;
     let buf = "";
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
@@ -301,7 +300,11 @@ export function runAgent(o: RunOptions): Run {
         }
         if (ev.type === "assistant") {
           const u = ev.message?.usage;
-          if (u && !ev.parent_tool_use_id) context = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+          if (u && !ev.parent_tool_use_id) {
+            const input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+            firstInput ??= input;
+            context = input + (u.output_tokens ?? 0);
+          }
           for (const c of ev.message?.content ?? []) {
             if (c.type === "tool_use") {
               if (c.name === "Bash" && Number(c.input?.timeout) > 0) timeouts.set(c.id, Number(c.input.timeout));
@@ -359,6 +362,7 @@ export function runAgent(o: RunOptions): Run {
       inputTotal,
       cacheRead: u.cache_read_input_tokens ?? 0,
       context,
+      firstInput,
       denials: [...denials.values()],
       answered: answers.length > 0,
       ...(leftRunning && { leftRunning, closedAfter }),

@@ -3,6 +3,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmS
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setting } from "./env";
+import { isMac, supportDir } from "./platform";
 import teamDefaults from "./team.json" with { type: "file" };
 
 /**
@@ -19,18 +20,10 @@ const readJson = (path: string) => {
   }
 };
 
-/** The per-user app data folder: Application Support on the Mac, %APPDATA% on Windows, $XDG_DATA_HOME elsewhere. */
-const SUPPORT =
-  process.platform === "win32"
-    ? (process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"))
-    : process.platform === "darwin"
-      ? join(homedir(), "Library/Application Support")
-      : (process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"));
-
 /** Channels, messages, sessions and team.json. The app keeps them in Application Support. */
-export const DATA = setting("DATA") ?? (COMPILED ? join(SUPPORT, "Harmonia") : join(import.meta.dir, "data"));
+export const DATA = setting("DATA") ?? (COMPILED ? join(supportDir, "Harmonia") : join(import.meta.dir, "data"));
 // Team Chat was only ever a Mac app.
-if (COMPILED && !setting("DATA") && process.platform === "darwin") moveFromTeamChat();
+if (COMPILED && !setting("DATA") && isMac) moveFromTeamChat();
 mkdirSync(DATA, { recursive: true });
 
 /**
@@ -39,7 +32,7 @@ mkdirSync(DATA, { recursive: true });
  * Claude Code files a session under the folder it ran in, and Mozart runs in the data folder's mozart/.
  */
 function moveFromTeamChat() {
-  const old = join(SUPPORT, "Team Chat");
+  const old = join(supportDir, "Team Chat");
   const hasChannels = (dir: string) => existsSync(join(dir, "channels.json"));
   try {
     if (!existsSync(old) || lstatSync(old).isSymbolicLink() || !hasChannels(old)) return;

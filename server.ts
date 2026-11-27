@@ -4,28 +4,44 @@ import indexHtml from "./public/index.html" with { type: "file" };
 import appJs from "./public/app.js" with { type: "file" };
 import agentPageJs from "./public/agent-page.js" with { type: "file" };
 import slackPageJs from "./public/slack-page.js" with { type: "file" };
+import usagePageJs from "./public/usage-page.js" with { type: "file" };
+import setupPageJs from "./public/setup-page.js" with { type: "file" };
+import planUsageJs from "./public/plan-usage.js" with { type: "file" };
+import notificationsJs from "./public/notifications.js" with { type: "file" };
+import pictureViewerJs from "./public/picture-viewer.js" with { type: "file" };
+import feedbackJs from "./public/feedback.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import type { ServerWebSocket } from "bun";
-import { EFFORTS, MODELS, deleteMemory, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
+import { openFolder, openInChrome, openPath, openUrl, revealPath, run, runInTerminal } from "./platform";
+import { EFFORTS, MODELS, deleteMemory, installStarterAgents, listMemories, memoryDir, readAgent, readMemory, validMemoryName, writeAgent, writeMemory } from "./agents";
 import { CHAT_EFFORTS, CHAT_MODELS, ROSTER, USER_NAME, teammate, updateTeammate } from "./roster";
 import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
-import { CHANNEL_STATUSES, channels, createChannel, dmOf, messages, saveMessages, type Channel, type ChannelStatus, type Message } from "./store";
+import { CHANNEL_STATUSES, PERMISSION_MODES, channels, createChannel, dmOf, messages, saveChannels, saveMessages,type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
 import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
-import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, jobTitle, type Event } from "./team";
+import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, defaultPermissionMode, jobTitle,type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
+import { usageSummary } from "./usage";
+import { readSettings, saveSettings, setupChecks } from "./setup";
 import { INLINE_IMAGE, MAX_FILE, attachmentPath, dropUnsent, fileSize, findAttachment, saveAttachment, stage, takeStaged } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 4747);
 // The page's files, embedded in the compiled app.
 const PUBLIC: Record<string, string> = {
-  "index.html": indexHtml,
+  // Bun's types call an imported .html a bundle, but with `type: "file"` it is the path, like the others.
+  "index.html": indexHtml as unknown as string,
   "app.js": appJs,
   "agent-page.js": agentPageJs,
   "slack-page.js": slackPageJs,
+  "usage-page.js": usagePageJs,
+  "setup-page.js": setupPageJs,
+  "plan-usage.js": planUsageJs,
+  "notifications.js": notificationsJs,
+  "picture-viewer.js": pictureViewerJs,
+  "feedback.js": feedbackJs,
   "markdown.js": markdownJs,
   "style.css": styleCss,
 };
@@ -42,6 +58,7 @@ const broadcast = (e: Event | SlackEvent | { type: "roster"; roster: typeof ROST
   if ("channelId" in e || e.type === "channel") toSlack?.(e as Event); // "channel": its status and task, in Slack's topic
 };
 mkdirSync(TEAM_AGENTS, { recursive: true });
+installStarterAgents(ROSTER.map((t) => t.id)); // before anything can wake a teammate
 const team = new Team(broadcast, `http://127.0.0.1:${PORT}`);
 
 /** Your reaction on a message (one at a time, like a teammate's), or none. From the page, or from Slack. */
@@ -84,6 +101,9 @@ function setStatus(ch: Channel, status: ChannelStatus | undefined): string | und
 if (!channels.size) createChannel("general", DEFAULT_CWD);
 dropUnsent(messages);
 
+// A bug in a timer or promise chain is logged, not fatal: the server and everyone's chats keep running.
+process.on("uncaughtException", (e) => console.error("Uncaught exception:", e instanceof Error ? e.stack ?? e : e));
+process.on("unhandledRejection", (e) => console.error("Unhandled rejection:", e instanceof Error ? e.stack ?? e : e));
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => (slack.stop(), process.exit(0)));
 
 // Over-the-air updates (updates.ts). "Restart to update" restarts now: whatever is working is written down first and
@@ -122,6 +142,7 @@ const state = () => ({
   teamAgents: TEAM_AGENTS,
   clickupWorkspace: CLICKUP_WORKSPACE,
   clickupTaskPrefix: CLICKUP_TASK_PREFIX,
+  defaultPermissionMode: defaultPermissionMode(),
   update: updateStatus(),
   usage,
   sessions: team.sessions(),
@@ -145,23 +166,6 @@ function agentDetails(id: string) {
 
 // ---------- Desktop helpers (the Mac's open/osascript, Windows' start/explorer, xdg-open elsewhere) ----------
 
-const onWindows = process.platform === "win32";
-
-const run = async (cmd: string[]) => {
-  const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-  const out = await new Response(p.stdout).text();
-  await p.exited;
-  return { code: p.exitCode, out };
-};
-
-/** Opens a file in its default app, or shows it in the Finder. */
-const openFile = async (path: string, reveal: boolean) => {
-  // explorer.exe exits with 1 even when it worked, so its exit code says nothing.
-  if (onWindows) return run(reveal ? ["explorer.exe", `/select,${path}`] : ["explorer.exe", path]).then(() => ({ code: 0, out: "" }), () => ({ code: 1, out: "" }));
-  if (process.platform !== "darwin") return run(["xdg-open", reveal ? join(path, "..") : path]).catch(() => ({ code: 1, out: "" }));
-  return run(reveal ? ["open", "-R", path] : ["open", path]);
-};
-
 /**
  * A file attached to a message, for the page (a picture's thumbnail). Only pictures show as they are; anything else
  * downloads, and nothing in a file runs as the page (an HTML or SVG file someone attached in Slack, say).
@@ -179,17 +183,8 @@ function serveFile(path: string, name: string, type: string) {
   });
 }
 
-/** Opens a URL, folder or file with whatever the system has for it (`open` on the Mac). */
-const openWith = (target: string) =>
-  onWindows
-    ? // The shell's own handler, which goes through no command line to quote (cmd's `start` would read & and % in a URL).
-      run(["rundll32.exe", "url.dll,FileProtocolHandler", target]).catch(() => ({ code: 1, out: "" }))
-    : process.platform === "darwin"
-      ? run(["open", target])
-      : run(["xdg-open", target]).catch(() => ({ code: 1, out: "" }));
-
 /** Opens a CLI session in the Claude desktop app (it imports the session by id). */
-const openInClaude = (sessionId: string) => openWith(`claude://resume?session=${sessionId}`);
+const openInClaude = (sessionId: string) => openUrl(`claude://resume?session=${sessionId}`);
 
 /**
  * A job's session in the Claude app (the page's button, and View in Claude in Slack). An error, if it couldn't.
@@ -220,24 +215,10 @@ async function cliAuth(fresh = false) {
   return value;
 }
 
-/**
- * Runs a command in a new Terminal window (a console window on Windows), for sign-ins and installs that need you.
- * On Windows the command line is built here, quoted for cmd, and passed as it is.
- */
-const inTerminal = (argv: string[]) => {
-  if (!onWindows) {
-    const cmd = argv.join(" ");
-    return run(["osascript", "-e", `tell application "Terminal" to do script "${cmd.replace(/(["\\])/g, "\\$1")}"`, "-e", `tell application "Terminal" to activate`]);
-  }
-  const line = argv.map((a) => (/[\s"&|<>^%]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a)).join(" ");
-  const p = Bun.spawn(["cmd.exe", "/d", "/s", "/c", `"start "Harmonia" cmd.exe /k ${line}"`], { stdout: "ignore", stderr: "ignore", windowsVerbatimArguments: true } as any);
-  return p.exited.then((code) => ({ code, out: "" }));
-};
-
 /** Opens Terminal on `claude auth login`, which hands off to the browser sign-in. */
 function startCliLogin() {
   authCache = undefined;
-  return inTerminal([CLAUDE, "auth", "login", "--claudeai"]);
+  return runInTerminal([CLAUDE, "auth", "login", "--claudeai"]);
 }
 
 // ---------- HTTP ----------
@@ -261,7 +242,7 @@ Bun.serve({
     }
 
     // A chat session's job tools (job-tools.ts) call back here, with a token that's only good for that turn.
-    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|stop_job|request_tool)$/);
+    const turn = p.match(/^\/api\/turn\/([0-9a-f-]{36})\/(start_job|check_jobs|read_job|stop_job|request_tool)$/);
     if (turn && req.method === "POST") {
       const r = team.turnTool(turn[1], turn[2], await req.json().catch(() => ({})));
       return r.error ? json({ error: r.error }, 403) : json({ text: r.text });
@@ -318,10 +299,26 @@ Bun.serve({
         return json({ usage });
       }
 
+      if (p === "/api/usage/summary" && !post) {
+        const days = Math.min(Math.max(Number(url.searchParams.get("days")) || 7, 1), 365);
+        // "1 day" means today: from local midnight, so the by-day table's last row is the whole total.
+        const from = new Date();
+        from.setHours(0, 0, 0, 0);
+        return json(usageSummary(from.getTime() - (days - 1) * 86_400_000));
+      }
+
       if (p === "/api/cli-auth" && !post) return json(await cliAuth(url.searchParams.has("fresh")));
       if (p === "/api/cli-auth/login" && post) {
         const r = await startCliLogin();
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open Terminal." }, 500);
+      }
+
+      // ----- Setup check and settings.json (setup.ts) -----
+      if (p === "/api/setup" && !post) return json({ checks: await setupChecks(() => cliAuth(true), updateStatus()) });
+      if (p === "/api/settings" && !post) return json(readSettings());
+      if (p === "/api/settings" && post) {
+        const r = saveSettings(body);
+        return "error" in r ? json(r, 400) : json(r);
       }
 
       // ----- Slack -----
@@ -449,11 +446,11 @@ Bun.serve({
         if (!file || !path || !existsSync(path)) return json({ error: "That file is gone." }, 404);
         if (!f[3] && !post) return serveFile(path, file.name, file.type);
         if (!f[3] || !post) return json({ error: "not found" }, 404);
-        const r = await openFile(path, f[3] === "reveal");
+        const r = await (f[3] === "reveal" ? revealPath(path) : openPath(path));
         return r.code === 0 ? json({ ok: true }) : json({ error: `Couldn't open ${file.name}.` }, 500);
       }
 
-      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
+      const m = p.match(/^\/api\/channels\/([^/]+)\/(messages|stop|stop-job|permission|permission-mode|tools|open-session|retry|status|task|open-task|open-folder|react|feedback)$/);
       const ch = m && channels.get(m[1]);
       if (!m || !ch) return json({ error: "not found" }, 404);
 
@@ -464,6 +461,14 @@ Bun.serve({
         const err = setStatus(ch, status);
         return err ? json({ error: err }, 409) : json(ch);
       }
+      if (m[2] === "permission-mode" && post) {
+        const mode = body.mode || undefined; // empty: back to the default
+        if (mode !== undefined && !PERMISSION_MODES.includes(mode)) return json({ error: "Unknown permission mode." }, 400);
+        if (mode) ch.permissionMode = mode;
+        else delete ch.permissionMode;
+        saveChannels();
+        return json(ch);
+      }
       if (m[2] === "task" && post) {
         const err = team.setTask(ch, String(body.task ?? ""));
         return err ? json({ error: err }, 400) : json(ch);
@@ -471,13 +476,13 @@ Bun.serve({
       if (m[2] === "open-task" && post) {
         // Only the channel's own task link, and only ClickUp, in Chrome (or the default browser without it).
         if (!ch.task || !ch.task.url.startsWith("https://app.clickup.com/")) return json({ error: "This channel has no ClickUp task." }, 404);
-        let r = onWindows ? { code: 1, out: "" } : await run(["open", "-a", "Google Chrome", ch.task.url]).catch(() => ({ code: 1, out: "" }));
-        if (r.code !== 0) r = await openWith(ch.task.url);
+        let r = await openInChrome(ch.task.url);
+        if (r.code !== 0) r = await openUrl(ch.task.url);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the task." }, 500);
       }
       if (m[2] === "open-folder" && post) {
         if (!existsSync(ch.cwd)) return json({ error: `The folder is gone: ${ch.cwd}` }, 404);
-        const r = onWindows ? await openFile(ch.cwd, false) : await openWith(ch.cwd);
+        const r = await openFolder(ch.cwd);
         return r.code === 0 ? json({ ok: true }) : json({ error: "Couldn't open the folder." }, 500);
       }
       if (ch.status === "archived" && post && m[2] !== "open-session") return json({ error: `#${ch.name} is archived. Unarchive it to post.` }, 409);

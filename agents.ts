@@ -3,9 +3,17 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import dali from "./agents/dali.md" with { type: "file" };
+import elliot from "./agents/elliot.md" with { type: "file" };
+import emily from "./agents/emily.md" with { type: "file" };
+import leo from "./agents/leo.md" with { type: "file" };
+import murphy from "./agents/murphy.md" with { type: "file" };
+import sherlock from "./agents/sherlock.md" with { type: "file" };
 
-const AGENTS_DIR = join(homedir(), ".claude/agents");
-const MEMORY_ROOT = join(homedir(), ".claude/agent-memory");
+// Claude Code's own folder: ~/.claude, or CLAUDE_CONFIG_DIR when that moves it (as paths.ts and projects.ts read it).
+const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+const AGENTS_DIR = join(CLAUDE_HOME, "agents");
+const MEMORY_ROOT = join(CLAUDE_HOME, "agent-memory");
 
 export const MODELS = ["opus", "sonnet", "haiku", "fable", "inherit"] as const;
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -13,8 +21,28 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const agentFile = (id: string) => join(AGENTS_DIR, `${id}.md`);
 export const memoryDir = (id: string) => join(MEMORY_ROOT, id);
 
+// The six starter teammates, carried inside the app so a fresh machine (Windows has no installer step) has them.
+const STARTERS: Record<string, string> = { dali, elliot, emily, leo, murphy, sherlock };
+
+/** Writes the bundled file for each id whose ~/.claude/agents/<id>.md is missing. Never overwrites; an id with no bundled file is left alone. */
+export function installStarterAgents(ids: string[]) {
+  for (const id of ids) {
+    const bundled = STARTERS[id];
+    if (!bundled || existsSync(agentFile(id))) continue;
+    try {
+      mkdirSync(AGENTS_DIR, { recursive: true });
+      writeFileSync(agentFile(id), readFileSync(bundled, "utf8").replace(/\r\n/g, "\n"), { flag: "wx" }); // LF, which split() expects, even from a CRLF checkout
+      console.log(`Installed starter teammate ${agentFile(id)}`);
+    } catch (e) {
+      console.error(`Could not install ${agentFile(id)}: ${(e as Error).message}`);
+    }
+  }
+}
+
 function split(id: string) {
-  const text = readFileSync(agentFile(id), "utf8");
+  if (!existsSync(agentFile(id))) throw new Error(`${agentFile(id)} is missing, and Harmonia could not create it. Copy ${id}.md from the agents folder of the Harmonia repository to ${AGENTS_DIR}.`);
+  // A file saved on Windows may have CRLF line ends; the front matter is read as LF either way.
+  const text = readFileSync(agentFile(id), "utf8").replace(/\r\n/g, "\n");
   const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) throw new Error(`${agentFile(id)} has no frontmatter`);
   return { front: m[1], body: m[2] };
