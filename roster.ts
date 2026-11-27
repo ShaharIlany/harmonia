@@ -26,8 +26,20 @@ export const CHAT_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // `id` is the agent file name in ~/.claude/agents (claude --agent <id>) and never changes.
 // The rest is edited from the app's settings page and saved back to team.json.
 const FILE = TEAM_FILE;
+// The colours team.json shipped with before the lyre's string colours. A teammate still on one gets the new
+// default; a colour someone picked stays.
+const OLD_COLORS: Record<string, string> = {
+  dali: "#eab308",
+  leo: "#3b82f6",
+  elliot: "#22c55e",
+  sherlock: "#a855f7",
+  murphy: "#ef4444",
+  emily: "#06b6d4",
+};
 export const ROSTER: Teammate[] = JSON.parse(readFileSync(FILE, "utf8")).map((t: Teammate) => ({
   ...t,
+  // Lowercase, as the settings page's colour input gives it back: otherwise its Save button stays lit.
+  color: (t.color?.toLowerCase() === OLD_COLORS[t.id] ? (TEAM_DEFAULTS.find((d) => d.id === t.id)?.color ?? t.color) : t.color)?.toLowerCase(),
   chatModel: t.chatModel ?? "claude-opus-5-5",
   chatEffort: t.chatEffort ?? "low",
   routing: t.routing ?? TEAM_DEFAULTS.find((d) => d.id === t.id)?.routing ?? "",
