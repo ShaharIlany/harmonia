@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "start": "bun server.ts",
+    "candidate": "bun candidate.ts",
     "stub": "HARMONIA_STUB=1 PORT=4748 HARMONIA_DATA=./data-stub bun server.ts"
   },
   "type": "module"

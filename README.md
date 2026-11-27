@@ -86,6 +86,23 @@ The release builds the app with `build.sh` and publishes `Harmonia-arm64.zip`
 (about 20 MB) with its `.sha256`, and the same app as `Team-Chat-arm64.zip`:
 installs from before the rename look for that name.
 
+## Trying a change before it's merged
+
+In Claude Code, in a checkout, ask: **"let me try PR 12"** (or a branch, or
+"what I have here"). [CLAUDE.md](CLAUDE.md) tells it what to do. By hand:
+
+```bash
+bun candidate.ts pr 12
+```
+
+That runs the change as a second Harmonia, on its own port (4749 and up), from
+its own git worktree, with a copy of your data and without Slack or updates.
+Your installed app and your checkout stay as they are. The teammates are real,
+and share their agent files, memories and channel folders with your app.
+`bun candidate.ts stop pr 12` stops it, `changes` and `restore` show and undo
+what happened to the agent files and memories, and `clean` deletes it. The
+other options are at the top of [candidate.ts](candidate.ts).
+
 ## Harmonia.app
 
 From a checkout:
@@ -547,6 +564,7 @@ Jobs and memories stay.
 | `paths.ts` | Data folder (and moving Team Chat's over), TeamAgents folder, default channel folder, embedded-file detection |
 | `env.ts` | Reads a `HARMONIA_*` setting, or its `TEAM_CHAT_*` name from before the rename |
 | `main.ts` | Entry point of the compiled server (`--job-tools` runs the job tools) |
+| `candidate.ts` | Runs a pull request or branch as a second Harmonia, to try it before it's merged |
 | `macapp/` | The Swift app shell, Info.plist, icon script and `build.sh` |
 | `.github/workflows/release.yml` | Builds and publishes a release for every version tag |
 | `.github/workflows/tag.yml` | Tags every push to `main` as the next patch version, and starts its release |
