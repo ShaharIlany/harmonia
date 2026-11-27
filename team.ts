@@ -47,7 +47,7 @@ export { DEFAULT_CWD, TEAM_AGENTS };
 
 // What used to be defined here and is imported from this file elsewhere (server.ts, the tests).
 export { parseTask, defaultPermissionMode, permissionModeOf, TEAM_RULES_FILE, chatPrompt, chatTitle, jobTitle };
-export { CATCH_UP_LINES, OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, capCatchUp, catchUpLines, clipOthers, reportInChat } from "./lines";
+export { OTHERS_MESSAGE_CHARS, REPORT_IN_CHAT, bubbles, catchUpLines, clipOthers, reportInChat } from "./lines";
 export { etaWarning, readEta } from "./eta";
 
 export type SessionView = AgentSession & {

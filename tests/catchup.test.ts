@@ -16,31 +16,10 @@ beforeAll(async () => {
 });
 
 const msg = (i: number, extra: object = {}): any => ({ id: `m${i}`, ts: 1000 + i, author: "elliot", text: `hi ${i}`, ...extra });
-const card = (i: number, status: string): any =>
-  msg(i, { kind: "permission", author: "system", meta: { permission: { status, agentId: "elliot", rule: "Bash" } } });
 
-test("catch-up keeps the last 40 lines and counts the rest", () => {
-  const all = Array.from({ length: 112 }, (_, i) => msg(i));
-  const { kept, dropped } = t.capCatchUp(all);
-  expect(kept.length).toBe(t.CATCH_UP_LINES);
-  expect(kept[0].id).toBe("m72");
-  expect(dropped).toBe(72);
-  expect(t.capCatchUp(all.slice(0, 40)).dropped).toBe(0);
-});
-
-test("a pending card among the dropped lines is kept, a decided one is not", () => {
-  const all = [card(0, "pending"), card(1, "once"), ...Array.from({ length: 60 }, (_, i) => msg(i + 2))];
-  const { kept, dropped } = t.capCatchUp(all);
-  expect(kept[0].id).toBe("m0");
-  expect(kept.some((m) => m.id === "m1")).toBe(false);
-  expect(kept.length).toBe(t.CATCH_UP_LINES + 1);
-  expect(dropped).toBe(21);
-});
-
-test("the note comes first and names the channel file", () => {
-  const lines = t.catchUpLines(Array.from({ length: 50 }, (_, i) => msg(i)), "c1");
-  expect(lines.length).toBe(42); // the note, the day line, 40 messages
-  expect(lines[0]).toMatch(/^\(10 earlier messages here are not shown\..*c1\.json/);
+test("every new line is replayed, however many", () => {
+  const lines = t.catchUpLines(Array.from({ length: 120 }, (_, i) => msg(i)), "c1");
+  expect(lines.length).toBe(121); // the day line and 120 messages
 });
 
 test("long messages from others are clipped, the user's never", () => {
