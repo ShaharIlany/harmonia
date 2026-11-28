@@ -37,6 +37,7 @@ export type Message = {
     routeReact?: string[]; // user messages: the teammates Mozart had react to it instead of answering (meta.reactions)
     feedbackFor?: string; // user messages: feedback for this teammate on the replyTo message (it amends its rules)
     routeWhy?: string;
+    routeBy?: "mozart" | "rule"; // who decided routedTo: the channel's Mozart, or a rule when Mozart failed or isn't running
     jobId?: string; // kind "job": the card for that job
     retried?: boolean; // kind "error": Try again was used
     // author "system": the chat paused after too many handoffs. `agents`: the teammates it held back, which Continue wakes,
@@ -76,6 +77,7 @@ export type Job = {
   feedback?: boolean; // a feedback job: the teammate amending its own rules (its title quotes the feedback)
   size?: "small"; // older jobs: ran at Sonnet and medium effort (SMALL_JOB); kept when continued
   model?: string; // the model the job runs on ("sonnet", "opus"): the teammate's pick, else its agent file's; kept when continued
+  permissionMode?: PermissionMode; // what it last ran under, so its card can say so when that wasn't the default
   baseline?: number; // input tokens of its first API call: what a job carries before it has done anything
 };
 

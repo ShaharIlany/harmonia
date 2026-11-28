@@ -345,7 +345,7 @@ export class Team {
       // A message for a teammate by name that it answers, and a teammate's message nobody needs to answer, keep no note:
       // that's the usual case.
       if (d.react.length || (!addressed && (msg.author === "user" || d.to.length))) {
-        msg.meta = { ...msg.meta, routedTo: d.to, routeWhy: d.by === "mozart" ? `Mozart: ${d.why}` : d.why };
+        msg.meta = { ...msg.meta, routedTo: d.to, routeWhy: d.by === "mozart" ? `Mozart: ${d.why}` : d.why, routeBy: d.by };
         if (d.react.length) msg.meta.routeReact = d.react.map((r) => r.by);
         saveMessages(ch.id);
         this.emit({ type: "update", channelId: ch.id, message: msg });
@@ -1077,6 +1077,7 @@ export class Team {
   private runJob(ch: Channel, job: Job, prompt: string, resume: boolean, fresh?: string) {
     const key = `${ch.id}:${job.id}`;
     Object.assign(job, { status: "running", activity: "starting", endedAt: undefined });
+    job.permissionMode = permissionModeOf(ch);
     saveChannels();
     this.emitJob(ch, job);
 
@@ -1088,7 +1089,7 @@ export class Team {
       resume,
       title: jobTitle(ch, job.agentId, job.title),
       allowedTools: [...ch.allowedTools, ...job.allowed],
-      permissionMode: CLAUDE_PERMISSION_MODE[permissionModeOf(ch)],
+      permissionMode: CLAUDE_PERMISSION_MODE[job.permissionMode],
       systemPrompt: jobPrompt(ch, job.agentId),
       ...(job.size === "small" ? SMALL_JOB : job.model ? { model: job.model } : {}),
       onActivity: (s) => {

@@ -203,6 +203,39 @@ function maybeInstall() {
 /** Exit code that tells the app shell (macapp/main.swift) to quit and open itself again: the new build. */
 export const RELAUNCH_EXIT = 75;
 
+// ---------- Restarting for settings ----------
+// Settings that need a restart (the settings page) restart the same build the way an update does: RELAUNCH_EXIT, and
+// the app shell opens Harmonia again. Unlike "Restart to update" it never cuts anyone off: it waits until no teammate
+// and no job is working.
+
+/** Why this run can't restart itself, if it can't: only the app shell can open Harmonia again. */
+export function cantRestart(): string | undefined {
+  if (!build) return COMPILED ? "This build has no build.json." : "Harmonia is running from source here: stop it and start it again.";
+  if (WIN && !existsSync(join(APP, "Harmonia.exe"))) return "This is the bare server, without the Harmonia window to start it again: stop it and start it again.";
+}
+let restartAsked = false;
+let restartTimer: ReturnType<typeof setInterval> | undefined;
+export const restartPending = () => restartAsked;
+/** "Restart now": right away when nobody is working, else as soon as nobody is. An error message if it can't. */
+export function restartWhenIdle(): string | undefined {
+  const why = cantRestart();
+  if (why) return why;
+  restartAsked = true;
+  restartTimer ??= setInterval(maybeRestart, 5_000);
+  maybeRestart();
+}
+function maybeRestart() {
+  if (!restartAsked || busyCount() > 0 || status.state === "installing") return;
+  restartAsked = false;
+  log("restarting for settings");
+  try {
+    beforeRestart();
+  } catch (e) {
+    log(`saving running work failed: ${(e as Error).message}`);
+  }
+  setTimeout(() => process.exit(RELAUNCH_EXIT), 300);
+}
+
 /**
  * Swaps the build while this one still runs (macOS keeps a running app going when its files are moved), then exits
  * with RELAUNCH_EXIT. The app shell quits and reopens itself through LaunchServices. Nothing can outlive the app to do

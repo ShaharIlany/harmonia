@@ -244,21 +244,35 @@
     $("save-bar").classList.toggle("dirty", !!diff.length);
   }
 
+  /** Saves the form's changes; false if saving failed (the error shows in the save bar). */
   async function save(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     const v = formValues(), keys = changed();
-    if (!keys.length) return;
+    if (!keys.length) return true;
     const patch = Object.fromEntries(keys.map((k) => [k, v[k]]));
     $("ag-save").disabled = true;
     try {
       agent = await api(`/api/agents/${agent.id}`, patch);
       draw();
       toast(`Saved. ${agent.name}'s next run uses the new settings.`);
+      return true;
     } catch (err) {
       $("save-status").textContent = err.message;
       $("ag-save").disabled = false;
+      return false;
     }
   }
+  // Leaving the page (or the window) with unsaved changes asks first.
+  const unsaved = () => (agent && S.view === agent.id && $("ag-form") ? changed().length : 0);
+  window.TeamApp.onLeave(async () => {
+    const n = unsaved();
+    if (!n) return true;
+    const choice = await window.TeamApp.askUnsaved(`${agent.name} has ${n} unsaved change${n > 1 ? "s" : ""}.`);
+    return choice === "discard" || (choice === "save" && (await save()));
+  });
+  window.addEventListener("beforeunload", (e) => {
+    if (unsaved()) e.preventDefault();
+  });
 
   // ---------- Memories ----------
   async function openMemory(name) {

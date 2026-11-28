@@ -171,22 +171,29 @@
 
   function renderSidebar() {
     const row = (c) => {
-      const n = S.unread[c.id] || 0;
+      // Archived channels are read-only: muted, an archive icon, and no unread count.
+      const archived = c.status === "archived";
+      const n = archived ? 0 : S.unread[c.id] || 0;
       const active = S.view === "channel" && c.id === S.current;
       const last = S.previews[c.id];
-      // Channels you're working in show their last message under the name; the rest are one line.
-      const tall = Object.keys(S.activity[c.id] || {}).length || c.status === "inProgress" || c.status === "waiting";
+      // Channels you're working in show their last message under the name; the rest are one line. Typing never changes a
+      // row's height (rows below would jump): a two-line row shows it in its second line, a one-line row in place of the time.
+      const tall = c.status === "inProgress" || c.status === "waiting";
+      const typing = !tall && Object.keys(S.activity[c.id] || {}).length;
       const task = c.task ? ` <span class="badge mono" title="ClickUp ${esc(c.task.id)}">${esc(c.task.id)}</span>` : "";
       const name = tall
         ? `<span class="two"><span class="nm"><span>${esc(c.name)}</span>${task}</span><span class="sub">${previewHtml(c)}</span></span>`
         : `<span class="lbl">${esc(c.name)}</span>${task}`;
       return `<li><button data-ch="${c.id}" class="row ${tall ? "tall" : ""} ${active ? "active" : ""} ${n ? "has-unread" : ""} ${c.status === "archived" ? "archived" : ""}" aria-haspopup="menu">
-        ${ic("hash", "sm hash")}${name}<span class="meta">${last && !n ? listTime(last.ts) : ""}</span>
+        ${ic(archived ? "archive" : "hash", "sm hash")}${name}<span class="meta ${typing ? "busy" : ""}">${typing ? "typing…" : last && !n ? listTime(last.ts) : ""}</span>
         ${muted.has(c.id) ? `<span class="flag" title="Muted">${ic("bell-off", "xs")}</span>` : ""}${pinned.has(c.id) ? `<span class="flag" title="Pinned">${ic("pin", "xs")}</span>` : ""}${n ? `<span class="unread ${muted.has(c.id) ? "muted" : ""}">${n}</span>` : ""}</button></li>`;
     };
     const byLatest = (a, b) => ((S.previews[b.id] || {}).ts || 0) - ((S.previews[a.id] || {}).ts || 0);
     const q = S.filter.trim().toLowerCase();
-    const shown = S.channels.filter((c) => !c.dm && (!q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q))));
+    // A channel matches by its name, its task, or one of its jobs' titles.
+    const shown = S.channels.filter((c) => !c.dm && (!q || c.name.toLowerCase().includes(q) || (c.task && c.task.id.toLowerCase().includes(q)) || (q.length > 2 && (c.jobs || []).some((j) => j.title.toLowerCase().includes(q)))));
+    // The search finds teammates too: their DMs, by name or role.
+    const mates = S.roster.filter((t) => !q || t.name.toLowerCase().includes(q) || t.role.toLowerCase().includes(q));
     const pins = shown.filter((c) => pinned.has(c.id) && c.status !== "archived").sort(byLatest);
     $("channels").innerHTML =
       (pins.length ? `<li class="group-h ch-group">${ic("pin", "xs")}Pinned</li>` + pins.map(row).join("") : "") +
@@ -201,13 +208,13 @@
         }
         return `<li class="group-h ch-group">${st.id ? `<span class="dot status-dot s-${st.id}" aria-hidden="true"></span>` : ""}${st.label}</li>` + list.map(row).join("");
       }).join("") +
-      (q && !shown.length ? `<li class="c-none">No channel matches “${esc(S.filter)}”.</li>` : "");
+      (q && !shown.length && !mates.length ? `<li class="c-none">Nothing matches “${esc(S.filter)}”.</li>` : "");
     const busy = new Set([
       ...S.sessions.filter((x) => x.busyIn).map((x) => x.agentId),
       ...S.channels.flatMap((c) => (c.jobs || []).filter((j) => j.status === "running").map((j) => j.agentId)),
     ]);
     // Each teammate is a DM: click to write to them alone. Their settings are in the row's menu and the DM's header.
-    $("people").innerHTML = S.roster
+    $("people").innerHTML = mates
       .map((t) => {
         const c = dmWith(t.id);
         const n = (c && S.unread[c.id]) || 0;
@@ -227,7 +234,7 @@
   });
   $("search").addEventListener("keydown", (e) => {
     if (e.key === "Escape") (e.target.value = ""), (S.filter = ""), renderSidebar();
-    if (e.key === "Enter") $("channels").querySelector("[data-ch]")?.click();
+    if (e.key === "Enter") ($("channels").querySelector("[data-ch]") || $("people").querySelector("[data-person]"))?.click();
   });
 
   $("channels").addEventListener("click", (e) => {
@@ -262,12 +269,13 @@
   // ---------- Claude CLI sign-in ----------
   function renderCli() {
     const c = S.cli;
-    if (!c) return ($("cli").innerHTML = "");
+    const out = !!c && !c.loggedIn;
+    $("cli-banner").hidden = !out;
+    $("cli-banner").innerHTML = out ? `<span><span class="dot bad" aria-hidden="true"></span>Claude Code is signed out</span><button type="button" class="btn outline sm" data-cli-login>Quick login</button>` : "";
+    if (!c || out) return ($("cli").innerHTML = "");
     const until = c.expiresAt ? new Date(c.expiresAt).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
-    $("cli").innerHTML = c.loggedIn
-      ? `<span class="dot ok"></span><span title="Claude CLI signed in${until ? ` until ${until}` : ""}">CLI signed in</span>
-          <button type="button" class="cli-btn relogin" data-cli-login title="Sign in again">Re-login</button>`
-      : `<span class="dot bad"></span><span>CLI signed out</span> · <button type="button" class="cli-btn" data-cli-login>Quick login</button>`;
+    $("cli").innerHTML = `<span title="Claude CLI signed in${until ? ` until ${until}` : ""}">CLI signed in</span>
+          <button type="button" class="cli-btn relogin" data-cli-login title="Sign in again">Re-login</button>`;
   }
   let loginPoll;
   async function refreshCli(fresh) {
@@ -292,7 +300,7 @@
     loginPoll = setInterval(async () => {
       const c = await refreshCli(true);
       if ((c.loggedIn && c.expiresAt !== before) || ++tries > 60) clearInterval(loginPoll);
-      if (c.loggedIn && c.expiresAt !== before) toast("Claude CLI is signed in.");
+      if (c.loggedIn && c.expiresAt !== before) toast("Claude CLI is signed in."), document.dispatchEvent(new Event("harmonia:cli-signed-in"));
     }, 4000);
   }
   document.addEventListener("click", (e) => {
@@ -302,36 +310,8 @@
   // ---------- Messages ----------
   const AUTH_ERROR = /authenticat|oauth|not logged in|log ?in|sign ?in|401/i;
 
-  /** A permission or tool-request card, with its buttons while it waits on you. */
-  function cardHtml(m, name) {
-    const where = currentChannel().dm ? "DM" : "channel";
-    const done = (ok, text) => `<div class="decided">${ic(ok ? "check" : "x", `sm ${ok ? "ok" : "no"}`)}<span><b>${text}</b></span></div>`;
-    if (m.kind === "permission") {
-      const p = m.meta.permission;
-      if (p.status) return done(p.status !== "denied", { once: "Allowed once", always: `Allowed ${currentChannel().dm ? "in this DM" : `in #${esc(currentChannel().name)}`}`, denied: "Denied" }[p.status] + ` · ${esc(p.tool)}: <code>${esc(p.summary)}</code>`);
-      return `<div class="card approve">
-        <div class="hd"><span class="ic">${ic("shield")}</span><div><div class="ttl">${esc(name)}${p.jobId ? `'s job ${esc(p.jobId)}` : ""} needs your OK</div>
-          <div class="desc">It wants to use ${esc(p.tool)}</div></div></div>
-        <div class="cmd"><span class="pr">$</span><span>${esc(p.summary)}</span></div>
-        <div class="ft">
-          <button class="btn default sm" data-perm="once" data-mid="${m.id}">${ic("check", "sm")}Allow once</button>
-          <button class="btn outline sm" data-perm="always" data-mid="${m.id}" title="Allow ${esc(p.rule)} for the rest of this ${where}">Always in this ${where}</button>
-          <span class="grow"></span>
-          <button class="btn ghost-destructive sm" data-perm="denied" data-mid="${m.id}">${ic("x", "sm")}Deny</button></div>
-      </div>`;
-    }
-    const r = m.meta.toolRequest;
-    if (r.status) return done(r.status === "approved", r.status === "approved" ? `Approved: ${esc(name)} has ${r.tools.length > 1 ? "them" : "it"} from now on` : "Denied");
-    return `<div class="card approve">
-      <div class="hd"><span class="ic">${ic("wrench")}</span><div><div class="ttl">${esc(name)} asks for ${r.tools.length > 1 ? "new tools" : "a new tool"}</div>
-        <div class="desc perm-reason" dir="${textDir(r.reason)}">${esc(r.reason)}</div></div></div>
-      <div class="chips">${r.tools.map((x) => `<span class="chip">${esc(x.name)}</span>`).join("")}</div>
-      <div class="ft">
-        <button class="btn default sm" data-tools="approved" data-mid="${m.id}" title="Adds ${r.tools.length > 1 ? "them" : "it"} to ${esc(name)}'s tools, in the chat and in jobs">${ic("check", "sm")}Approve</button>
-        <span class="grow"></span>
-        <button class="btn ghost-destructive sm" data-tools="denied" data-mid="${m.id}">${ic("x", "sm")}Deny</button></div>
-    </div>`;
-  }
+  /** A permission or tool-request card (public/cards.js), with its buttons while it waits on you. */
+  const cardHtml = (m, name) => window.approvalCard(m, name, currentChannel(), textDir);
 
   function msgHtml(m, prev) {
     if (m.author === "system") {
@@ -411,11 +391,16 @@
     const who = names(meta.routedTo);
     const reacted = names(meta.routeReact);
     const why = meta.routeWhy || "";
-    const mozart = /^Mozart: /.test(why);
+    const mozart = meta.routeBy === "mozart" || /^Mozart: /.test(why);
     const reason = esc(why.replace(/^Mozart: /, ""));
     const decided = `Mozart${who ? ` → ${who}` : ":"}${reacted ? `${who ? " ·" : ""} ${reacted} reacted instead` : ""}${reason ? ` · ${reason}` : ""}`;
     const text = mozart ? (who || reacted ? decided : `Mozart: nobody needs to answer${reason ? ` (${reason})` : ""}`) : `→ ${who || "nobody"}${reason ? ` · ${reason}` : ""}`;
-    const tip = mozart ? "This channel's Mozart decided who answers, and whether a reaction is enough." : "Mozart couldn't answer, so a simple rule chose: whoever you're talking with, else the teammate who takes new topics.";
+    // The server says who decided (routeBy). Notes from before it said so only claim what their text shows.
+    const tip = mozart
+      ? "This channel's Mozart decided who answers, and whether a reaction is enough."
+      : meta.routeBy === "rule"
+        ? "Mozart didn't decide this one (it failed, timed out or isn't running), so a rule chose: the teammate waiting on your answer, else the one you were talking with, else the teammate who takes new topics."
+        : "Who answers this message, and why.";
     return `<div class="routed" title="${tip}">${text}</div>`;
   }
 
@@ -574,12 +559,20 @@
     const [label, cls] = STATUS[j.status] || [j.status, "off"];
     const run = j.status === "running";
     const took = j.endedAt ? dur(j.endedAt - j.startedAt) : dur(Date.now() - j.startedAt);
-    const when = run ? `Started ${fmtTime(j.startedAt)}` : j.endedAt ? `Finished ${fmtTime(j.endedAt)}` : "";
+    // The footer says what the job's state is, not just that it ended: a job waiting for your OK hasn't finished.
+    const ask = j.status === "blocked" && (S.msgs[ch.id] || []).find((m) => m.kind === "permission" && m.meta.permission.jobId === j.id && m.meta.permission.status === "pending");
+    const ended = { done: "Done", failed: "Failed", stopped: "Stopped" }[j.status];
+    const when = run
+      ? `Started ${fmtTime(j.startedAt)}`
+      : j.status === "blocked"
+        ? `Waiting for your OK${j.endedAt ? ` since ${fmtTime(j.endedAt)}` : ""}${ask ? ` · <button type="button" class="cli-btn" data-goto="${ask.id}">Show the request</button>` : ""}`
+        : j.endedAt ? `${ended || "Ended"} ${fmtTime(j.endedAt)}` : "";
     // The model it runs on: the teammate's pick or its default ("small" jobs from before the pick ran on Sonnet).
     const model = j.size === "small" ? "sonnet" : j.model;
     return `<div class="card job job-${cls}" data-job="${j.id}" style="--c:${t ? t.color : "var(--muted-foreground)"}">
       <div class="job-h"><span class="badge mono">${esc(j.id)}</span><span class="t">${esc(j.title)}</span>
         ${model ? `<span class="badge" title="The model this job runs on">${esc(model[0].toUpperCase() + model.slice(1))}</span>` : ""}
+        ${j.permissionMode && j.permissionMode !== S.defaultPermissionMode && PERMISSION_MODES[j.permissionMode] ? `<span class="badge job-pm" title="${esc(PERMISSION_MODES[j.permissionMode][1])} Not the default for new channels.">${esc(PERMISSION_MODES[j.permissionMode][0])}</span>` : ""}
         <span class="badge tone tone-${cls}">${run ? `<span class="dot pulse"></span>` : ""}${label}</span></div>
       ${run ? `<div class="indet"></div>` : ""}
       <div class="job-b">${run
@@ -645,8 +638,25 @@
   $("messages").addEventListener("scroll", () => (stuck = nearBottom()), { passive: true });
   $("messages").addEventListener("load", (e) => e.target.tagName === "IMG" && stuck && toBottom(), true);
 
+  // A teammate's reply is posted after the cards its turn made (start_job runs before the turn's text is in), so
+  // "On it, I started a job." would read under its own job card. On screen, a turn's words come first and its cards
+  // under them. Only the order shown changes, not what's stored.
+  const CARDS = new Set(["job", "permission", "tools"]);
+  const sameTurn = (card, m) => CARDS.has(card.kind) && card.author === m.author && (card.meta?.answers ? card.meta.answers === m.meta.answers : m.ts - card.ts < 60_000);
+  function displayOrder(list) {
+    const out = list.slice();
+    for (let i = 1; i < out.length; i++) {
+      const m = out[i];
+      if ((m.kind && m.kind !== "text") || !m.meta?.answers || !byId(m.author)) continue;
+      let j = i;
+      while (j > 0 && sameTurn(out[j - 1], m)) j--;
+      if (j < i) out.splice(j, 0, ...out.splice(i, 1));
+    }
+    return out;
+  }
+
   function renderMessages() {
-    const list = S.msgs[S.current] || [];
+    const list = displayOrder(S.msgs[S.current] || []);
     const el = $("messages");
     if (!list.length) {
       const t = dmMate(currentChannel());
@@ -678,6 +688,13 @@
     const prev = list[list.length - 2];
     const stick = nearBottom() || m.author === "user";
     if (list.length === 1) return renderMessages();
+    // A turn's text that goes above its cards (displayOrder): draw the list again, at the bottom if you were there.
+    if (displayOrder(list.slice(-4)).at(-1) !== m) {
+      const top = $("messages").scrollTop;
+      renderMessages();
+      if (!stick) $("messages").scrollTop = top;
+      return;
+    }
     $("messages").insertAdjacentHTML("beforeend", dayDivider(m, prev) + msgHtml(m, prev));
     renderStack();
     clampLong($("messages"));
@@ -866,6 +883,23 @@
     e.preventDefault();
     openMenu(found[0], { x: e.clientX, y: e.clientY }, found[1]);
   });
+  // Phones have no hover and no right-click: a long press on a message opens its menu.
+  let pressTimer;
+  $("messages").addEventListener(
+    "touchstart",
+    (e) => {
+      const bubble = e.target.closest(".bubble");
+      clearTimeout(pressTimer);
+      if (!bubble || e.touches.length > 1 || e.target.closest("a, button, textarea, input, summary")) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      pressTimer = setTimeout(() => {
+        const found = menuFor(bubble);
+        if (found && menuEl.hidden) openMenu(found[0], { x, y }, found[1]);
+      }, 500);
+    },
+    { passive: true },
+  );
+  for (const ev of ["touchend", "touchmove", "touchcancel"]) $("messages").addEventListener(ev, () => clearTimeout(pressTimer), { passive: true });
   // ⌘K: the channel search.
   document.addEventListener("keydown", (e) => {
     if (e.key === "k" && (e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -1203,6 +1237,18 @@
     renderAsks();
   }
   $("toggle-asks").addEventListener("click", () => setAsksOpen($("asks").hidden));
+  /** × on either panel, and Esc, close the side panel: Waiting on you doesn't fall back to Sessions. */
+  function closePanels() {
+    if (!$("asks").hidden) setAsksOpen(false);
+    setSessionsOpen(false);
+  }
+  // Esc closes the side panel, unless something nearer uses it (a menu, a dialog, a field, the composer's pop-up or reply).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented || S.view !== "channel" || !menuEl.hidden || document.querySelector("dialog[open]")) return;
+    if (e.target.closest("input, select, textarea, [contenteditable]") && e.target !== $("input")) return;
+    if ($("asks").hidden && $("app").classList.contains("sessions-closed")) return;
+    closePanels();
+  });
 
   async function sendAnswer(id) {
     const chId = S.current;
@@ -1258,7 +1304,7 @@
     const b = e.target.closest("button");
     if (!b) return;
     const d = b.dataset;
-    if (d.askClose !== undefined) return setAsksOpen(false);
+    if (d.askClose !== undefined) return closePanels();
     if (d.askSend) return sendAnswer(d.askSend);
     if (d.askPick) {
       // The same answer again takes it out of the box.
@@ -1278,6 +1324,23 @@
   // ---------- Views ----------
   const currentChannel = () => S.channels.find((c) => c.id === S.current);
 
+  // A page with edits you haven't saved (a teammate's settings, the Setup page's settings) registers a guard, and every
+  // way off the page (a channel, a DM, another page) asks it first, so a slip doesn't throw the edits away.
+  const leaveGuards = [];
+  const onLeave = (guard) => leaveGuards.push(guard);
+  async function canLeave() {
+    for (const guard of leaveGuards) if (!(await guard())) return false;
+    return true;
+  }
+  /** Save / Discard / Keep editing. Resolves "save", "discard" or "keep" (Esc keeps editing). */
+  function askUnsaved(text) {
+    const d = $("leave-dialog");
+    $("leave-text").textContent = text;
+    d.returnValue = "";
+    d.showModal();
+    return new Promise((resolve) => d.addEventListener("close", () => resolve(d.returnValue || "keep"), { once: true }));
+  }
+
   function showView(view) {
     S.view = view;
     $("channel-view").hidden = view !== "channel";
@@ -1292,6 +1355,7 @@
   }
 
   async function openChannel(id) {
+    if (!(await canLeave())) return;
     if (S.current !== id && replyTo) setReply(null);
     S.current = id;
     S.unread[id] = 0;
@@ -1375,9 +1439,11 @@
     $("composer").hidden = archived;
     renderAttachBar();
     $("ch-status").hidden = !c.status;
-    $("ch-status").innerHTML = c.status ? `<span class="dot status-dot s-${c.status}" aria-hidden="true"></span>${esc(statusLabel(c.status))}${ic("down", "xs")}` : "";
+    $("ch-status").innerHTML = c.status ? `<span class="dot status-dot s-${c.status}" aria-hidden="true"></span><span class="st-label">${esc(statusLabel(c.status))}</span>${ic("down", "xs")}` : "";
+    if (c.status) $("ch-status").setAttribute("aria-label", `Status: ${statusLabel(c.status)}. Change it`);
     const t = dmMate(c);
     $("ch-name").textContent = t ? t.name : c.name;
+    $("ch-name").title = t ? t.name : `#${c.name}`;
     $("ch-av").innerHTML = t ? `<span class="avatar sm">${t.avatar}</span>` : ic("hash");
     $("ch-av").style.setProperty("--c", t ? t.color : chColor(c));
   }
@@ -1398,6 +1464,7 @@
       const updated = await api(`/api/channels/${c.id}/permission-mode`, { mode });
       const i = S.channels.findIndex((x) => x.id === c.id);
       S.channels[i] = { ...updated, jobs: c.jobs };
+      if (c.id === S.current) renderSubtitle();
       toast(`#${c.name}: permissions set.`);
     } catch (err) {
       toast(err.message);
@@ -1407,19 +1474,37 @@
   $("ch-menu").addEventListener("click", (e) => currentChannel() && openMenu(channelMenu(currentChannel()), atButton(e.currentTarget), e.currentTarget));
   $("unarchive-btn").addEventListener("click", () => setStatus(currentChannel(), ""));
 
-  /** The header's second line: who's typing, like WhatsApp, or else the channel's folder. */
+  // What a channel's jobs may do without asking, shown next to its folder: it's the riskiest setting in the app.
+  const PERMISSION_MODES = {
+    bypass: ["Runs without asking", "Jobs here run every command and edit without asking you."],
+    acceptEdits: ["Asks before commands", "Jobs here edit files freely and ask before running commands."],
+    ask: ["Asks first", "Jobs here ask before every edit and command."],
+  };
+  function permissionHtml(c) {
+    if (c.dm) return "";
+    const mode = c.permissionMode || S.defaultPermissionMode;
+    const [label, tip] = PERMISSION_MODES[mode] || [];
+    if (!label) return "";
+    return `<button type="button" class="perm-mode pm-${mode}" data-perm-mode title="${esc(tip)}${c.permissionMode ? "" : " (the default)"} Click to change it.">${mode === "bypass" ? "⏵⏵ " : ""}${esc(label)}</button>`;
+  }
+  $("ch-folder").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-perm-mode]");
+    const c = currentChannel();
+    if (!b || !c) return;
+    const pm = (id, label) => ({ label, checked: (c.permissionMode || S.defaultPermissionMode) === id, run: () => setPermissionMode(c, id) });
+    openMenu([{ head: "Permissions" }, pm("bypass", "Run everything without asking"), pm("acceptEdits", "Edit files freely, ask before commands"), pm("ask", "Ask before edits and commands")], atButton(b), b);
+  });
+
+  /** The header's second line: the channel's folder and permissions. Who's typing shows over the composer, so this line
+   * stays put while a teammate answers. */
   function renderSubtitle() {
     const c = currentChannel();
     if (!c) return;
-    const typing = Object.keys(S.activity[c.id] || {}).map(byId).filter(Boolean);
     const el = $("ch-folder");
-    el.classList.toggle("typing-now", typing.length > 0);
     const link = (S.slackLinks || []).find((l) => l.channelId === c.id);
     const t = dmMate(c);
     const where = link && (link.kind === "dm" ? "your Slack DM" : link.kind === "mate" ? `your Slack DM with ${t ? t.name : "them"}` : link.kind === "group" ? "a Slack group DM" : `Slack #${link.name || "channel"}`);
-    el.innerHTML = typing.length
-      ? esc(c.dm ? "typing…" : `${typing.map((t) => t.name).join(", ")} ${typing.length > 1 ? "are" : "is"} typing…`)
-      : `${t ? `<span>${esc(t.role)}</span>·` : ""}${ic("folder", "xs")}<span>${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>${link ? `<span>· linked to ${esc(where)}</span>` : ""}`;
+    el.innerHTML = `${t ? `<span>${esc(t.role)}</span>·` : ""}${ic("folder", "xs")}<span>${esc(c.cwd.replace(/^\/Users\/[^/]+/, "~"))}</span>${link ? `<span>· linked to ${esc(where)}</span>` : ""}${permissionHtml(c)}`;
     el.title = c.cwd;
   }
 
@@ -1438,7 +1523,8 @@
   }
   window.addEventListener("focus", () => setTimeout(seen, 0));
 
-  function openAgent(id) {
+  async function openAgent(id) {
+    if (!(await canLeave())) return;
     showView(id);
     window.AgentPage.render(id);
   }
@@ -1469,20 +1555,23 @@
           .join("\n");
     el.innerHTML = `<span class="dot ${cls}" aria-hidden="true"></span><span class="ts-text">${esc(text)}</span>`;
   }
-  function openSlack() {
+  async function openSlack() {
+    if (!(await canLeave())) return;
     showView("slack");
     renderSlackStatus();
     window.SlackPage.render();
   }
   $("slack-status").addEventListener("click", openSlack);
-  function openSetup() {
+  async function openSetup() {
+    if (!(await canLeave())) return;
     showView("setup");
     window.SetupPage.render();
   }
   $("setup-link").addEventListener("click", openSetup);
 
   // The plan-usage meters at the top of the sidebar open the Usage page (usage-page.js).
-  function openUsage() {
+  async function openUsage() {
+    if (!(await canLeave())) return;
     showView("usage");
     window.UsagePage.render();
   }
@@ -1558,9 +1647,9 @@
         e.preventDefault();
         return pick(popItems[popSel]);
       }
-      if (e.key === "Escape") return (pop.hidden = true);
+      if (e.key === "Escape") return e.preventDefault(), (pop.hidden = true);
     }
-    if (e.key === "Escape" && replyTo) return setReply(null);
+    if (e.key === "Escape" && replyTo) return e.preventDefault(), setReply(null);
     if (composerLists.onKey(e, input)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
@@ -1732,11 +1821,43 @@
   });
 
   // ---------- New channel ----------
-  $("add-channel").addEventListener("click", () => {
+  // As store.ts's createChannel names it, so you see the name before you create it.
+  const channelSlug = (name) => name.toLowerCase().replace(/[^\p{L}\d]+/gu, "-").replace(/^-|-$/g, "") || "channel";
+  function showSlug() {
+    $("new-channel-name").removeAttribute("aria-invalid");
+    const name = $("new-channel-name").value.trim();
+    $("new-channel-slug").textContent = name && channelSlug(name) !== name ? `Will be created as #${channelSlug(name)}` : "";
+  }
+  const folderExists = (path) => api("/api/folder-check", { path }).then((r) => r.exists, () => true);
+  let folderTimer;
+  function checkFolder() {
+    clearTimeout(folderTimer);
+    const field = $("new-channel-cwd");
+    folderTimer = setTimeout(async () => {
+      const path = field.value.trim();
+      const ok = !path || (await folderExists(path));
+      if (field.value.trim() !== path) return; // typed on since
+      field.setAttribute("aria-invalid", String(!ok));
+      $("new-channel-folder").textContent = !path ? "" : ok ? "✓ Folder found" : "No such folder";
+      $("new-channel-folder").classList.toggle("bad", !ok);
+    }, 250);
+  }
+  $("new-channel-name").addEventListener("input", showSlug);
+  $("new-channel-cwd").addEventListener("input", checkFolder);
+  $("add-channel").addEventListener("click", async () => {
     $("new-channel-form").reset();
-    $("new-channel-cwd").value = currentChannel()?.cwd || S.defaultCwd;
     $("new-channel-error").textContent = "";
+    $("new-channel-slug").textContent = "";
+    $("new-channel-name").removeAttribute("aria-invalid");
+    // The current channel's folder, if it's still there; else the default working folder.
+    const here = currentChannel()?.cwd;
+    $("new-channel-cwd").value = here || S.defaultCwd;
+    checkFolder();
     $("new-channel").showModal();
+    if (here && here !== S.defaultCwd && !(await folderExists(here)) && $("new-channel-cwd").value === here) {
+      $("new-channel-cwd").value = S.defaultCwd;
+      checkFolder();
+    }
     // Your Claude projects (the folders your Claude Code sessions run in), offered for the folder.
     api("/api/projects").then(
       (list) => ($("new-channel-projects").innerHTML = list.map((p) => `<option value="${esc(p.path)}" label="${esc(p.name)}"></option>`).join("")),
@@ -1755,6 +1876,10 @@
       openChannel(ch.id);
     } catch (err) {
       $("new-channel-error").textContent = err.message;
+      // Point at the field that's wrong.
+      const field = /folder/i.test(err.message) ? $("new-channel-cwd") : $("new-channel-name");
+      field.setAttribute("aria-invalid", "true");
+      field.focus();
     }
   });
 
@@ -1777,6 +1902,10 @@
         appendMessage(m);
         renderSessions();
         renderAsks();
+        if (m.kind === "permission" && m.meta.permission.jobId) refreshJobCards(e.channelId, m.meta.permission.jobId); // its "Show the request" link
+        // Screen readers hear each new message once, not the whole list again.
+        if (m.author !== "user" && m.kind !== "status" && !m.meta?.interim)
+          $("announce").textContent = `${m.author === "system" ? "" : `${authorName(m.author)}: `}${{ permission: "needs your OK", tools: "asks for a tool", job: "started a job" }[m.kind] || snippet(m.text || "")}`;
       }
       // Unread unless you're looking at it: in another channel, or Harmonia isn't the app in front.
       if (m.author !== "user" && m.author !== "system" && m.kind !== "status" && !m.meta?.interim && !window.Notifications.lookingAt(e.channelId)) {
@@ -1910,7 +2039,7 @@
   }
 
   // Shared with agent-page.js.
-  window.TeamApp = { S, $, api, esc, byId, ago, toast, openChannel, openDm, chLabel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus, store, muted, fileUrl, INLINE_IMAGE, fileAction, quoteHtml, replyTextOf, chLabel };
+  window.TeamApp = { onLeave, askUnsaved, S, $, api, esc, byId, ago, toast, openChannel, openDm, chLabel, seen, openMenu, openAgentSession, currentChannel, kTok, STATUS, setSlack, renderSlackStatus, store, muted, fileUrl, INLINE_IMAGE, fileAction, quoteHtml, replyTextOf, chLabel };
 
   boot().then(connect);
   window.addEventListener("resize", autosize);

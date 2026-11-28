@@ -97,7 +97,8 @@ Jobs and memories stay.
   when one grows past 60k tokens. If a decision fails or takes over 45 s, a
   rule decides instead: a teammate waiting on your answer gets it, else the
   teammate you were just talking with, else Emily ("→ Emily · nobody in the
-  conversation (Mozart failed)").
+  conversation (Mozart failed)"). The note's tooltip says which decided:
+  Mozart, or a rule because Mozart didn't (`meta.routeBy`).
   After changing `mozart-rules.md`, run `bun evals/mozart-eval.ts` (or
   `bun run eval:mozart`): 40 routing cases in `evals/mozart-cases.json`, one
   fresh Haiku call each, pass/fail per case, exit code 1 under 90%. `--dry`
@@ -176,12 +177,17 @@ Jobs and memories stay.
   its message menu, the sidebar or View in Claude in Slack, once the job has
   ended. Not while it runs: the app would resume the session next to the
   job's own run, answer the last step on its own and fork the session.
-- **Menus:** right-click (or Shift+F10 on) a message, a channel or a
+- **Menus:** right-click (or Shift+F10 on, or on a phone long-press) a message, a channel or a
   teammate. A message: react, reply, copy, try again, open or stop its job,
   message the teammate, and when it was sent and what it cost. A channel: mark
   read or unread, pin to the top, mute, status, ClickUp task, open its folder,
   archive (also under ⋮ in the header). Pins, mutes and unread counts are kept
   per browser. A muted channel still notifies you when a teammate needs your OK.
+  A message's hover buttons (react, reply, feedback, ⋯) sit beside it, never over
+  its text. Esc or × closes the side panel (Sessions or Waiting on you).
+  A job card's footer says its state: "Done 09:41", "Failed …", "Stopped …", or
+  "Waiting for your OK since …" with a link to the request; a teammate's words
+  show above the cards its turn started.
 - **Reactions:** your emoji on any message (its menu, or ☺ beside it); click
   your reaction to take it off. Teammates react when Mozart says a reaction is
   enough (above), or by answering with only an emoji.
@@ -224,8 +230,10 @@ Jobs and memories stay.
   in Chrome, and other links in the default browser.
 - **Channel status:** the channel's menu tags it In progress, Waiting for
   response or For later, and the chat list groups channels by tag (newest
-  message first, pinned ones on top). The search box filters by name or task.
-  Archived channels fold away at the bottom of the list. They're read-only:
+  message first, pinned ones on top). The search box (⌘K) filters channels by
+  name, task or a job's title, and the DMs by teammate name or role; Enter opens
+  the first match. Archived channels fold away at the bottom of the list, muted,
+  with an archive icon and no unread count. They're read-only:
   you can't post, nobody is woken there, and archiving is refused while a
   teammate or job is still working in the channel. Unarchive from the bar at
   the bottom of an archived channel, or from its menu.
@@ -235,10 +243,12 @@ Jobs and memories stay.
 - **Permissions:** each channel's menu has a Permissions choice for its jobs:
   run everything without asking (`bypassPermissions`), edit files freely and
   ask before commands (`acceptEdits`), or ask before edits and commands
-  (`default`). Asking shows the Allow once / Always / Deny cards. A channel with
+  (`default`). The header's second line shows the channel's choice next to its
+  folder ("Runs without asking", "Asks before commands", "Asks first"); click it
+  to change it. Asking shows the Allow once / Always / Deny cards. A channel with
   no choice gets settings.json `"permissionMode"` (`bypass`, `acceptEdits` or
-  `ask`), else `bypass` where the sandbox is on (the Mac) and `acceptEdits`
-  where it isn't. Chat turns stay on bypass (no file-edit tools, and they have
+  `ask`, "Permissions for new channels" on the settings page), else `bypass`
+  where the sandbox is on (the Mac) and `acceptEdits` where it isn't. Chat turns stay on bypass (no file-edit tools, and they have
   no cards) unless they have no tool list and no sandbox.
 - **DMs:** click a teammate in the sidebar for your DM with them: a channel
   of its own (`dm` set on it, made the first time you open it), shown under the
@@ -251,8 +261,12 @@ Jobs and memories stay.
   avatar, role, colour and the chat model and effort live in `team.json`. Job
   model, effort and instructions are written to `~/.claude/agents/<id>.md`. Memories are the files in
   `~/.claude/agent-memory/<id>/`.
-- **Claude CLI sign-in:** the sidebar shows whether the `claude` CLI is signed in.
-  **Quick login** opens Terminal on `claude auth login --claudeai`.
+- **Claude CLI sign-in:** the sidebar shows whether the `claude` CLI is signed in;
+  signed out, a banner over your name has **Quick login** (the Setup check's sign-in
+  item has it too), which opens Terminal on `claude auth login --claudeai`. Slack's
+  status keeps its own place under your name.
+- **Unsaved edits:** leaving a teammate's page or the settings with changes you
+  haven't saved asks first: Save, Discard or Keep editing.
 - **Safety:** the server listens on 127.0.0.1 only, and accepts API calls and
   the WebSocket only from its own page. Teammates draft emails and posts but
   don't send them without your OK.
