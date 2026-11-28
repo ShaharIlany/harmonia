@@ -79,10 +79,11 @@
       <div class="sb-foot">
         <div class="usage" id="usage" aria-label="Claude plan usage"></div>
         <div id="update" class="update-status" hidden></div>
+        <div class="cli-banner" id="cli-banner" role="status" hidden></div>
         <div class="me-row">
           <span class="avatar sm" id="me-av" aria-hidden="true"></span>
           <span class="who"><b id="me-name">You</b>
-            <span class="me-status"><span id="cli"></span><button type="button" id="slack-status" class="bridge-status off" title="Talk to your teammates from Slack"></button></span></span>
+            <span class="me-status"><button type="button" id="slack-status" class="bridge-status off" title="Talk to your teammates from Slack"></button><span id="cli"></span></span></span>
           <label class="btn ghost icon sm notify-pick" title="When Harmonia notifies you">
             <svg class="i"><use href="#i-bell"/></svg>
             <select id="notify-level" aria-label="Notifications">
@@ -122,7 +123,9 @@
             </button>
             <button type="button" class="btn ghost icon sm" id="ch-menu" title="Channel menu" aria-label="Channel menu" aria-haspopup="menu"><svg class="i"><use href="#i-dots"/></svg></button>
           </header>
-          <div class="messages" id="messages" aria-live="polite"></div>
+          <!-- Not a live region: a channel switch redraws the whole list. New messages are announced through #announce. -->
+          <div class="messages" id="messages" role="region" aria-label="Messages"></div>
+          <div class="sr-only" id="announce" aria-live="polite"></div>
           <div class="drop-zone" id="drop-zone" hidden><span>Drop files to send them in <b id="drop-where"></b></span></div>
           <div class="typing" id="typing"></div>
           <div class="archived-bar" id="archived-bar" hidden>
@@ -195,8 +198,10 @@
   <dialog id="new-channel">
     <form method="dialog" id="new-channel-form">
       <h2>New channel</h2>
-      <label>Name<input name="name" required placeholder="abc-124" autofocus></label>
-      <label>Working folder<input name="cwd" id="new-channel-cwd" list="new-channel-projects" autocomplete="off"></label>
+      <label>Name<input name="name" id="new-channel-name" required placeholder="abc-124" autofocus aria-describedby="new-channel-slug"></label>
+      <p class="hint field-note" id="new-channel-slug" aria-live="polite"></p>
+      <label>Working folder<input name="cwd" id="new-channel-cwd" list="new-channel-projects" autocomplete="off" aria-describedby="new-channel-folder"></label>
+      <p class="hint field-note" id="new-channel-folder" aria-live="polite"></p>
       <datalist id="new-channel-projects"></datalist>
       <p class="hint">The teammates work in this folder when they answer in this channel. Pick one of your Claude projects, or type any folder.</p>
       <p class="error" id="new-channel-error"></p>
@@ -204,6 +209,20 @@
         <!-- Create comes first, so Enter in a field creates the channel (the first submit button is the default). -->
         <button value="ok" class="btn default" style="order: 2">Create</button>
         <button value="cancel" formnovalidate class="btn outline" style="order: 1">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="leave-dialog">
+    <form method="dialog">
+      <h2>Unsaved changes</h2>
+      <p class="hint" id="leave-text"></p>
+      <div class="dialog-btns">
+        <!-- Save comes first so Enter saves; CSS puts it last. -->
+        <button value="save" class="btn default" style="order: 4">Save</button>
+        <button value="discard" class="btn ghost-destructive" style="order: 1">Discard</button>
+        <span class="spacer" style="order: 2"></span>
+        <button value="keep" class="btn outline" style="order: 3">Keep editing</button>
       </div>
     </form>
   </dialog>
@@ -226,6 +245,7 @@
 
   <script src="/markdown.js"></script>
   <script src="/lists.js"></script>
+  <script src="/cards.js"></script>
   <script src="/app.js"></script>
   <script src="/plan-usage.js"></script>
   <script src="/notifications.js"></script>

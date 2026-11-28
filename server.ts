@@ -12,6 +12,7 @@ import pictureViewerJs from "./public/picture-viewer.js" with { type: "file" };
 import feedbackJs from "./public/feedback.js" with { type: "file" };
 import markdownJs from "./public/markdown.js" with { type: "file" };
 import listsJs from "./public/lists.js" with { type: "file" };
+import cardsJs from "./public/cards.js" with { type: "file" };
 import styleCss from "./public/style.css" with { type: "file" };
 import rubikTtf from "./public/fonts/Rubik.ttf" with { type: "file" };
 import type { ServerWebSocket } from "bun";
@@ -22,7 +23,7 @@ import { CLAUDE, onUsage, probeUsage, type Usage } from "./runner";
 import { CHANNEL_STATUSES, PERMISSION_MODES, agentSessions, channels, createChannel, dmOf, messages, saveChannels, saveMessages,type Channel, type ChannelStatus, type Message } from "./store";
 import { CLICKUP_TASK_PREFIX, CLICKUP_WORKSPACE } from "./paths";
 import { setting } from "./env";
-import { applyUpdate, checkForUpdates, noteActivity, startUpdates, updateStatus, type UpdateStatus } from "./updates";
+import { applyUpdate, cantRestart, checkForUpdates, noteActivity, restartPending, restartWhenIdle, startUpdates, updateStatus, type UpdateStatus } from "./updates";
 import { DEFAULT_CWD, TEAM_AGENTS, Team, allChannels, defaultPermissionMode, jobTitle,type Event } from "./team";
 import { SlackBridge, type SlackEvent } from "./slack";
 import { claudeProjects } from "./projects";
@@ -46,6 +47,7 @@ const PUBLIC: Record<string, string> = {
   "feedback.js": feedbackJs,
   "markdown.js": markdownJs,
   "lists.js": listsJs,
+  "cards.js": cardsJs,
   "style.css": styleCss,
   "fonts/Rubik.ttf": rubikTtf,
 };
@@ -329,10 +331,19 @@ Bun.serve({
 
       // ----- Setup check and settings.json (setup.ts) -----
       if (p === "/api/setup" && !post) return json({ checks: await setupChecks(() => cliAuth(true), updateStatus()) });
-      if (p === "/api/settings" && !post) return json(readSettings());
+      // With the default permission mode in effect now, which the page shows and the channel header marks, and whether
+      // a restart for the settings can happen (and who it waits for).
+      const restartState = () => ({ cant: cantRestart(), working: working(), pending: restartPending() });
+      if (p === "/api/settings" && !post) return json({ ...readSettings(), defaultPermissionMode: defaultPermissionMode(), restartState: restartState() });
       if (p === "/api/settings" && post) {
         const r = saveSettings(body);
-        return "error" in r ? json(r, 400) : json(r);
+        return "error" in r ? json(r, 400) : json({ ...r, defaultPermissionMode: defaultPermissionMode(), restartState: restartState() });
+      }
+      if (p === "/api/restart" && post) {
+        const err = restartWhenIdle();
+        if (err) return json({ error: err }, 409);
+        const n = working();
+        return json({ message: n ? `Harmonia restarts when the ${n} teammate${n === 1 ? " or job" : "s or jobs"} working now ${n === 1 ? "is" : "are"} done.` : "Restarting…", restartState: restartState() });
       }
 
       // ----- Slack -----
@@ -374,6 +385,11 @@ Bun.serve({
       // Your Claude projects (projects.ts), offered as a new channel's folder.
       if (p === "/api/projects") return json(claudeProjects());
 
+      // The New channel box checks its folder as you type.
+      if (p === "/api/folder-check" && post) {
+        const path = String(body.path ?? "").trim();
+        return json({ exists: !!path && existsSync(path) && statSync(path).isDirectory() });
+      }
       if (p === "/api/channels" && post) {
         const name = String(body.name ?? "").trim();
         const cwd = String(body.cwd ?? "").trim() || DEFAULT_CWD;

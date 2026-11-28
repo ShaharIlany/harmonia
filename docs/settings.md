@@ -3,8 +3,10 @@
 Two places hold settings: `settings.json` in the data folder, and environment
 variables. The **Setup check** link at the bottom of the sidebar opens a page
 that shows most of the `settings.json` keys and edits them (see the
-[Mac app](mac-app.md)). Changes to all but `protectedAllow` and `protectedGuard`
-need a restart.
+[Mac app](mac-app.md)). Changes to all but `protectedAllow`, `protectedGuard`
+and `permissionMode` need a restart: the page's **Restart now** restarts
+Harmonia in its app, right away when no teammate or job is working, else as soon
+as none is (**Restart when idle**). It never cuts anyone off.
 
 ## settings.json
 
@@ -21,14 +23,12 @@ The data folder is `~/Library/Application Support/Harmonia` on a Mac,
 | `clickupTaskPrefix` | none | Your ClickUp custom task id prefix (`ABC` for `ABC-123`). Without it, task ids in messages aren't linked. `CLICKUP_TASK_PREFIX` overrides it. |
 | `protectedAllow` | `[]` | Folders macOS protects that teammates may use anyway, like `["~/Downloads"]`. Mac only. Read on every turn, no restart. |
 | `protectedGuard` | `true` | `false` turns the macOS sandbox off. Mac only. Read on every turn, no restart. |
-| `permissionMode` | `bypass` where the sandbox is on (the Mac), else `acceptEdits` | What a channel with no Permissions choice of its own gets for its jobs: `bypass`, `acceptEdits` or `ask`. |
+| `permissionMode` | `bypass` where the sandbox is on (the Mac), else `acceptEdits` | What a channel with no Permissions choice of its own gets for its jobs: `bypass`, `acceptEdits` or `ask`. On the settings page as "Permissions for new channels". Read on every run, no restart. |
 | `autoUpdate` | `true` | `false` only shows updates, without installing them. |
 | `updateFrom` | `release` | `source` follows a branch's commits instead of releases. |
 | `updateBranch` | the branch the app was built from (`main`) | With `"updateFrom": "source"`, the branch to follow. |
 | `updateRepo` | the repo the app was built from | The GitHub repo to update from, as `owner/name`. |
 | `voiceLanguages` | the Mac's preferred languages | The languages voice messages are heard in, like `["he-IL", "en-US"]`. |
-
-`permissionMode` is not on the settings page: edit `settings.json` for it.
 
 ## Environment variables
 

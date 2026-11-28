@@ -27,7 +27,7 @@
     return `<section class="card">
       <h2>${title}</h2>
       ${rows.length
-        ? `<table class="us-table"><thead><tr><th></th><th>Runs</th><th>Cost</th><th>Input tokens</th><th>From cache</th></tr></thead><tbody>
+        ? `<table class="us-table"><colgroup><col><col class="n"><col class="n"><col class="n"><col class="n"></colgroup><thead><tr><th></th><th>Runs</th><th>Cost</th><th>Input tokens</th><th>From cache</th></tr></thead><tbody>
           ${rows.map(([k, t]) => `<tr><td>${esc(label(k))}</td><td>${t.runs}</td><td>${money(t.cost)}</td><td>${tokens(t.input)}</td><td>${cached(t)}</td></tr>`).join("")}
         </tbody></table>`
         : `<p class="hint">Nothing yet.</p>`}

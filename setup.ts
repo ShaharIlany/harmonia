@@ -17,6 +17,8 @@ export type Check = {
   fix?: string;
   /** Not needed to use Harmonia: shown as information, never as a failure. */
   info?: boolean;
+  /** The badge, when "On" / "Off" doesn't describe it (where something is kept). */
+  badge?: string;
 };
 
 const isDir = (p: string) => {
@@ -132,6 +134,7 @@ export async function setupChecks(cliAuth: () => Promise<any>, update: UpdateSta
     label: "Where Slack's tokens are kept",
     ok: mac,
     info: true,
+    badge: mac ? "Keychain" : "Private file",
     detail: mac ? "In the Keychain." : `In a private file in the data folder (slack-secrets.json) that only you can read; ${OS} has no Keychain here.`,
   });
   add({
@@ -172,6 +175,7 @@ export const SETTING_SPECS: Record<string, Spec> = {
   clickupTaskPrefix: { type: "string", env: "CLICKUP_TASK_PREFIX", hint: "Your ClickUp custom task id prefix (ABC for ABC-123). Without it, task ids in messages aren't linked." },
   protectedAllow: { type: "list", live: true, hint: "Folders macOS protects that teammates may use anyway, one per line (like ~/Downloads). Mac only." },
   protectedGuard: { type: "bool", live: true, hint: "On (the default): teammates can't open the folders macOS protects. Off turns that sandbox off. Mac only." },
+  permissionMode: { type: "string", live: true, hint: "What a channel with no Permissions choice of its own gets: bypass (run everything without asking), acceptEdits (edit files freely, ask before commands) or ask (ask before edits and commands). Default: bypass where the sandbox is on, else acceptEdits." },
   autoUpdate: { type: "bool", hint: "On (the default): Harmonia installs updates by itself at a quiet moment. Off: it only shows that one is there." },
   updateFrom: { type: "string", hint: "Where updates come from: release (the default: the repo's latest GitHub release) or source (the branch's latest commit, built here)." },
   updateBranch: { type: "string", hint: "With updateFrom source: the branch to follow. Default: the one the app was built from." },
@@ -220,6 +224,7 @@ export function saveSettings(body: any): { error: string } | { restart: string[]
     } else if (typeof v !== "string") return { error: `${key} must be text.` };
     if (spec.type === "dir" && !isDir(v as string)) return { error: `${key}: the folder ${v} doesn't exist.` };
     if (key === "updateFrom" && v !== "release" && v !== "source") return { error: `updateFrom must be "release" or "source".` };
+    if (key === "permissionMode" && !["bypass", "acceptEdits", "ask"].includes(v as string)) return { error: `permissionMode must be "bypass", "acceptEdits" or "ask".` };
     patch[key] = spec.type === "list" ? (v as string[]).map((x) => x.trim()).filter(Boolean) : spec.type === "bool" ? v : (v as string).trim();
   }
   let all: Record<string, any>;
@@ -232,6 +237,8 @@ export function saveSettings(body: any): { error: string } | { restart: string[]
   const tmp = `${FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n");
   renameSync(tmp, FILE);
+  // The default permission mode is read on every run (permission-mode.ts), so it takes effect without a restart.
+  if ("permissionMode" in patch) patch.permissionMode === undefined ? delete SETTINGS.permissionMode : (SETTINGS.permissionMode = patch.permissionMode);
   const saved = readSettings();
   return { restart: saved.pending, saved };
 }

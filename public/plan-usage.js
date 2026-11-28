@@ -18,10 +18,12 @@
     const elapsedMs = Math.max(0, Math.min(window, window - left));
     const elapsed = Math.round((elapsedMs / window) * 1000) / 10;
     const diff = Math.round((used - elapsed) * 10) / 10;
-    let level = diff > TOO_FAST ? "bad" : diff > ON_PACE ? "warn" : "good";
-    if (used >= 90) level = "bad";
-    else if (used >= 80 && level === "good") level = "warn";
-    const label = elapsed < MIN_ELAPSED ? "just started" : diff < -ON_PACE ? "▼ under pace" : diff <= ON_PACE ? "● on pace" : diff > TOO_FAST ? "▲ too fast" : "▲ a bit fast";
+    const paced = diff > TOO_FAST ? "bad" : diff > ON_PACE ? "warn" : "good";
+    const level = used >= 90 ? "bad" : used >= 80 && paced === "good" ? "warn" : paced;
+    let label = elapsed < MIN_ELAPSED ? "just started" : diff < -ON_PACE ? "▼ under pace" : diff <= ON_PACE ? "● on pace" : diff > TOO_FAST ? "▲ too fast" : "▲ a bit fast";
+    // Amber or red from how much is used, not from the pace: say where this rate ends up, so the colour and the words
+    // tell one story (an amber 80% reads "on track for 81%", not "under pace").
+    if (level !== paced && elapsed >= MIN_ELAPSED) label = `● on track for ${Math.min(100, Math.round((used / elapsed) * 100))}%`;
     let runOutMs = null;
     if (elapsed >= MIN_ELAPSED && used > 0 && used < 100 && diff > ON_PACE) {
       const ms = ((100 - used) / used) * elapsedMs;
